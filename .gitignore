@@ -15,5 +15,7 @@ applications/
 logs/
 master-resume.md
 !plugins/conjurer/skills/conjurer/assets/master-resume.md
+!plugins/conjurer/commands/master-resume.md
 grimoire.md
 !plugins/conjurer/skills/conjurer/assets/grimoire.md
+!plugins/conjurer/commands/grimoire.md
