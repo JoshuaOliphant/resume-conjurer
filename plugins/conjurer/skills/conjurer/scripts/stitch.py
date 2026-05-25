@@ -1,6 +1,28 @@
 # ABOUTME: Parses variants.md picks and assembles cover_letter.md + resume.md.
 # ABOUTME: Cover units join into prose; resume units compose into the master-resume structure.
+"""Implementation of `conjure stitch <app_dir>`.
 
+Parses variants.md, extracts picked variants per unit, assembles cover letter
+and resume markdown files.
+
+variants.md format:
+
+    ## Unit: cover_letter.opening
+    <!-- conjurer:unit id=cover_letter.opening -->
+
+    ### Variant 1: <citation>
+    <content>
+    - [ ] Pick
+
+The HTML comment marker identifies units machine-readably. Each variant has
+arbitrary content between its `### Variant N` header and a `- [ ] Pick` line.
+The operator changes one Pick to `- [x] Pick` per unit to curate.
+
+Unit-id prefix routes the picked content: `cover_letter.*` → cover_letter.md,
+`resume.*` → resume.md. Stitch preserves the unit order from variants.md.
+"""
+
+import sys
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -139,6 +161,8 @@ def stitch_app_dir(app_dir: Path, master_resume_path: Path, overwrite: bool = Fa
         raise ValueError(f"No conjurer units found in {variants_path}")
     cover_picks, resume_picks = collect_picks(units)
     cover_text = "\n\n".join(cover_picks) + "\n"
+    if not master_resume_path.exists():
+        raise FileNotFoundError(f"Master resume not found: {master_resume_path}")
     resume_text = compose_resume(master_resume_path.read_text(), resume_picks)
     cover_path.write_text(cover_text)
     resume_path.write_text(resume_text)
@@ -146,7 +170,6 @@ def stitch_app_dir(app_dir: Path, master_resume_path: Path, overwrite: bool = Fa
 
 
 def main() -> None:
-    import sys
     if len(sys.argv) != 3:
         print("usage: python3 stitch.py <app_dir> <master_resume_path>", file=sys.stderr)
         raise SystemExit(2)

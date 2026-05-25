@@ -1,6 +1,16 @@
 # ABOUTME: Regex-based grimoire style linter for cover_letter.md and resume.md.
 # ABOUTME: Covers the pure-regex/counting checks from the grimoire's 10-point checklist.
+"""Implementation of `conjure lint <app_dir>`.
 
+Runs the grimoire's regex-based style checks against final cover letter and resume
+documents. Returns the list of findings; the CLI is responsible for printing.
+
+The grimoire's full 10-point checklist includes checks that need an LLM (vague
+impact detection) and checks that belong at variant-generation time (citation
+discipline). This module covers the checks that are pure regex or counting.
+"""
+
+import sys
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -126,7 +136,6 @@ def lint_app_dir(app_dir: Path) -> list[Finding]:
 
 
 def main() -> None:
-    import sys
     if len(sys.argv) != 2:
         print("usage: python3 lint.py <app_dir>", file=sys.stderr)
         raise SystemExit(2)

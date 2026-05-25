@@ -1,5 +1,11 @@
 # ABOUTME: Scaffolds a per-application working directory (jd.txt, evidence.md, README.md).
 # ABOUTME: Templates are generic — no vault-specific paths.
+"""Implementation of `conjure init <slug>`.
+
+Creates an application working directory with template files. The operator
+fills in jd.txt and evidence.md, then runs the other commands.
+"""
+
 import shutil
 import sys
 from datetime import datetime

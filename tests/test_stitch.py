@@ -77,3 +77,58 @@ def test_missing_pick_raises(tmp_path):
     master.write_text(MASTER)
     with pytest.raises(ValueError):
         stitch.stitch_app_dir(app, master_resume_path=master)
+
+
+def test_overwrite_guard_raises_when_output_exists(tmp_path):
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "variants.md").write_text(VARIANTS_MD)
+    master = tmp_path / "master-resume.md"
+    master.write_text(MASTER)
+    # First stitch succeeds and writes cover_letter.md.
+    stitch.stitch_app_dir(app, master_resume_path=master)
+    # Second stitch without overwrite=True must raise.
+    with pytest.raises(RuntimeError):
+        stitch.stitch_app_dir(app, master_resume_path=master, overwrite=False)
+
+
+def test_multiple_picks_in_one_unit_raises(tmp_path):
+    two_picks = VARIANTS_MD.replace(
+        "- [ ] Pick\n\n## Unit: resume.acme.platform.bullet_1",
+        "- [x] Pick\n\n## Unit: resume.acme.platform.bullet_1",
+    )
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "variants.md").write_text(two_picks)
+    master = tmp_path / "master-resume.md"
+    master.write_text(MASTER)
+    with pytest.raises(ValueError):
+        stitch.stitch_app_dir(app, master_resume_path=master)
+
+
+def test_missing_variants_md_raises(tmp_path):
+    app = tmp_path / "app"
+    app.mkdir()
+    master = tmp_path / "master-resume.md"
+    master.write_text(MASTER)
+    with pytest.raises(FileNotFoundError):
+        stitch.stitch_app_dir(app, master_resume_path=master)
+
+
+def test_variants_md_with_no_unit_markers_raises(tmp_path):
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "variants.md").write_text("# Just a heading\n\nNo units here.\n")
+    master = tmp_path / "master-resume.md"
+    master.write_text(MASTER)
+    with pytest.raises(ValueError):
+        stitch.stitch_app_dir(app, master_resume_path=master)
+
+
+def test_nonexistent_master_resume_raises_with_path(tmp_path):
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "variants.md").write_text(VARIANTS_MD)
+    missing = tmp_path / "does-not-exist.md"
+    with pytest.raises(FileNotFoundError, match=str(missing)):
+        stitch.stitch_app_dir(app, master_resume_path=missing)

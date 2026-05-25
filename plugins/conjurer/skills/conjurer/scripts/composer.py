@@ -1,5 +1,20 @@
 # ABOUTME: Composes a tailored resume by slotting picked bullets into master-resume.md structure.
 # ABOUTME: Matches unit_ids to sub-roles by token overlap; preserves untailored roles unchanged.
+"""Compose a tailored resume by slotting picked bullets into master-resume.md.
+
+Walks master-resume.md, finds the Experience section, and for each sub-role under
+each company H3, either keeps the master bullets unchanged or replaces them with
+the picked bullets that match the sub-role's unit_id.
+
+Unit_id format: resume.<company>.<optional_subrole_qualifiers...>.bullet_<n>
+  - 'resume.servicenow.bullet_1' matches the only ServiceNow sub-role
+  - 'resume.nordstrom.kubernetes.bullet_1' matches the Kubernetes Platform Team sub-role
+  - Flat unit_ids that match multiple sub-roles use most-recent-start-year as tiebreaker
+
+Sub-roles with no matching picks keep their master bullets unchanged (preserves
+context for older roles the outline chose not to tailor). Picks that match no
+sub-role raise a RuntimeError so the user can fix the unit_id.
+"""
 
 import re
 from collections import defaultdict
