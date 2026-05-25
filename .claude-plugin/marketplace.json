@@ -1,0 +1,23 @@
+{
+  "name": "resume-conjurer",
+  "owner": {
+    "name": "Joshua Oliphant",
+    "email": "joshua.oliphant@hey.com"
+  },
+  "metadata": {
+    "description": "Claude Code marketplace for the Conjurer resume and cover letter generator",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "conjurer",
+      "source": "./plugins/conjurer",
+      "description": "Generate grounded resume and cover letter variants, curate conversationally, and stitch final documents. Encodes your taste in a grimoire and grounds every claim in your master resume.",
+      "version": "0.1.0",
+      "author": { "name": "Joshua Oliphant" },
+      "keywords": ["resume", "cover-letter", "job-search", "career", "variants", "curation", "grimoire"],
+      "category": "productivity",
+      "license": "MIT"
+    }
+  ]
+}

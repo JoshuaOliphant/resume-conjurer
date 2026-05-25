@@ -1,0 +1,10 @@
+{
+  "name": "conjurer",
+  "description": "Generate grounded resume and cover letter variants, then curate and stitch. Combines deterministic scripts (scaffolding, stitching, grimoire-checklist linting) with a parallel variant-generator subagent. Generate abundance, exercise taste, stitch from selections.",
+  "version": "0.1.0",
+  "author": { "name": "Joshua Oliphant" },
+  "homepage": "https://github.com/joshuaoliphant/resume-conjurer",
+  "repository": "https://github.com/joshuaoliphant/resume-conjurer",
+  "license": "MIT",
+  "keywords": ["resume", "cover-letter", "job-search", "career", "variants", "curation", "grimoire", "tailoring"]
+}
