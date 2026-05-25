@@ -28,4 +28,4 @@ One or two sentences on who you are and the rare combination you bring. Replace 
 
 ## Skills
 
-- Languages, frameworks, infrastructure you actually use.
+- Languages, frameworks, and infrastructure you use.
