@@ -1,0 +1,11 @@
+[project]
+name = "resume-conjurer-dev"
+version = "0.1.0"
+description = "Dev tooling for the resume-conjurer plugin scripts (tests only; runtime scripts are stdlib)."
+requires-python = ">=3.11"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Secrets / env
+.env
+
+# User workspaces (never commit personal resumes or generated applications)
+applications/
+**/applications/
+logs/
+master-resume.md
+!plugins/conjurer/skills/conjurer/assets/master-resume.md
+grimoire.md
+!plugins/conjurer/skills/conjurer/assets/grimoire.md
