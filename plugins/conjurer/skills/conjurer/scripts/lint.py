@@ -64,6 +64,12 @@ BUZZWORDS = [
 COVER_LETTER_WORD_LIMIT = 350
 
 
+def _is_structural(line: str) -> bool:
+    """A markdown header or a bold label/date line — structural typography, not prose."""
+    stripped = line.lstrip()
+    return stripped.startswith("#") or stripped.startswith("**")
+
+
 @dataclass
 class Finding:
     file: Path
@@ -77,6 +83,9 @@ def lint_text(text: str, source: Path, is_cover_letter: bool = False) -> list[Fi
     lines = text.splitlines()
 
     for i, line in enumerate(lines, start=1):
+        if _is_structural(line):
+            continue
+
         if EM_DASH_RE.search(line):
             findings.append(Finding(source, i, "em_dash", line.strip()))
 

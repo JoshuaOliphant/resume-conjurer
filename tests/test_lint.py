@@ -56,6 +56,21 @@ def test_buzzword_flagged():
     assert any(f.rule.startswith("buzzword:") for f in findings)
 
 
+def test_em_dash_in_header_not_flagged():
+    findings = lint.lint_text("### Acme Corp — Senior Engineer\n\n- Built the platform.\n", source=Path("resume.md"))
+    assert not any(f.rule == "em_dash" for f in findings)
+
+
+def test_em_dash_in_bold_label_line_not_flagged():
+    findings = lint.lint_text("**Platform Team** — 2021 to present\n- Did things.\n", source=Path("resume.md"))
+    assert not any(f.rule == "em_dash" for f in findings)
+
+
+def test_em_dash_in_bullet_still_flagged():
+    findings = lint.lint_text("- Architected the migration — cutting latency in half.\n", source=Path("resume.md"))
+    assert any(f.rule == "em_dash" for f in findings)
+
+
 def test_lint_app_dir_routes_cover_letter_and_resume(tmp_path):
     # Write a cover letter over 350 words to trigger the length rule.
     cover_words = " ".join(["achievement"] * 360)
