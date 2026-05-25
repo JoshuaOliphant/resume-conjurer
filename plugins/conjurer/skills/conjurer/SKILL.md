@@ -1,6 +1,6 @@
 ---
 name: conjurer
-description: This skill should be used when the user asks to "tailor my resume for this job", "conjure variants for this role", "generate resume/cover letter variants", "write a cover letter the conjurer way", "generate abundance and let me pick", or "run the conjurer pipeline". Generates grounded resume and cover letter variants from a master resume and a grimoire of encoded taste, curates them conversationally, and stitches final documents.
+description: This skill should be used when the user asks to "tailor my resume for this job", "help me apply to this role", "draft a tailored resume and cover letter for this job posting", "generate resume/cover letter variants", "conjure variants for this role", or "run the conjurer pipeline". Generates grounded resume and cover letter variants from a master resume and a grimoire of encoded taste, curates them conversationally, and stitches final documents.
 version: 0.1.0
 ---
 
@@ -40,7 +40,13 @@ directory). Resolve it before generating:
   steps below instead of the cwd copies.
 
 `<SKILL_DIR>` is this skill's directory. Do not generate against unedited templates — confirm
-`grimoire.md` and `master-resume.md` carry the user's real content first.
+`grimoire.md` and `master-resume.md` carry the user's real content first. A `grimoire.md` still
+containing the `FILL THIS IN` marker, or a `master-resume.md` still naming the placeholder
+companies `Acme Corp`/`Globex`, has not been filled in; run the relevant builder command before
+generating.
+
+`/conjurer:grimoire` and `/conjurer:master-resume` are commands provided by this same plugin, so
+they are available whenever the conjurer plugin is installed.
 
 ## Pipeline
 
@@ -52,8 +58,10 @@ directory). Resolve it before generating:
 3. **Outline**: read the grimoire, master resume, JD, and evidence. Choose one strategic frame and
    design the unit skeleton. Write `applications/<slug>/outline.json`. See `references/pipeline.md`
    for the exact schema and the four frames.
-4. **Variants**: for each unit in the outline, dispatch the `variant-generator` subagent in
-   parallel, passing the grimoire, master resume, evidence, outline, and that unit. Assemble the
+4. **Variants**: for each unit in the outline, dispatch the `variant-generator` subagent, passing
+   the grimoire, master resume, evidence, outline, that unit, and **N = 4 variants per unit** (the
+   agent requires a count). Use the Task tool with `subagent_type: variant-generator`, one call per
+   unit, and issue all unit calls in a single tool-use block so they run in parallel. Assemble the
    returned blocks into `applications/<slug>/variants.md`. See `references/pipeline.md` for the
    file format.
 5. **Curate**: present the variants conversationally. When the user picks, mark exactly one

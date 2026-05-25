@@ -34,8 +34,9 @@ The template at the skill's `assets/master-resume.md` shows a valid skeleton.
    - Quantified accomplishments (numbers, adoption, impact) for each significant role.
    - Skills and education.
 
-4. **Write `master-resume.md`** in the required structure. Then verify it parses:
-   `python3 <SKILL_DIR>/scripts/composer.py` is not a CLI, so check by running the conjurer
-   pipeline's outline step, or ask Claude to confirm the headings match the structure constraint.
+4. **Write `master-resume.md`** in the required structure. Then verify the structure by reading it
+   back: confirm it has a `## Experience` H2, one `### Company — Title` H3 per company, a
+   `**Sub-role** — dates` line per tenure, and `- ` bullets under each sub-role. (The conjurer
+   `stitch` step parses exactly this and will fail loudly later if the structure is wrong.)
 
 Keep every entry truthful. Do not invent roles, numbers, or outcomes.
