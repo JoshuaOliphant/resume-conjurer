@@ -7,8 +7,8 @@ each company H3, either keeps the master bullets unchanged or replaces them with
 the picked bullets that match the sub-role's unit_id.
 
 Unit_id format: resume.<company>.<optional_subrole_qualifiers...>.bullet_<n>
-  - 'resume.servicenow.bullet_1' matches the only ServiceNow sub-role
-  - 'resume.nordstrom.kubernetes.bullet_1' matches the Kubernetes Platform Team sub-role
+  - 'resume.acme.bullet_1' matches the only Acme sub-role
+  - 'resume.acme.platform.bullet_1' matches the Platform Team sub-role at Acme
   - Flat unit_ids that match multiple sub-roles use most-recent-start-year as tiebreaker
 
 Sub-roles with no matching picks keep their master bullets unchanged (preserves
@@ -142,7 +142,7 @@ def parse_master_resume(text: str) -> MasterStructure:
 
 
 def unit_id_tokens(unit_id: str) -> set[str]:
-    """resume.nordstrom.kubernetes.bullet_1 -> {'nordstrom', 'kubernetes'}."""
+    """resume.acme.platform.bullet_1 -> {'acme', 'platform'}."""
     parts = unit_id.split(".")
     middle = parts[1:-1] if len(parts) > 2 else []
     tokens: set[str] = set()
