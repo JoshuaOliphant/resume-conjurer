@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -84,8 +84,15 @@ def curate(request: Request, idx: int):
 def curate_pick(idx: int, variant_id: str = Form(...)):
     data = get_application()
     units = data.units
-    if 0 <= idx < len(units):
-        SELECTIONS[units[idx].id] = variant_id
+    if not 0 <= idx < len(units):
+        raise HTTPException(status_code=404, detail="No such line to curate.")
+    unit = units[idx]
+    # Only store a variant that actually belongs to this unit. Rejecting an
+    # unknown id here is what keeps the review screen from later attributing
+    # content to the user that they never chose.
+    if variant_id not in {v.id for v in unit.variants}:
+        raise HTTPException(status_code=422, detail="That variant isn't an option for this line.")
+    SELECTIONS[unit.id] = variant_id
     nxt = idx + 1
     if nxt >= len(units):
         return RedirectResponse("/review", status_code=303)
@@ -102,6 +109,12 @@ def review(request: Request):
         chosen.append((unit, variant))
     cover = [(u, v) for (u, v) in chosen if u.kind == "cover_paragraph"]
     bullets = [(u, v) for (u, v) in chosen if u.kind == "resume_bullet"]
+    # Complete means every unit has a stored selection that is actually one of
+    # its variants — not merely that the store has enough entries.
+    complete = all(
+        SELECTIONS.get(u.id) in {v.id for v in u.variants} for u in data.units
+    )
+    cover_text = "\n\n".join(v.text for (_, v) in cover)
     return templates.TemplateResponse(
         request,
         "review.html",
@@ -111,8 +124,8 @@ def review(request: Request):
             app_data=data,
             cover=cover,
             bullets=bullets,
-            lint=lint_results(),
-            complete=len(SELECTIONS) >= len(data.units),
+            lint=lint_results(cover_text),
+            complete=complete,
         ),
     )
 

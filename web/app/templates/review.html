@@ -37,8 +37,8 @@
     <p class="lint__title">Style check</p>
     <ul class="lint__list">
       {% for c in lint %}
-      <li class="lint__row lint__row--pass">
-        {{ i.icon("check") }}
+      <li class="lint__row lint__row--{{ 'pass' if c.passed else 'fail' }}">
+        {{ i.icon("check" if c.passed else "alert") }}
         <span><b>{{ c.label }}.</b> <span class="lint__detail">{{ c.detail }}</span></span>
       </li>
       {% endfor %}

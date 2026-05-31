@@ -70,4 +70,6 @@ State-conveying only, 130–200ms, `ease-out-quint`. Progress bar and selection 
 ## Bans honored
 
 No side-stripe accents, no gradient text, no glassmorphism, no hero-metric template, no identical
-card grids, no per-section uppercase eyebrows. No em dashes in prose (the product's own rule).
+card grids, no per-section uppercase eyebrows. No em dashes in user-facing product copy
+(templates and variant text), per the product's own rule. (This applies to the shipped UI copy;
+these internal design docs aren't held to it.)

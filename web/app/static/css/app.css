@@ -393,7 +393,6 @@ kbd {
   transition: border-color var(--dur-fast), background var(--dur-fast), box-shadow var(--dur-fast);
 }
 .variant:hover { border-color: var(--muted); box-shadow: var(--shadow-1); }
-.variant--on,
 .variant:has(input:checked) {
   border-color: var(--primary-edge);
   background: var(--primary-soft);
@@ -433,7 +432,6 @@ kbd {
   font-size: var(--text-sm); font-weight: 600; color: var(--muted);
   transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast);
 }
-.variant--on .variant__key,
 .variant:has(input:checked) .variant__key {
   background: var(--primary); border-color: var(--primary); color: var(--primary-ink);
 }
@@ -445,7 +443,6 @@ kbd {
   max-width: 60ch;
 }
 .variant__check { position: absolute; top: var(--space-4); right: var(--space-4); color: var(--primary); opacity: 0; transition: opacity var(--dur-fast); }
-.variant--on .variant__check,
 .variant:has(input:checked) .variant__check { opacity: 1; }
 
 /* Evidence trace */
@@ -497,6 +494,7 @@ kbd {
 .lint__row { display: flex; gap: var(--space-3); align-items: flex-start; font-size: var(--text-sm); padding: var(--space-2) 0; }
 .lint__row .icon { flex: none; width: 1.15rem; height: 1.15rem; margin-top: 0.05rem; }
 .lint__row--pass .icon { color: var(--good); }
+.lint__row--fail .icon { color: var(--warn); }
 .lint__detail { color: var(--muted); }
 
 /* --------------------------------------------------------------- Export */

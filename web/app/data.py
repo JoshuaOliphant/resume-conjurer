@@ -9,7 +9,9 @@ cites evidence by id, and the template can only show traces that exist in the po
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
+from typing import Literal
 
 
 # --- Evidence pool ---------------------------------------------------------
@@ -77,6 +79,14 @@ class Variant:
     text: str
     evidence_ids: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        # The trust mechanic depends on every cited id existing in the pool.
+        # Fail loudly at construction (when get_application() builds the fixtures)
+        # rather than with a KeyError mid-render in a template.
+        missing = [e for e in self.evidence_ids if e not in EVIDENCE]
+        if missing:
+            raise ValueError(f"Variant {self.id!r} cites unknown evidence: {missing}")
+
     def evidence(self) -> list[Evidence]:
         return [EVIDENCE[e] for e in self.evidence_ids]
 
@@ -84,7 +94,7 @@ class Variant:
 @dataclass
 class Unit:
     id: str
-    kind: str  # "resume_bullet" | "cover_paragraph"
+    kind: Literal["resume_bullet", "cover_paragraph"]
     label: str  # short role of this unit, e.g. "Opening bullet"
     context: str  # why this unit matters for this JD
     variants: list[Variant]
@@ -101,7 +111,6 @@ class Unit:
 
 @dataclass(frozen=True)
 class Frame:
-    key: str  # scale | friction | conviction | multiplier
     name: str
     rationale: str
 
@@ -350,7 +359,6 @@ def get_application() -> Application:
         "architectural migration at scale, owns reliability end to end, and multiplies the "
         "teams around them. Deep Kubernetes operations at scale a strong plus.",
         frame=Frame(
-            key="scale",
             name=FRAMES["scale"],
             rationale="Globex's posting leads with regional scale and a platform migration. "
             "Your strongest, most quantified evidence is exactly that story (40s → <2s, "
@@ -370,14 +378,45 @@ class LintCheck:
     passed: bool
 
 
-def lint_results() -> list[LintCheck]:
+def lint_results(cover_text: str) -> list[LintCheck]:
+    """Run the grimoire checklist against the actual stitched cover letter.
+
+    Computed from the real text so the displayed result can't drift from what's
+    on screen, matching the product's "won't pretend" stance.
+    """
+    lower = cover_text.lower()
+    has_em_dash = "—" in cover_text or "--" in cover_text
+    fillers = [
+        p for p in ("very", "really", "in order to")
+        if re.search(rf"\b{re.escape(p)}\b", lower)
+    ]
+    generic_opener = lower.lstrip().startswith(
+        ("i am excited", "i am writing", "i am thrilled", "as a")
+    )
+    words = len(cover_text.split())
     return [
-        LintCheck("No em dashes in prose", "Checked cover letter and summary.", True),
-        LintCheck("No filler words", "No 'very', 'really', 'in order to'.", True),
-        LintCheck("No AI-generic openers", "Opening doesn't start with 'I am excited to'.", True),
+        LintCheck(
+            "No em dashes in prose",
+            "Checked the cover letter." if not has_em_dash else "Found an em dash.",
+            not has_em_dash,
+        ),
+        LintCheck(
+            "No filler words",
+            "No 'very', 'really', 'in order to'."
+            if not fillers
+            else f"Found: {', '.join(fillers)}.",
+            not fillers,
+        ),
+        LintCheck(
+            "No AI-generic openers",
+            "Opening doesn't start with 'I am excited to'."
+            if not generic_opener
+            else "Opens with a generic phrase.",
+            not generic_opener,
+        ),
         LintCheck(
             "Cover letter under 350 words",
-            "Currently 312 words.",
-            True,
+            f"Currently {words} words.",
+            words < 350,
         ),
     ]
