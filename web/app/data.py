@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal
 
 
@@ -105,6 +106,14 @@ class Unit:
     @property
     def kind_label(self) -> str:
         return "Cover letter" if self.kind == "cover_paragraph" else "Résumé bullet"
+
+    @property
+    def tag_class(self) -> str:
+        return "tag--cover" if self.kind == "cover_paragraph" else "tag--bullet"
+
+    @property
+    def variant_ids(self) -> set[str]:
+        return {v.id for v in self.variants}
 
 
 # --- The frame -------------------------------------------------------------
@@ -285,7 +294,7 @@ def _units() -> list[Unit]:
             label="Kubernetes bullet",
             context="The JD lists 'deep Kubernetes operations at scale' as a requirement. "
             "The master resume only mentions it in passing.",
-            grounding_note="Limited evidence. Your master resume mentions Kubernetes only "
+            grounding_note="Your master resume mentions Kubernetes only "
             "in the context of the service template, not as deep operational ownership. "
             "These variants stay within what your evidence actually supports; they don't "
             "claim scale you haven't documented. Add a stronger line to your master resume "
@@ -350,6 +359,9 @@ def _units() -> list[Unit]:
     ]
 
 
+# The fixtures are static, so build the object graph once and share it. Nothing
+# mutates the returned Application; per-request selections live in main.SELECTIONS.
+@lru_cache(maxsize=1)
 def get_application() -> Application:
     return Application(
         slug="globex-staff-platform",

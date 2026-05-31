@@ -33,7 +33,8 @@ STEPS = [
 
 
 def _ctx(request: Request, active: str, **extra) -> dict:
-    return {"request": request, "steps": STEPS, "active_step": active, **extra}
+    active_i = next((i for i, (key, _, _) in enumerate(STEPS) if key == active), 0)
+    return {"request": request, "steps": STEPS, "active_step": active, "active_i": active_i, **extra}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -90,7 +91,7 @@ def curate_pick(idx: int, variant_id: str = Form(...)):
     # Only store a variant that actually belongs to this unit. Rejecting an
     # unknown id here is what keeps the review screen from later attributing
     # content to the user that they never chose.
-    if variant_id not in {v.id for v in unit.variants}:
+    if variant_id not in unit.variant_ids:
         raise HTTPException(status_code=422, detail="That variant isn't an option for this line.")
     SELECTIONS[unit.id] = variant_id
     nxt = idx + 1
@@ -111,9 +112,7 @@ def review(request: Request):
     bullets = [(u, v) for (u, v) in chosen if u.kind == "resume_bullet"]
     # Complete means every unit has a stored selection that is actually one of
     # its variants — not merely that the store has enough entries.
-    complete = all(
-        SELECTIONS.get(u.id) in {v.id for v in u.variants} for u in data.units
-    )
+    complete = all(SELECTIONS.get(u.id) in u.variant_ids for u in data.units)
     cover_text = "\n\n".join(v.text for (_, v) in cover)
     return templates.TemplateResponse(
         request,

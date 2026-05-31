@@ -9,14 +9,14 @@
   </div>
 
   <div class="curate__head">
-    <span class="tag {{ 'tag--bullet' if unit.kind == 'resume_bullet' else 'tag--cover' }}">{{ unit.kind_label }}</span>
+    <span class="tag {{ unit.tag_class }}">{{ unit.kind_label }}</span>
     <h1 class="page__title" style="margin-top:var(--space-3);">{{ unit.label }}</h1>
     <p class="unit-context">{{ unit.context }}</p>
 
     {% if unit.grounding_note %}
     <div class="ground-note" role="note">
       {{ i.icon("alert") }}
-      <span><b>Limited evidence.</b> {{ unit.grounding_note | replace("Limited evidence. ", "") }}</span>
+      <span><b>Limited evidence.</b> {{ unit.grounding_note }}</span>
     </div>
     {% endif %}
   </div>
