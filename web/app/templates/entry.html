@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% import "_icons.html" as i %}
+{% block title %}Start · Conjurer{% endblock %}
+{% block main %}
+<form class="page" method="post" action="/start">
+  <p class="page__eyebrow">New application</p>
+  <h1 class="page__title">Tailor your resume for one role.</h1>
+  <p class="page__lede">Bring your evidence and the job description. Conjurer generates grounded
+    variants for each line, you choose the ones that sound like you, and it stitches the rest.</p>
+
+  <fieldset class="field" style="border:0;padding:0;margin-top:var(--space-7);">
+    <legend class="field__label" style="padding:0;margin-bottom:var(--space-3);">Master resume</legend>
+    <div class="choices">
+      <label class="choice choice--on">
+        <input type="radio" name="source" value="reuse" checked>
+        <span>
+          <span class="choice__title">Reuse your master resume</span>
+          <span class="choice__sub">Last updated 2 days ago · 7 evidence entries</span>
+        </span>
+      </label>
+      <label class="choice">
+        <input type="radio" name="source" value="upload">
+        <span>
+          <span class="choice__title">Upload a different one</span>
+          <span class="choice__sub">PDF, .docx, or Markdown</span>
+        </span>
+      </label>
+    </div>
+  </fieldset>
+
+  <div class="field">
+    <label class="field__label" for="jd">Job description</label>
+    <span class="field__hint">Paste the posting. Conjurer reads it against your evidence to pick a frame.</span>
+    <textarea class="textarea" id="jd" name="jd" placeholder="Paste the job description here…">{{ app_data.jd_excerpt }}</textarea>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn--primary" type="submit">Read the job {{ i.icon("arrow-right") }}</button>
+    <span class="field__hint">Nothing is sent anywhere. Generation runs in your Claude Code session.</span>
+  </div>
+</form>
+{% endblock %}

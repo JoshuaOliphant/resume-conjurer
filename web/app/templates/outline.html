@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% import "_icons.html" as i %}
+{% block title %}Outline · Conjurer{% endblock %}
+{% block main %}
+<div class="page">
+  <p class="page__eyebrow">Outline for <b>{{ app_data.company }} · {{ app_data.role }}</b></p>
+  <h1 class="page__title">One frame, and the lines worth tailoring.</h1>
+  <p class="page__lede">Conjurer read the posting against your evidence and chose a single strategic
+    frame. Everything downstream bends toward it.</p>
+
+  <div class="panel" style="margin-top:var(--space-7);">
+    <span class="tag tag--frame">Frame · {{ app_data.frame.name }}</span>
+    <p class="frame__why">{{ app_data.frame.rationale }}</p>
+  </div>
+
+  <ol class="unit-list">
+    {% for unit in app_data.units %}
+    <li class="unit-row">
+      <span class="tag {{ 'tag--bullet' if unit.kind == 'resume_bullet' else 'tag--cover' }}">{{ unit.kind_label }}</span>
+      <span class="unit-row__label">{{ unit.label }}</span>
+      <span class="unit-row__ctx">
+        {{ unit.variants|length }} variants{% if unit.grounding_note %} · limited evidence{% endif %}
+      </span>
+    </li>
+    {% endfor %}
+  </ol>
+
+  <div class="actions actions--split">
+    <a class="btn btn--quiet" href="/">{{ i.icon("arrow-left") }} Back</a>
+    <a class="btn btn--primary" href="/curate/0">Start curating {{ app_data.units|length }} lines {{ i.icon("arrow-right") }}</a>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% import "_icons.html" as i %}
+{% block title %}Export · Conjurer{% endblock %}
+{% block main %}
+<div class="page">
+  <p class="page__eyebrow">Export · <b>{{ app_data.company }} · {{ app_data.role }}</b></p>
+  <h1 class="page__title">Ready to submit.</h1>
+  <p class="page__lede">Take the cover letter and resume in whatever format the application wants.</p>
+
+  <div class="export-grid">
+    <div class="export-card">
+      <span class="export-card__fmt">{{ i.icon("download") }} PDF</span>
+      <span class="export-card__sub">Formatted, print-ready. Best for most portals.</span>
+      <a class="btn btn--ghost" href="#" style="margin-top:var(--space-3);">Download PDF</a>
+    </div>
+    <div class="export-card">
+      <span class="export-card__fmt">{{ i.icon("download") }} Word (.docx)</span>
+      <span class="export-card__sub">Editable. For portals that demand Word.</span>
+      <a class="btn btn--ghost" href="#" style="margin-top:var(--space-3);">Download .docx</a>
+    </div>
+    <div class="export-card">
+      <span class="export-card__fmt">{{ i.icon("file") }} Markdown</span>
+      <span class="export-card__sub">Plain text. Always available.</span>
+      <a class="btn btn--ghost" href="#" style="margin-top:var(--space-3);">Download .md</a>
+    </div>
+  </div>
+
+  <p class="note">PDF and .docx use <code>pandoc</code>. If it isn’t installed, Markdown is the deliverable
+    and the other two are skipped. Conjurer won’t pretend a file exists that doesn’t.</p>
+
+  <div class="actions actions--split">
+    <a class="btn btn--quiet" href="/review">{{ i.icon("arrow-left") }} Back to review</a>
+    <form method="post" action="/reset"><button class="btn btn--ghost" type="submit">Start another application</button></form>
+  </div>
+</div>
+{% endblock %}

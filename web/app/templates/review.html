@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% import "_icons.html" as i %}
+{% block title %}Review · Conjurer{% endblock %}
+{% block main %}
+<div class="page page--wide">
+  <p class="page__eyebrow">Stitched from your picks · <b>{{ app_data.company }} · {{ app_data.role }}</b></p>
+  <h1 class="page__title">Your documents, in your words.</h1>
+  <p class="page__lede">Assembled from the lines you chose. Every sentence still traces to your evidence;
+    nothing here was invented to fill a gap.</p>
+
+  {% if not complete %}
+  <div class="ground-note" role="note" style="margin-top:var(--space-6);">
+    {{ i.icon("alert") }}
+    <span>You haven’t chosen every line yet, so unselected lines show their first variant.
+      <a href="/curate/0">Finish curating</a> to lock in your picks.</span>
+  </div>
+  {% endif %}
+
+  <article class="doc" style="margin-top:var(--space-6);">
+    <p class="doc__kicker">Cover letter</p>
+    {% for unit, v in cover %}
+    <p>{{ v.text }}</p>
+    {% endfor %}
+  </article>
+
+  <article class="doc">
+    <p class="doc__kicker">Résumé · selected bullets</p>
+    <h2>{{ app_data.role }}: tailored highlights</h2>
+    <ul class="doc__bullets">
+      {% for unit, v in bullets %}
+      <li>{{ v.text }}</li>
+      {% endfor %}
+    </ul>
+  </article>
+
+  <section class="lint panel">
+    <p class="lint__title">Style check</p>
+    <ul class="lint__list">
+      {% for c in lint %}
+      <li class="lint__row lint__row--pass">
+        {{ i.icon("check") }}
+        <span><b>{{ c.label }}.</b> <span class="lint__detail">{{ c.detail }}</span></span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <div class="actions actions--split">
+    <a class="btn btn--quiet" href="/curate/0">{{ i.icon("arrow-left") }} Revisit picks</a>
+    <a class="btn btn--primary" href="/export">Export {{ i.icon("arrow-right") }}</a>
+  </div>
+</div>
+{% endblock %}

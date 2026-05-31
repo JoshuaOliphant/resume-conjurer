@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% import "_icons.html" as i %}
+{% block title %}Curate · {{ unit.label }} · Conjurer{% endblock %}
+{% block main %}
+<form class="page" method="post" action="/curate/{{ idx }}" data-curate>
+  <div class="progress">
+    <span class="progress__count">Line {{ idx + 1 }} of {{ total }}</span>
+    <span class="progress__track"><span class="progress__fill" style="width: {{ ((idx + 1) / total * 100) | round }}%"></span></span>
+  </div>
+
+  <div class="curate__head">
+    <span class="tag {{ 'tag--bullet' if unit.kind == 'resume_bullet' else 'tag--cover' }}">{{ unit.kind_label }}</span>
+    <h1 class="page__title" style="margin-top:var(--space-3);">{{ unit.label }}</h1>
+    <p class="unit-context">{{ unit.context }}</p>
+
+    {% if unit.grounding_note %}
+    <div class="ground-note" role="note">
+      {{ i.icon("alert") }}
+      <span><b>Limited evidence.</b> {{ unit.grounding_note | replace("Limited evidence. ", "") }}</span>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="variants" role="radiogroup" aria-label="Choose a variant for {{ unit.label }}">
+    {% for v in unit.variants %}
+    <div class="variant">
+      <label class="variant__main">
+        <input class="variant__radio" type="radio" name="variant_id" value="{{ v.id }}"
+               {% if selected == v.id %}checked{% endif %}>
+        <span class="variant__key" aria-hidden="true">{{ loop.index }}</span>
+        <span class="variant__text">{{ v.text }}</span>
+      </label>
+      <span class="variant__check" aria-hidden="true">{{ i.icon("check") }}</span>
+      <div class="variant__foot">
+        {% set traces = v.evidence() %}
+        <details class="trace">
+          <summary>{{ i.icon("chevron", "chev") }} Evidence
+            ({{ traces|length }} {{ "trace" if traces|length == 1 else "traces" }})</summary>
+          <ul class="trace__items">
+            {% for e in traces %}
+            <li class="trace__item">
+              <span class="trace__quote">“{{ e.text }}”</span>
+              <span class="trace__src">{{ e.source }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="actions actions--split">
+    {% if prev_idx is not none %}
+    <a class="btn btn--quiet" href="/curate/{{ prev_idx }}">{{ i.icon("arrow-left") }} Previous</a>
+    {% else %}
+    <a class="btn btn--quiet" href="/outline">{{ i.icon("arrow-left") }} Outline</a>
+    {% endif %}
+    <button class="btn btn--primary" type="submit" data-continue>
+      {% if idx + 1 >= total %}Stitch the documents{% else %}Use this line{% endif %} {{ i.icon("arrow-right") }}
+    </button>
+  </div>
+
+  <p class="field__hint" style="text-align:right;margin-top:var(--space-3);">
+    Press <kbd>1</kbd>–<kbd>{{ unit.variants|length }}</kbd> to choose · <kbd>Enter</kbd> to continue
+  </p>
+</form>
+{% endblock %}
