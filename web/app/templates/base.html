@@ -1,0 +1,43 @@
+{# ABOUTME: App shell — pipeline rail + content region. All pages extend this. #}
+{% import "_icons.html" as i %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Conjurer{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="/static/vendor/htmx.min.js" defer></script>
+  <script src="/static/js/app.js" defer></script>
+</head>
+<body hx-boost="true">
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand">
+        <span class="brand__mark">{{ i.icon("brand", "brand__mark") }}</span>
+        <span class="brand__name">Conjurer
+          <span class="brand__app">{{ app_data.company }} · {{ app_data.role }}</span>
+        </span>
+      </div>
+
+      <nav aria-label="Pipeline">
+        <ol class="steps">
+          {% for key, label, href in steps %}
+          {% set state = "done" if loop.index0 < active_i else ("current" if loop.index0 == active_i else "upcoming") %}
+          <li class="step step--{{ state }}"{% if state == "current" %} aria-current="step"{% endif %}>
+            <span class="step__dot">{% if state == "done" %}{{ i.icon("check", "icon") }}{% else %}{{ loop.index }}{% endif %}</span>
+            <span class="step__label">{{ label }}</span>
+          </li>
+          {% endfor %}
+        </ol>
+      </nav>
+
+      <p class="rail__foot">Every claim traces back to your master resume. The model re-frames; it doesn't invent.</p>
+    </aside>
+
+    <main class="main">
+      {% block main %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>
