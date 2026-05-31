@@ -107,9 +107,11 @@ real workspace.
 - Least privilege: `allowed_tools` limited to read/search (+`Agent` only if subagent fan-out);
   `can_use_tool` confines file reads to the workspace `cwd`.
 
-## Open questions for La Boeuf
+## Decisions
 
-- **Run identity / multi-user:** single-user (one workspace, like today) or session-scoped runs?
-  Affects `runs.py` state and whether the workspace path is fixed or per-session.
-- **Workspace source:** point the app at the existing repo workspace, or upload/select a workspace
-  + paste JD through the UI (the Start screen already implies the latter)?
+- **Run model: single-user, fixed workspace — but built to extend.** One workspace dir (grimoire +
+  master-resume + `applications/`), resolved in exactly one place and *injected* into the ports
+  (never hardcoded inside adapters). `runs.py` keys run state by `slug` today, but through an
+  indirection (a `RunStore`/`WorkspaceResolver` seam) so adding per-session/per-user scoping later
+  is a new resolver, not a rewrite. No auth in this cut; do not bake single-user assumptions into
+  the domain model, the repository signatures, or route handlers.
