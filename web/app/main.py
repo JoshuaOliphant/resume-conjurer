@@ -181,6 +181,10 @@ def create_app(
         picks = repo.get_picks(SLUG)
         chosen = []
         for unit in data.units:
+            # A zero-variant unit can't be indexed; skip it rather than crash. The honest
+            # surface for an empty unit is the summoning-error page (see runs.py), not a 500.
+            if not unit.variants:
+                continue
             vid = picks.get(unit.id)
             variant = next((v for v in unit.variants if v.id == vid), unit.variants[0])
             chosen.append((unit, variant))

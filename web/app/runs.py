@@ -74,6 +74,11 @@ class RunManager:
             units: list[Unit] = []
             for ou in outline_units:
                 variants = await self._gen.variants(slug, ou)
+                # A unit with zero variants is a real generation failure: fail honestly
+                # here so the except below records state="error", rather than letting an
+                # empty unit reach (and 500) the curate/review screens later.
+                if not variants:
+                    raise RuntimeError(f"No variants generated for {ou.unit_id}")
                 units.append(
                     Unit(
                         id=ou.unit_id,
@@ -87,7 +92,15 @@ class RunManager:
             self._repo.save_variants(slug, units)
             self._status[slug].state = "done"
         except Exception as exc:  # the agent can fail; we say so honestly rather than pretend.
-            self._status[slug] = RunStatus(state="error", error=str(exc))
+            # Keep whatever progress counts the run reached so the error snapshot shows how
+            # far the summoning got (e.g. "failed after 3 of 6 lines"), not a reset to zero.
+            prev = self._status.get(slug, RunStatus())
+            self._status[slug] = RunStatus(
+                state="error",
+                units_done=prev.units_done,
+                units_total=prev.units_total,
+                error=str(exc),
+            )
 
     async def aclose(self) -> None:
         """Cancel any pending runs cleanly (called on app shutdown)."""

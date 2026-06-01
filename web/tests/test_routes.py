@@ -166,6 +166,80 @@ def test_variant_builder_rejects_unknown_evidence_id():
     assert _v("ok", "x", real_id).evidence_items[0].id == real_id
 
 
+def test_review_skips_zero_variant_unit_without_500(repo):
+    # A unit that arrives with no variants must not crash review (it can't be indexed);
+    # it is silently skipped, and the other units still render.
+    from app.domain import Application, Frame, Unit, Variant
+
+    empty_unit = Unit(
+        id="resume.empty.bullet_1",
+        kind="resume_bullet",
+        label="Empty bullet",
+        context="No variants were generated for this line.",
+        variants=[],
+    )
+    full_unit = Unit(
+        id="resume.full.bullet_1",
+        kind="resume_bullet",
+        label="Full bullet",
+        context="A normal line.",
+        variants=[Variant(id="resume.full.bullet_1#1", text="A real bullet.", evidence_items=())],
+    )
+    app_data = Application(
+        slug=SLUG,
+        company="Globex",
+        role="Staff Platform Engineer",
+        jd_excerpt="x",
+        frame=Frame(name="Scale", rationale="why"),
+        units=[empty_unit, full_unit],
+    )
+
+    class _StubRepo(FakeWorkspaceRepository):
+        def load_application(self, slug: str) -> Application:
+            return app_data
+
+    stub = _StubRepo()
+    gen = FakeGenerationPort()
+    app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen), live=False)
+    with TestClient(app) as c:
+        r = c.get("/review")
+    assert r.status_code == 200
+    assert "A real bullet." in r.text
+
+
+def test_curate_renders_zero_variant_unit_without_500(repo):
+    # A zero-variant unit renders an empty radiogroup rather than crashing the curate screen.
+    from app.domain import Application, Frame, Unit
+
+    empty_unit = Unit(
+        id="resume.empty.bullet_1",
+        kind="resume_bullet",
+        label="Empty bullet",
+        context="No variants were generated for this line.",
+        variants=[],
+    )
+    app_data = Application(
+        slug=SLUG,
+        company="Globex",
+        role="Staff Platform Engineer",
+        jd_excerpt="x",
+        frame=Frame(name="Scale", rationale="why"),
+        units=[empty_unit],
+    )
+
+    class _StubRepo(FakeWorkspaceRepository):
+        def load_application(self, slug: str) -> Application:
+            return app_data
+
+    stub = _StubRepo()
+    gen = FakeGenerationPort()
+    app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen), live=False)
+    with TestClient(app) as c:
+        r = c.get("/curate/0")
+    assert r.status_code == 200
+    assert "Empty bullet" in r.text
+
+
 def test_export_renders(client):
     r = client.get("/export")
     assert r.status_code == 200
