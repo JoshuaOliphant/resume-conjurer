@@ -32,6 +32,11 @@ filterwarnings = [
     "ignore:Using `httpx` with `starlette.testclient` is deprecated",
 ]
 
+[tool.ty.environment]
+# composition.py imports the conjurer plugin scripts (stitch/lint/export_docs) after a
+# runtime sys.path insert; point ty at that dir so it resolves them statically too.
+extra-paths = ["../plugins/conjurer/skills/conjurer/scripts"]
+
 [tool.coverage.run]
 branch = true
 source = ["app"]
