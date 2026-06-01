@@ -23,7 +23,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 # Coverage gate: see .claude/rules/testing.md. A passing `uv run pytest` proves 100%
 # line + branch coverage of app/. Live-only paths are marked under markers, not exempted.
-addopts = "--cov=app --cov-branch --cov-report=term-missing"
+addopts = "--cov=app --cov-branch --cov-report=term-missing -m 'not live'"
 markers = [
     "live: exercises the real Claude API; skipped unless ANTHROPIC_API_KEY is set",
 ]
