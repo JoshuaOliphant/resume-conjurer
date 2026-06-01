@@ -32,6 +32,7 @@ from app.domain import (
     UnitKind,
     Variant,
     WorkspaceInputs,
+    label_for_unit_id,
 )
 
 # variants.md grammar. The unit marker and pick line mirror stitch.py exactly so
@@ -53,12 +54,6 @@ def _kind_for(unit_id: str) -> UnitKind:
     if unit_id.startswith(COVER_LETTER_PREFIX):
         return "cover_paragraph"
     return "resume_bullet"
-
-
-def _label_for(unit_id: str) -> str:
-    """A short human label: the id's last segment, title-cased."""
-    suffix = unit_id.rsplit(".", 1)[-1]
-    return suffix.replace("_", " ").strip().title()
 
 
 def _jd_excerpt(jd: str, sentences: int = 2) -> str:
@@ -322,7 +317,7 @@ class FsWorkspaceRepository:
                 Unit(
                     id=punit.unit_id,
                     kind=_kind_for(punit.unit_id),
-                    label=_label_for(punit.unit_id),
+                    label=label_for_unit_id(punit.unit_id),
                     context=context,
                     variants=variants,
                 )

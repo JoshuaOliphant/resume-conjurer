@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from app.domain import Unit
+from app.domain import Unit, label_for_unit_id
 from app.ports import GenerationPort, WorkspaceRepository
 
 RunState = str  # one of: "idle" | "running" | "done" | "error"
@@ -34,12 +34,6 @@ class RunStatus:
     units_done: int = 0
     units_total: int = 0
     error: str | None = None
-
-
-def _label_for(unit_id: str) -> str:
-    """A short human label: the id's last segment, spaced and title-cased."""
-    suffix = unit_id.rsplit(".", 1)[-1]
-    return suffix.replace("_", " ").strip().title()
 
 
 class RunManager:
@@ -84,7 +78,7 @@ class RunManager:
                     Unit(
                         id=ou.unit_id,
                         kind=ou.kind,
-                        label=_label_for(ou.unit_id),
+                        label=label_for_unit_id(ou.unit_id),
                         context=ou.description,
                         variants=variants,
                     )

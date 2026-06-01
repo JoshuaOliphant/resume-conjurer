@@ -28,6 +28,12 @@ FRAMES: dict[str, str] = {
 }
 
 
+def label_for_unit_id(unit_id: str) -> str:
+    """A short human label for a unit: the id's last segment, spaced and title-cased."""
+    suffix = unit_id.rsplit(".", 1)[-1]
+    return suffix.replace("_", " ").strip().title()
+
+
 @dataclass(frozen=True)
 class Evidence:
     """One line from the master resume or evidence pool that a variant can cite."""
