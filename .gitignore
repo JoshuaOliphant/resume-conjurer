@@ -19,3 +19,9 @@ master-resume.md
 grimoire.md
 !plugins/conjurer/skills/conjurer/assets/grimoire.md
 !plugins/conjurer/commands/grimoire.md
+
+# Committed test fixture workspace for the web backend (a small, non-personal sample).
+!web/tests/fixtures/workspace/grimoire.md
+!web/tests/fixtures/workspace/master-resume.md
+!web/tests/fixtures/workspace/applications/
+!web/tests/fixtures/workspace/applications/**

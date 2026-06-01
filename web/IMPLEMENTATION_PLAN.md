@@ -46,20 +46,50 @@ web/app/
 `stitch.py` / `composer.py` / `lint.py` / `export_docs.py` stay in the plugin and are imported by
 `composition.py` (they are already pure functions over a workspace dir).
 
-## Two internal forks (resolved, doc-grounded)
+## Spike results — adapter contract pinned (verified live 2026-05-31)
 
-**Outline — let the skill write the file, or use `output_format`?**
-→ **`output_format` with `OUTLINE_SCHEMA`.** The SDK validates and returns `structured_output`; the
-WorkspaceRepository persists `outline.json`. Keeps the exact contract, removes parse/repair code.
+A throwaway spike (`spike_generation.py`, since deleted) ran the real SDK against the fixture
+workspace and **verified all three inferred assumptions**. The adapter contract below is now
+empirical, not doc-inferred:
 
-**Variants fan-out — parallel subagents in one query, or orchestrator-driven per-unit queries?**
-→ **Start orchestrator-driven, sequential per-unit on the persistent client.** Each unit is one
-`client.query(...)` carrying the same big prefix (grimoire + master resume + evidence + outline),
-so calls 2..N hit prompt cache; only the per-unit tail is uncached. Gives clean per-unit
-`structured_output` capture and natural "summoned 3 of 6" progress. ~30–50s for 6 units, matching
-the async UX. *Optimization, only if the wait feels dead:* graduate to parallel `variant-generator`
-subagent dispatch (single query, `Agent` tool) or a small pool of concurrent clients. Nothing else
-changes — both write the same `variants.md`.
+- **`output_format` is an options-level field, fixed per client** — `client.query(prompt,
+  session_id)` takes NO per-call options (confirmed in `client.py`). So outline and variants need
+  **two clients** (different/absent `output_format`), not one.
+- **Outline client:** `output_format={"type":"json_schema","schema": OUTLINE_SCHEMA}` →
+  `ResultMessage.structured_output` is a valid outline dict. The agent does **not** auto-run the
+  pipeline and does **not** write `outline.json` — *we* persist it from `structured_output`.
+- **Variants client (no `output_format`):** instruct it to use the `conjurer:variant-generator`
+  subagent (plugin-qualified name) via the `Agent` tool; it returns the native `## Unit:` block
+  (with `master-resume.md L16`-style citations and `*Axis:*` lines). Extract from the `## Unit:`
+  marker (strip the agent's surrounding chatter); this is the exact format `stitch.py` parses, so
+  it is reuse, not invention.
+- **Caching confirmed:** `cache_read_input_tokens` = 114571 (outline) and 21905 (2nd variant call)
+  → the persistent-client design holds. Fine-grained per-unit calls are cheap.
+- **Fan-out:** start sequential per-unit on the variants client (cache hits across units, natural
+  "summoned 3 of 6" progress). Parallel dispatch is a later optimization; same `variants.md` either
+  way.
+
+### Verified config (the adapter's `ClaudeAgentOptions`)
+
+```python
+base = dict(
+    cwd=str(workspace),
+    plugins=[{"type": "local", "path": str(repo / "plugins" / "conjurer")}],
+    setting_sources=[],            # isolate from THIS repo's .claude hooks/settings
+    permission_mode="bypassPermissions",
+    model="claude-sonnet-4-6",
+)
+outline_opts = ClaudeAgentOptions(allowed_tools=["Read","Glob","Grep"],
+    output_format={"type":"json_schema","schema": OUTLINE_SCHEMA}, **base)
+variant_opts = ClaudeAgentOptions(allowed_tools=["Read","Glob","Grep","Agent"], **base)
+```
+
+### Auth / env gotcha (worktrees)
+
+`.env` is per-worktree (gitignored). The key lives in each checkout's `web/.env` separately. When
+absent, the SDK silently falls back to the local `claude` CLI's subscription auth — so a passing
+run does **not** prove API-key auth. The live test must therefore skip on *both* signals: no
+`ANTHROPIC_API_KEY` AND no authenticated CLI. Production auth is `ANTHROPIC_API_KEY` only.
 
 ## Phased TDD task breakdown
 

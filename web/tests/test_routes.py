@@ -4,7 +4,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.data import EVIDENCE, Variant, get_application
+from app.data import EVIDENCE, _v, get_application
 from app.main import SELECTIONS, app
 
 
@@ -140,20 +140,22 @@ def test_review_word_count_is_computed_not_hardcoded(client):
 
 
 def test_every_variant_resolves_its_evidence(client):
-    # Integrity sweep: no variant may cite an id missing from the pool.
+    # Integrity sweep: every variant carries resolved evidence drawn from the pool.
+    pool = get_application().evidence
     for unit in get_application().units:
         for v in unit.variants:
             traces = v.evidence()
-            assert len(traces) == len(v.evidence_ids)
-            assert all(e is not None for e in traces)
+            assert traces == list(v.evidence_items)
+            assert all(pool.get(e.id) is e for e in traces)
 
 
-def test_variant_rejects_unknown_evidence_id():
+def test_variant_builder_rejects_unknown_evidence_id():
+    # The trust invariant now lives in the adapter that resolves ids, not the type.
     with pytest.raises(ValueError, match="unknown evidence"):
-        Variant(id="bad", text="x", evidence_ids=("does-not-exist",))
-    # sanity: a real id constructs fine
+        _v("bad", "x", "does-not-exist")
+    # sanity: a real id resolves fine
     real_id = next(iter(EVIDENCE))
-    Variant(id="ok", text="x", evidence_ids=(real_id,))
+    assert _v("ok", "x", real_id).evidence_items[0].id == real_id
 
 
 def test_export_renders(client):
