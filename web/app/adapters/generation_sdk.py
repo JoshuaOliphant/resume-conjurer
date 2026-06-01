@@ -31,15 +31,15 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_PLUGIN_DIR = REPO_ROOT / "plugins" / "conjurer"
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
-# Mutating / executing / network tools the variant agent must never use. The variant
-# client reads the JD and evidence, which may be attacker-influenced (a pasted job post),
-# so a prompt injection must not be able to reach code execution or exfiltration. The
-# variant client cannot use a `tools` allowlist (that breaks plugin subagent dispatch), so
-# this denylist is enforced via a can_use_tool callback with permission_mode left off
-# bypass. Read/Glob/Grep/Agent stay auto-approved via allowed_tools.
-BLOCKED_VARIANT_TOOLS = frozenset(
-    {"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "KillShell"}
-)
+# The only tools the variant agent may use: read/search and subagent dispatch. This is a
+# deny-by-default allowlist, not a denylist — anything not named here (unknown built-ins,
+# any mcp__* tool, future tools) is denied. The variant client reads the JD and evidence,
+# which may be attacker-influenced (a pasted job post), so a prompt injection must never be
+# able to reach code execution or exfiltration. The variant client cannot use a `tools`
+# allowlist (that breaks plugin subagent dispatch), so this allowlist is enforced two ways:
+# via `allowed_tools` (auto-approval) AND via the can_use_tool callback below, with
+# permission_mode left off bypass so the callback is actually consulted.
+ALLOWED_VARIANT_TOOLS = frozenset({"Read", "Glob", "Grep", "Agent", "Task"})
 
 # A relayed variant block: "### Variant 1: <citation>" then body, ending before the
 # next header / an "*Axis: ...*" line / a "- [ ] Pick" line.
@@ -126,21 +126,22 @@ def variants_from_block(text: str, unit: OutlineUnit) -> list[Variant]:
     return variants
 
 
-async def deny_mutating_tools(tool_name: str, input_data: dict[str, Any], context: Any) -> Any:
-    """can_use_tool guard for the variant client: deny exec/mutation/network tools.
+async def guard_variant_tool(tool_name: str, input_data: dict[str, Any], context: Any) -> Any:
+    """can_use_tool guard for the variant client: deny by default, allow only the allowlist.
 
-    Consulted only for tools not auto-approved via ``allowed_tools`` (Read/Glob/Grep/Agent),
-    so the safe read and dispatch tools never reach here; anything that could execute code,
-    write files, or reach the network is denied. This is the defense against a prompt
-    injection in the (user-pasted, possibly hostile) job description or evidence.
+    Consulted for tools not auto-approved via ``allowed_tools``. Only the read/search and
+    subagent-dispatch tools in :data:`ALLOWED_VARIANT_TOOLS` are permitted; everything else —
+    code execution, file writes, network, unknown built-ins, any ``mcp__*`` tool — is denied.
+    This is the defense against a prompt injection in the (user-pasted, possibly hostile) job
+    description or evidence.
     """
     from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
 
-    if tool_name in BLOCKED_VARIANT_TOOLS:
-        return PermissionResultDeny(
-            message=f"{tool_name} is not permitted during variant generation (read-only)."
-        )
-    return PermissionResultAllow()
+    if tool_name in ALLOWED_VARIANT_TOOLS:
+        return PermissionResultAllow()
+    return PermissionResultDeny(
+        message=f"{tool_name} is not permitted during variant generation (read-only)."
+    )
 
 
 # --- The adapter (thin SDK I/O; live-tested) -------------------------------
@@ -206,9 +207,12 @@ class SdkGenerationPort:
             # allowlist breaks (verified live: variants come back empty). So we keep the
             # default toolset but DROP bypassPermissions and supply a can_use_tool guard,
             # so a prompt injection in the JD/evidence cannot reach Bash/Write/Edit/network.
+            # allowed_tools auto-approves the safe set; guard_variant_tool denies everything
+            # else by default. NB (lead to live-verify): subagent dispatch must still work
+            # under this allowlist — `Agent`/`Task` are allowed so the variant-generator runs.
             options = ClaudeAgentOptions(
                 allowed_tools=["Read", "Glob", "Grep", "Agent"],
-                can_use_tool=deny_mutating_tools,
+                can_use_tool=guard_variant_tool,
                 **self._base_options(),
             )
             self._variant_client = ClaudeSDKClient(options=options)
