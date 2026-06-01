@@ -149,6 +149,10 @@ class SdkGenerationPort:
         from claude_agent_sdk.types import ResultMessage
 
         options = ClaudeAgentOptions(
+            # `tools` restricts the AVAILABLE toolset (least privilege); `allowed_tools`
+            # only auto-approves. With bypassPermissions, restricting `tools` is what
+            # actually stops the agent from writing/executing in the workspace.
+            tools=["Read", "Glob", "Grep"],
             allowed_tools=["Read", "Glob", "Grep"],
             output_format={"type": "json_schema", "schema": OUTLINE_SCHEMA},
             **self._base_options(),
@@ -168,8 +172,13 @@ class SdkGenerationPort:
         from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
 
         if self._variant_client is None:
+            # NB: we do NOT restrict `tools` here. Verified live: an explicit `tools`
+            # allowlist disables the plugin subagent dispatch (variants come back empty),
+            # so the variant client keeps the default toolset and relies on allowed_tools.
+            # Tightening this would need a can_use_tool callback rather than `tools`.
             options = ClaudeAgentOptions(
-                allowed_tools=["Read", "Glob", "Grep", "Agent"], **self._base_options()
+                allowed_tools=["Read", "Glob", "Grep", "Agent"],
+                **self._base_options(),
             )
             self._variant_client = ClaudeSDKClient(options=options)
             await self._variant_client.connect()

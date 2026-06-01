@@ -100,3 +100,5 @@ class RunManager:
             except asyncio.CancelledError:
                 pass
         self._tasks.clear()
+        # Release the generation port's own resources (e.g. the persistent SDK client).
+        await self._gen.aclose()

@@ -56,3 +56,7 @@ class FakeGenerationPort:
             Variant(id=f"{unit.unit_id}#{k}", text=v.text, evidence_items=v.evidence_items)
             for k, v in enumerate(source[:n], start=1)
         ]
+
+    async def aclose(self) -> None:
+        # The fake holds no resources; present so callers can close any GenerationPort.
+        return None

@@ -84,6 +84,19 @@ outline_opts = ClaudeAgentOptions(allowed_tools=["Read","Glob","Grep"],
 variant_opts = ClaudeAgentOptions(allowed_tools=["Read","Glob","Grep","Agent"], **base)
 ```
 
+### Post-build verification (agent-sdk-verifier-py) — resolved
+
+- **Least privilege.** `allowed_tools` only auto-approves; `tools` restricts the available
+  toolset. The **outline** client sets `tools=["Read","Glob","Grep"]` (verified). The **variant**
+  client cannot: an explicit `tools` allowlist disables the plugin subagent dispatch (variants come
+  back empty — verified live), so it keeps the default toolset behind `allowed_tools`. Tightening it
+  further would require a `can_use_tool` callback, deferred.
+- **Resource lifecycle.** `aclose()` is part of the `GenerationPort` Protocol; `RunManager.aclose()`
+  closes the generation port so the persistent variant client's subprocess is not orphaned on
+  shutdown/cancellation. The fake's `aclose()` is a no-op.
+- **skills= not used.** Loading the plugin via `plugins=[...]` is sufficient to dispatch
+  `conjurer:variant-generator`; the earlier `skills=["conjurer"]` note is unnecessary.
+
 ### Auth / env gotcha (worktrees)
 
 `.env` is per-worktree (gitignored). The key lives in each checkout's `web/.env` separately. When

@@ -49,6 +49,10 @@ class GenerationPort(Protocol):
         """Generate ``n`` grounded, evidence-cited variants for one outline unit."""
         ...
 
+    async def aclose(self) -> None:
+        """Release any held resources (e.g. a persistent SDK client). No-op if none."""
+        ...
+
 
 @runtime_checkable
 class CompositionPort(Protocol):
