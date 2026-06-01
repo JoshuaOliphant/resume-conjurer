@@ -172,6 +172,26 @@ def test_live_repository_falls_back_to_the_fixture_workspace(monkeypatch):
     assert repo.root.name == "workspace"
 
 
+def test_live_landing_tolerates_ungenerated_workspace(live_client):
+    # The fixture workspace has jd.txt + evidence.md but NO outline.json. The live landing
+    # must render the Start form (which POSTs /start), not 500 on a missing application.
+    client, _ = live_client
+    r = client.get("/")
+    assert r.status_code == 200
+    assert 'action="/start"' in r.text  # the form that kicks off generation
+    assert "Tailor your resume" in r.text
+
+
+@pytest.mark.parametrize("path", ["/outline", "/curate", "/curate/0", "/review", "/export"])
+def test_live_pre_generation_steps_redirect_home(live_client, path):
+    # Before generation has produced an outline, the later steps redirect to / (303)
+    # instead of calling load_application and 500-ing on the missing outline.
+    client, _ = live_client
+    r = client.get(path, follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/"
+
+
 def test_live_curate_renders_unverified_note_for_ungrounded_citation(workspace):
     # An ungrounded (unresolvable) citation must render a muted "unverified" note, never a
     # fabricated quote, on the curate screen.

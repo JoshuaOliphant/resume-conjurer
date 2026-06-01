@@ -96,10 +96,19 @@ def create_app(
             **extra,
         }
 
+    def _not_generated_yet() -> bool:
+        # Live only: a fresh workspace has no outline.json yet, so load_application would
+        # raise FileNotFoundError. The fake repo always has its fixture application, and its
+        # load_outline raises NotImplementedError, so the `live and` short-circuit guards it.
+        return live and repo.load_outline(SLUG) is None
+
     @app.get("/", response_class=HTMLResponse)
     def entry(request: Request):
+        # Before generation has run (fresh live workspace) there is no application to show,
+        # so render the Start form without app_data. base.html tolerates a missing app_data.
+        app_data = None if _not_generated_yet() else repo.load_application(SLUG)
         return templates.TemplateResponse(
-            request, "entry.html", _ctx(request, "entry", app_data=repo.load_application(SLUG))
+            request, "entry.html", _ctx(request, "entry", app_data=app_data)
         )
 
     @app.post("/start")
@@ -127,16 +136,22 @@ def create_app(
 
     @app.get("/outline", response_class=HTMLResponse)
     def outline(request: Request):
+        if _not_generated_yet():
+            return RedirectResponse("/", status_code=303)
         return templates.TemplateResponse(
             request, "outline.html", _ctx(request, "outline", app_data=repo.load_application(SLUG))
         )
 
     @app.get("/curate", response_class=HTMLResponse)
     def curate_start():
+        if _not_generated_yet():
+            return RedirectResponse("/", status_code=303)
         return RedirectResponse("/curate/0", status_code=303)
 
     @app.get("/curate/{idx}", response_class=HTMLResponse)
     def curate(request: Request, idx: int):
+        if _not_generated_yet():
+            return RedirectResponse("/", status_code=303)
         data = repo.load_application(SLUG)
         units = data.units
         if idx < 0 or idx >= len(units):
@@ -177,6 +192,8 @@ def create_app(
 
     @app.get("/review", response_class=HTMLResponse)
     def review(request: Request):
+        if _not_generated_yet():
+            return RedirectResponse("/", status_code=303)
         data = repo.load_application(SLUG)
         picks = repo.get_picks(SLUG)
         chosen = []
@@ -210,6 +227,8 @@ def create_app(
 
     @app.get("/export", response_class=HTMLResponse)
     def export(request: Request):
+        if _not_generated_yet():
+            return RedirectResponse("/", status_code=303)
         return templates.TemplateResponse(
             request, "export.html", _ctx(request, "export", app_data=repo.load_application(SLUG))
         )
