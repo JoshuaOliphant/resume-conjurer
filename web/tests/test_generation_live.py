@@ -66,8 +66,10 @@ def test_live_outline_and_variants_with_cache_hit():
             assert all(v.evidence_items for v in v1)
 
             await port.variants(SLUG, second, n=4)
-            cache_read = (port.last_usage or {}).get("cache_read_input_tokens", 0)
-            assert cache_read and cache_read > 0, f"expected cache hit, got usage={port.last_usage}"
+            assert port.last_call is not None
+            assert port.last_call.cache_read_tokens > 0, (
+                f"expected cache hit, got call={port.last_call}"
+            )
         finally:
             await port.aclose()
 

@@ -10,6 +10,7 @@ import pytest
 
 from app.adapters.workspace_fs import FsWorkspaceRepository, default_repository
 from app.domain import Outline, OutlineUnit, Unit, Variant, Evidence
+from app.metrics import CallMetrics, RunMetrics, StepMetrics
 
 SLUG = "globex-staff-platform"
 FIXTURE_WORKSPACE = Path(__file__).parent / "fixtures" / "workspace"
@@ -345,6 +346,39 @@ def test_relayed_block_survives_save_then_load_application(repo: FsWorkspaceRepo
 def test_load_application_without_outline_raises(repo: FsWorkspaceRepository) -> None:
     with pytest.raises(FileNotFoundError, match="No outline.json"):
         repo.load_application(SLUG)
+
+
+# --- metrics round-trip ----------------------------------------------------
+
+
+def _sample_metrics() -> RunMetrics:
+    return RunMetrics(
+        slug=SLUG,
+        steps=[
+            StepMetrics(
+                name="outline",
+                wall_ms=500,
+                call=CallMetrics(cost_usd=0.1, cache_creation_tokens=12000),
+            ),
+            StepMetrics(
+                name="resume.northwind.billing.bullet_1",
+                wall_ms=300,
+                call=CallMetrics(cost_usd=0.02, cache_read_tokens=8000, cache_creation_tokens=200),
+            ),
+        ],
+    )
+
+
+def test_load_metrics_returns_none_when_absent(repo: FsWorkspaceRepository) -> None:
+    assert repo.load_metrics(SLUG) is None
+
+
+def test_metrics_round_trip(repo: FsWorkspaceRepository, workspace: Path) -> None:
+    metrics = _sample_metrics()
+    repo.save_metrics(SLUG, metrics)
+    assert (workspace / "applications" / SLUG / "metrics.json").exists()
+    loaded = repo.load_metrics(SLUG)
+    assert loaded == metrics
 
 
 # --- default_repository ----------------------------------------------------

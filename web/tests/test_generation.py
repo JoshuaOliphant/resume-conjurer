@@ -91,6 +91,31 @@ def test_fake_variants_respects_n():
     assert len(variants) == 2
 
 
+def test_fake_last_call_is_none_before_any_call():
+    assert FakeGenerationPort().last_call is None
+
+
+def test_fake_records_synthetic_metrics_with_a_cold_then_warm_cache():
+    fake = FakeGenerationPort()
+
+    # The first call (outline) is a cold cache: it creates cache but reads none.
+    asyncio.run(fake.outline("globex-staff-platform"))
+    first = fake.last_call
+    assert first is not None
+    assert first.cost_usd > 0
+    assert first.cache_creation_tokens > 0
+    assert first.cache_read_tokens == 0
+    assert first.duration_ms > 0
+
+    # A subsequent variants call is warm: it reads from cache (the persistent-client design).
+    outline = asyncio.run(fake.outline("globex-staff-platform"))
+    asyncio.run(fake.variants("globex-staff-platform", outline.resume_units[0], n=2))
+    warm = fake.last_call
+    assert warm is not None
+    assert warm.cache_read_tokens > 0
+    assert warm.cache_creation_tokens < first.cache_creation_tokens
+
+
 # --- SDK adapter pure helpers ---------------------------------------------
 
 

@@ -29,6 +29,7 @@ from app.domain import (
     Variant,
     WorkspaceInputs,
 )
+from app.metrics import CallMetrics, RunMetrics
 
 
 @runtime_checkable
@@ -39,7 +40,13 @@ class GenerationPort(Protocol):
     via the agent's Read tool against the workspace ``cwd``). Generation is pure data:
     persistence is the repository's job, so these methods return domain objects and write
     nothing.
+
+    ``last_call`` carries the metrics (cost/tokens/cache/timing) of the most recent
+    ``outline``/``variants`` call, or None before any call has run. The RunManager reads it
+    after each call to aggregate a run's cost and cache effectiveness.
     """
+
+    last_call: CallMetrics | None
 
     async def outline(self, slug: str) -> Outline:
         """Choose one strategic frame and design the unit skeleton for ``slug``."""
@@ -114,4 +121,12 @@ class WorkspaceRepository(Protocol):
 
     def load_application(self, slug: str) -> Application:
         """Hydrate the full Application (frame, units, variants, evidence) from the workspace."""
+        ...
+
+    def save_metrics(self, slug: str, metrics: RunMetrics) -> None:
+        """Persist a run's metrics to applications/<slug>/metrics.json."""
+        ...
+
+    def load_metrics(self, slug: str) -> RunMetrics | None:
+        """Load the persisted run metrics, or None if none have been written yet."""
         ...

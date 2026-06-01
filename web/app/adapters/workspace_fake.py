@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from app.data import get_application
 from app.domain import Application, Outline, Unit, WorkspaceInputs
+from app.metrics import RunMetrics
 
 
 class FakeWorkspaceRepository:
@@ -42,6 +43,12 @@ class FakeWorkspaceRepository:
         raise NotImplementedError
 
     def save_variants(self, slug: str, units: list[Unit]) -> None:
+        raise NotImplementedError
+
+    def save_metrics(self, slug: str, metrics: RunMetrics) -> None:
+        raise NotImplementedError
+
+    def load_metrics(self, slug: str) -> RunMetrics | None:
         raise NotImplementedError
 
     # --- picks -------------------------------------------------------------

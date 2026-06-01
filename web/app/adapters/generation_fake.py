@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from app.data import get_application
 from app.domain import Application, FRAMES, Outline, OutlineUnit, Variant
+from app.metrics import CallMetrics
 
 
 class FakeGenerationPort:
@@ -20,6 +21,9 @@ class FakeGenerationPort:
 
     def __init__(self, application: Application | None = None) -> None:
         self._app = application or get_application()
+        # Metrics of the most recent call; None until the first outline()/variants() runs.
+        self.last_call: CallMetrics | None = None
+        self._calls = 0
         self._outline_units: list[OutlineUnit] = []
         self._fixture_by_id: dict[str, list[Variant]] = {}
         cover_n = resume_n = 0
@@ -35,7 +39,28 @@ class FakeGenerationPort:
             )
             self._fixture_by_id[unit_id] = unit.variants
 
+    def _record_call(self) -> None:
+        """Synthesize deterministic metrics for one call: cold first, warm thereafter.
+
+        The first call creates cache but reads none (a cold prompt cache); every call after
+        reads from the warm cache with only a little new creation, so the aggregated
+        cache_hit_pct and variant_cache_hit_pct compute to non-trivial values offline.
+        """
+        cold = self._calls == 0
+        self._calls += 1
+        self.last_call = CallMetrics(
+            cost_usd=0.01,
+            input_tokens=200,
+            output_tokens=120,
+            cache_read_tokens=0 if cold else 8000,
+            cache_creation_tokens=12000 if cold else 200,
+            duration_ms=900,
+            duration_api_ms=700,
+            num_turns=1,
+        )
+
     async def outline(self, slug: str) -> Outline:
+        self._record_call()
         frame_key = next(
             (k for k, name in FRAMES.items() if name == self._app.frame.name), "scale"
         )
@@ -51,6 +76,7 @@ class FakeGenerationPort:
         )
 
     async def variants(self, slug: str, unit: OutlineUnit, n: int = 4) -> list[Variant]:
+        self._record_call()
         source = self._fixture_by_id.get(unit.unit_id, [])
         return [
             Variant(id=f"{unit.unit_id}#{k}", text=v.text, evidence_items=v.evidence_items)

@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from app.domain import Evidence, Outline, OutlineUnit, UnitKind, Variant
+from app.metrics import CallMetrics
 from app.schemas import OUTLINE_SCHEMA
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -160,8 +161,8 @@ class SdkGenerationPort:
         self.plugin_dir = Path(plugin_dir)
         self.model = model
         self._variant_client: Any = None
-        # Usage of the most recent call, for observability and the live cache assertion.
-        self.last_usage: dict[str, Any] | None = None
+        # Metrics of the most recent call, for observability and the live cache assertion.
+        self.last_call: CallMetrics | None = None
 
     def _base_options(self) -> dict[str, Any]:  # pragma: no cover - SDK wiring, live-tested
         # No permission_mode here; each client sets its own. The outline client can safely
@@ -194,6 +195,7 @@ class SdkGenerationPort:
             async for msg in client.receive_response():
                 if isinstance(msg, ResultMessage):
                     structured = msg.structured_output
+                    self.last_call = CallMetrics.from_result(msg)
         if not isinstance(structured, dict):
             raise RuntimeError("Outline generation returned no structured output")
         return outline_from_structured(structured)
@@ -225,7 +227,7 @@ class SdkGenerationPort:
                     if isinstance(block, TextBlock):
                         parts.append(block.text)
             elif isinstance(msg, ResultMessage):
-                self.last_usage = msg.usage
+                self.last_call = CallMetrics.from_result(msg)
         return "\n".join(parts)
 
     async def variants(  # pragma: no cover - live-tested

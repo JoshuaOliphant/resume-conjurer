@@ -34,6 +34,7 @@ from app.domain import (
     WorkspaceInputs,
     label_for_unit_id,
 )
+from app.metrics import RunMetrics
 
 # variants.md grammar. The unit marker and pick line mirror stitch.py exactly so
 # the two stay in lockstep; the variant header adds capturing groups for the
@@ -279,6 +280,18 @@ class FsWorkspaceRepository:
                 if variant.picked:
                     picks[unit.unit_id] = f"{unit.unit_id}#{variant.n}"
         return picks
+
+    # --- metrics -----------------------------------------------------------
+
+    def save_metrics(self, slug: str, metrics: RunMetrics) -> None:
+        path = self._app_dir(slug) / "metrics.json"
+        path.write_text(json.dumps(metrics.to_dict(), indent=2) + "\n")
+
+    def load_metrics(self, slug: str) -> RunMetrics | None:
+        path = self._app_dir(slug) / "metrics.json"
+        if not path.exists():
+            return None
+        return RunMetrics.from_dict(json.loads(path.read_text()))
 
     # --- hydration ---------------------------------------------------------
 
