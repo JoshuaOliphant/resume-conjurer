@@ -11,7 +11,14 @@ from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.generation_sdk import SdkGenerationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.adapters.workspace_fs import FsWorkspaceRepository
-from app.main import build_generation, build_repository, build_run_manager, create_app
+from app.adapters.composition import ScriptCompositionPort
+from app.main import (
+    build_composition,
+    build_generation,
+    build_repository,
+    build_run_manager,
+    create_app,
+)
 from app.runs import RunManager, RunStatus
 
 SLUG = "globex-staff-platform"
@@ -230,6 +237,99 @@ def test_live_curate_renders_unverified_note_for_ungrounded_citation(workspace):
     assert "Unverified citation:" in r.text
     # The fabricated citation string must not be presented as a quoted evidence line.
     assert "“evidence.md - made up”" not in r.text
+
+
+def _prepare_picked_live_workspace(workspace):
+    """Save an outline + variants and pick every unit, so stitch has full input.
+
+    Returns a live-configured app whose composition port runs the real stitch/lint/export
+    over this workspace.
+    """
+    from app.domain import Unit, Variant
+
+    repo = FsWorkspaceRepository(workspace)
+    repo.save_outline(SLUG, _live_outline())
+    repo.save_variants(
+        SLUG,
+        [
+            Unit(
+                id="cover_letter.opening",
+                kind="cover_paragraph",
+                label="Opening",
+                context="Open on the migration.",
+                variants=[
+                    Variant(
+                        id="cover_letter.opening#1",
+                        text="I led the billing migration end to end.",
+                        evidence_items=(),
+                    )
+                ],
+            ),
+            Unit(
+                id="resume.northwind.billing.bullet_1",
+                kind="resume_bullet",
+                label="Bullet 1",
+                context="Surface the migration.",
+                variants=[
+                    Variant(
+                        id="resume.northwind.billing.bullet_1#1",
+                        text="- Led the billing platform migration to event-driven services.",
+                        evidence_items=(),
+                    )
+                ],
+            ),
+        ],
+    )
+    repo.set_pick(SLUG, "cover_letter.opening", "cover_letter.opening#1")
+    repo.set_pick(SLUG, "resume.northwind.billing.bullet_1", "resume.northwind.billing.bullet_1#1")
+    gen = FakeGenerationPort()
+    comp = ScriptCompositionPort(workspace)
+    app = create_app(
+        repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=True, comp=comp
+    )
+    return app
+
+
+def test_live_review_stitches_and_lints_the_real_docs(workspace):
+    app = _prepare_picked_live_workspace(workspace)
+    with TestClient(app) as c:
+        r = c.get("/review")
+    assert r.status_code == 200
+    assert "Style check" in r.text
+    # Stitch wrote the real documents to the workspace.
+    app_dir = workspace / "applications" / SLUG
+    assert (app_dir / "cover_letter.md").exists()
+    assert (app_dir / "resume.md").exists()
+    # The picked content is in the stitched cover letter.
+    assert "billing migration end to end" in (app_dir / "cover_letter.md").read_text()
+
+
+def test_live_export_reports_the_written_or_skipped_map(workspace):
+    import shutil as _shutil
+
+    app = _prepare_picked_live_workspace(workspace)
+    with TestClient(app) as c:
+        c.get("/review")  # stitch first so export has docs
+        r = c.get("/export")
+    assert r.status_code == 200
+    assert "Exported files" in r.text
+    # The reported status matches the real environment: written iff pandoc is installed.
+    have_pandoc = _shutil.which("pandoc") is not None
+    if have_pandoc:
+        assert "written" in r.text
+    else:
+        assert "skipped" in r.text
+
+
+def test_build_composition_is_none_offline(monkeypatch):
+    monkeypatch.delenv("CONJURER_BACKEND", raising=False)
+    assert build_composition() is None
+
+
+def test_build_composition_live_is_script_port(monkeypatch, workspace):
+    monkeypatch.setenv("CONJURER_BACKEND", "live")
+    monkeypatch.setenv("CONJURER_WORKSPACE", str(workspace))
+    assert isinstance(build_composition(), ScriptCompositionPort)
 
 
 def test_live_reset_redirects_without_clearing(live_client):

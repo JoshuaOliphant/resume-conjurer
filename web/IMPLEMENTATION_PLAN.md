@@ -71,17 +71,26 @@ empirical, not doc-inferred:
 
 ### Verified config (the adapter's `ClaudeAgentOptions`)
 
+The two clients are asymmetric on permissions — do NOT put `bypassPermissions` in a shared
+`base`, or it leaks onto the variant client and disables its prompt-injection guard.
+
 ```python
 base = dict(
     cwd=str(workspace),
     plugins=[{"type": "local", "path": str(repo / "plugins" / "conjurer")}],
     setting_sources=[],            # isolate from THIS repo's .claude hooks/settings
-    permission_mode="bypassPermissions",
     model="claude-sonnet-4-6",
+    # NOTE: no permission_mode here — each client sets its own (see below).
 )
-outline_opts = ClaudeAgentOptions(allowed_tools=["Read","Glob","Grep"],
+# Outline: a `tools` allowlist removes mutating tools entirely, so bypass is safe.
+outline_opts = ClaudeAgentOptions(
+    tools=["Read","Glob","Grep"], allowed_tools=["Read","Glob","Grep"],
+    permission_mode="bypassPermissions",
     output_format={"type":"json_schema","schema": OUTLINE_SCHEMA}, **base)
-variant_opts = ClaudeAgentOptions(allowed_tools=["Read","Glob","Grep","Agent"], **base)
+# Variant: cannot use a `tools` allowlist (breaks subagent dispatch), so it does NOT bypass
+# and instead supplies a deny-by-default `can_use_tool` guard (guard_variant_tool).
+variant_opts = ClaudeAgentOptions(
+    allowed_tools=["Read","Glob","Grep","Agent"], can_use_tool=guard_variant_tool, **base)
 ```
 
 ### Post-build verification (agent-sdk-verifier-py) — resolved
@@ -90,11 +99,13 @@ variant_opts = ClaudeAgentOptions(allowed_tools=["Read","Glob","Grep","Agent"], 
   restricts the available toolset. The **outline** client sets `tools=["Read","Glob","Grep"]` and
   may bypass (no mutating tools exist for it). The **variant** client cannot use a `tools` allowlist
   (it disables plugin subagent dispatch — variants come back empty, verified live), so instead it
-  **drops `bypassPermissions` and supplies a `can_use_tool` guard** (`deny_mutating_tools`) denying
-  Bash/Write/Edit/MultiEdit/NotebookEdit/WebFetch/WebSearch/KillShell. This closes the
-  prompt-injection → RCE/exfiltration path from a hostile pasted JD while keeping Read/Glob/Grep/
-  Agent. Verified live: dispatch and the cache hit still work under the guard. (Raised by the push
-  security review; fixed, not deferred.)
+  **drops `bypassPermissions` and supplies a deny-by-default `can_use_tool` guard**
+  (`guard_variant_tool`) that allows ONLY `{Read,Glob,Grep,Agent,Task}` and denies everything else
+  — including unknown built-ins and any `mcp__*` tool. This closes the prompt-injection →
+  RCE/exfiltration path from a hostile pasted JD while keeping subagent dispatch. The allowlist is
+  enforced both via `allowed_tools` (auto-approval) and via the callback. Verified live: dispatch
+  and the cache hit still work under the guard. (Raised by the push security review; fixed, not
+  deferred.)
 - **Resource lifecycle.** `aclose()` is part of the `GenerationPort` Protocol; `RunManager.aclose()`
   closes the generation port so the persistent variant client's subprocess is not orphaned on
   shutdown/cancellation. The fake's `aclose()` is a no-op.
@@ -126,10 +137,12 @@ stitch a fixture `variants.md` with picks → expected `cover_letter.md`/`resume
 map to `LintCheck`. (Mostly exercises existing, tested scripts.)
 
 **Phase 3 — GenerationPort, offline-testable (`generation_sdk.py` + `generation_fake.py`).**
-Define `OUTLINE_SCHEMA` (mirrors `references/pipeline.md`) and `VARIANT_SCHEMA`. Build the SDK
-adapter: persistent `ClaudeSDKClient`, plugin+skill loaded, `cwd=workspace`, least-privilege tools.
-`outline()` → structured_output; `variants(unit)` → structured variants. *Tests:* route/flow tests
-run entirely on `generation_fake` (no network); Protocol conformance shared by both.
+Define `OUTLINE_SCHEMA` (mirrors `references/pipeline.md`). Build the SDK adapter: persistent
+`ClaudeSDKClient`, plugin loaded, `cwd=workspace`, least-privilege tools. `outline()` →
+structured_output; `variants(unit)` → the variant-generator's native `## Unit:` block, parsed by
+`variants_from_block` (see the Spike Results section for the verified contract). *Tests:*
+route/flow tests run entirely on `generation_fake` (no network); Protocol conformance shared by
+both.
 
 **Phase 4 — Async runs + UI wiring (`runs.py`, `main.py`).** Replace `SELECTIONS` with
 pick-persistence to `variants.md` via the repository. Add the kickoff route (background task) + a
@@ -156,9 +169,13 @@ real workspace.
 
 ## Progress (live milestone)
 
-Phases 0,1,2,3,5 complete and committed; 60 offline tests at 100% line+branch; the
+Phases 0–5 complete and committed; the offline suite is at 100% line+branch; the
 `@pytest.mark.live` test passes against the real API (valid outline, grounded variants,
-`cache_read_input_tokens > 0`). Remaining: **Phase 4** (async runs + UI wiring).
+`cache_read_input_tokens > 0`). Phase 4 (async runs + UI wiring) is done: `runs.py` orchestrates
+the background run, the summoning page polls `GET /generate/status`, and picks persist to
+`variants.md`. In the live config, `/review` stitches the picked variants into real
+`cover_letter.md`/`resume.md` and runs the grimoire linter over them (via `ScriptCompositionPort`),
+and `/export` runs `export_docs` and reports the written/skipped map per format.
 
 ### Phase 4 design decision (offline display path)
 

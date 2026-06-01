@@ -66,8 +66,8 @@ live flow). The default run deselects the `live` marker.
 | `POST /start` | (summon) | `fake`: straight to Outline. `live`: kicks off a background run and shows the summoning page, which polls `GET /generate/status` until generation is done. |
 | `/outline` | Outline | The chosen strategic frame and the lines to tailor. |
 | `/curate/{i}` | Curate | One line at a time: grounded variants, each with its evidence trace. Pick one (click or `1`–`4`), continue (`Enter`). |
-| `/review` | Review | The stitched documents in reading typography, with the style-check (lint) results. |
-| `/export` | Export | PDF / Word / Markdown. |
+| `/review` | Review | The stitched documents in reading typography, with the style-check (lint) results. In `live`, this stitches the picked variants into real `cover_letter.md`/`resume.md` and runs the grimoire linter over them; in `fake` it uses the in-memory lint. |
+| `/export` | Export | PDF / Word / Markdown. In `live`, this runs `export_docs` and reports the written/skipped map per format; in `fake` it shows the static export options. |
 
 ## Design
 

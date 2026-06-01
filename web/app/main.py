@@ -13,12 +13,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.adapters.composition import ScriptCompositionPort
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.generation_sdk import SdkGenerationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.adapters.workspace_fs import FsWorkspaceRepository
 from app.data import lint_results
-from app.ports import GenerationPort, WorkspaceRepository
+from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
 from app.runs import RunManager
 
 BASE = Path(__file__).parent
@@ -64,6 +65,14 @@ def build_generation() -> GenerationPort:
     return FakeGenerationPort()
 
 
+def build_composition() -> CompositionPort | None:
+    # Live stitches+lints+exports the real workspace docs; fake has no workspace to stitch,
+    # so it keeps the in-memory lint and the static export template (comp is None).
+    if _is_live():
+        return ScriptCompositionPort(_workspace_root())
+    return None
+
+
 def build_run_manager() -> RunManager:
     return RunManager(repo=build_repository(), gen=build_generation())
 
@@ -74,8 +83,14 @@ def create_app(
     run_manager: RunManager,
     *,
     live: bool,
+    comp: CompositionPort | None = None,
 ) -> FastAPI:
-    """Build the FastAPI app over an injected repository, generation port, and run manager."""
+    """Build the FastAPI app over an injected repository, generation port, and run manager.
+
+    ``comp`` is the deterministic composition port (stitch/lint/export). When present (live
+    config) /review stitches+lints the real workspace docs and /export runs export_docs; when
+    None (fake config) /review uses the in-memory lint and /export shows the static template.
+    """
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
@@ -211,6 +226,13 @@ def create_app(
         # its variants — not merely that the store has enough entries.
         complete = all(picks.get(u.id) in u.variant_ids for u in data.units)
         cover_text = "\n\n".join(v.text for (_, v) in cover)
+        if comp is not None:
+            # Live: stitch the picked variants into real cover_letter.md / resume.md, then
+            # run the grimoire linter over those stitched docs (the real check, not in-memory).
+            comp.stitch(SLUG)
+            lint = comp.lint(SLUG)
+        else:
+            lint = lint_results(cover_text)
         return templates.TemplateResponse(
             request,
             "review.html",
@@ -220,7 +242,7 @@ def create_app(
                 app_data=data,
                 cover=cover,
                 bullets=bullets,
-                lint=lint_results(cover_text),
+                lint=lint,
                 complete=complete,
             ),
         )
@@ -229,8 +251,13 @@ def create_app(
     def export(request: Request):
         if _not_generated_yet():
             return RedirectResponse("/", status_code=303)
+        # Live: actually export the stitched docs and report the written/skipped map per
+        # format. Fake has no workspace to export, so it shows the static export template.
+        exported = comp.export(SLUG, ("pdf", "docx")) if comp is not None else None
         return templates.TemplateResponse(
-            request, "export.html", _ctx(request, "export", app_data=repo.load_application(SLUG))
+            request,
+            "export.html",
+            _ctx(request, "export", app_data=repo.load_application(SLUG), exported=exported),
         )
 
     @app.post("/reset")
@@ -247,5 +274,8 @@ def create_app(
 
 _repo = build_repository()
 _gen = build_generation()
+_comp = build_composition()
 _run_manager = RunManager(repo=_repo, gen=_gen)
-app = create_app(repo=_repo, gen=_gen, run_manager=_run_manager, live=_is_live())
+app = create_app(
+    repo=_repo, gen=_gen, run_manager=_run_manager, live=_is_live(), comp=_comp
+)
