@@ -16,7 +16,7 @@
       <div class="brand">
         <span class="brand__mark">{{ i.icon("brand", "brand__mark") }}</span>
         <span class="brand__name">Conjurer
-          <span class="brand__app">{{ app_data.company }} · {{ app_data.role }}</span>
+          {% if app_data %}<span class="brand__app">{{ app_data.company }} · {{ app_data.role }}</span>{% endif %}
         </span>
       </div>
 

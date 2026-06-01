@@ -4,16 +4,24 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app.adapters.generation_fake import FakeGenerationPort
+from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import EVIDENCE, _v, get_application
-from app.main import SELECTIONS, app
+from app.main import SLUG, create_app
+from app.runs import RunManager
 
 
 @pytest.fixture
-def client():
-    SELECTIONS.clear()
+def repo():
+    return FakeWorkspaceRepository()
+
+
+@pytest.fixture
+def client(repo):
+    gen = FakeGenerationPort()
+    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=False)
     with TestClient(app) as c:
         yield c
-    SELECTIONS.clear()
 
 
 def test_entry_renders(client):
@@ -64,23 +72,23 @@ def test_curate_out_of_range_goes_to_review(client):
     assert r.headers["location"] == "/review"
 
 
-def test_pick_rejects_variant_not_in_unit(client):
+def test_pick_rejects_variant_not_in_unit(client, repo):
     r = client.post("/curate/0", data={"variant_id": "not-a-real-id"}, follow_redirects=False)
     assert r.status_code == 422
-    assert "cover-open" not in SELECTIONS  # nothing stored on rejection
+    assert "cover-open" not in repo.get_picks(SLUG)  # nothing stored on rejection
 
 
-def test_pick_out_of_range_idx_returns_404(client):
+def test_pick_out_of_range_idx_returns_404(client, repo):
     r = client.post("/curate/999", data={"variant_id": "cover-open-1"}, follow_redirects=False)
     assert r.status_code == 404
-    assert not SELECTIONS
+    assert repo.get_picks(SLUG) == {}
 
 
-def test_pick_stores_selection_and_advances(client):
+def test_pick_stores_selection_and_advances(client, repo):
     r = client.post("/curate/0", data={"variant_id": "cover-open-2"}, follow_redirects=False)
     assert r.status_code == 303
     assert r.headers["location"] == "/curate/1"
-    assert SELECTIONS["cover-open"] == "cover-open-2"
+    assert repo.get_picks(SLUG)["cover-open"] == "cover-open-2"
 
 
 def test_last_pick_advances_to_review(client):
@@ -164,9 +172,9 @@ def test_export_renders(client):
     assert "pandoc" in r.text
 
 
-def test_reset_clears_selections(client):
+def test_reset_clears_selections(client, repo):
     client.post("/curate/0", data={"variant_id": "cover-open-1"}, follow_redirects=False)
-    assert SELECTIONS
+    assert repo.get_picks(SLUG)
     r = client.post("/reset", follow_redirects=False)
     assert r.status_code == 303
-    assert not SELECTIONS
+    assert repo.get_picks(SLUG) == {}
