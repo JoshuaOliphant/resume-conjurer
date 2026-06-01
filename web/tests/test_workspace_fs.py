@@ -189,6 +189,8 @@ def test_load_application_resolves_l_citation_to_real_line(repo: FsWorkspaceRepo
     assert len(trace) == 1
     assert trace[0].id == "master-resume.md L16"
     assert "billing platform from a monolith" in trace[0].text
+    # A resolved L-citation is grounded: its text is a genuine pooled quote.
+    assert trace[0].grounded is True
     # The resolved evidence is the same instance shared in the application pool.
     assert app.evidence[trace[0].id] is trace[0]
 
@@ -210,6 +212,9 @@ def test_load_application_unresolvable_citation_renders_truthfully(repo: FsWorks
     assert trace[0].id == "evidence.md - billing migration"
     assert trace[0].text == "evidence.md - billing migration"
     assert trace[0].source == "evidence.md - billing migration"
+    # An unresolved / free-form citation is NOT grounded: the UI must not present its
+    # "text" (which is only the citation string) as a verified quote.
+    assert trace[0].grounded is False
 
 
 def test_save_variants_with_no_evidence_cites_master_resume(repo: FsWorkspaceRepository, workspace: Path) -> None:

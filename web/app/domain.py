@@ -41,6 +41,10 @@ class Evidence:
     id: str
     text: str
     source: str  # where in the master resume / evidence this line lives
+    # True when the evidence resolves to a real pooled line (its text is a genuine quote).
+    # False for a self-citation fallback, where ``text`` is only the citation string and the
+    # UI must not present it as a verified quote.
+    grounded: bool = True
 
 
 @dataclass(frozen=True)

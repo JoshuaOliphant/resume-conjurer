@@ -39,7 +39,11 @@
           <ul class="trace__items">
             {% for e in traces %}
             <li class="trace__item">
+              {% if e.grounded %}
               <span class="trace__quote">“{{ e.text }}”</span>
+              {% else %}
+              <span class="trace__quote trace__quote--unverified">Unverified citation: {{ e.source }}</span>
+              {% endif %}
               <span class="trace__src">{{ e.source }}</span>
             </li>
             {% endfor %}

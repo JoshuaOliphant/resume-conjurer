@@ -18,6 +18,36 @@ SLUG = "globex-staff-platform"
 FIXTURE = Path(__file__).parent / "fixtures" / "workspace"
 
 
+def _live_outline():
+    """A minimal outline whose ids token-match the fixture master-resume sub-roles.
+
+    ``resume.northwind.billing.bullet_1`` matches the master-resume "Billing Platform"
+    sub-role, so the composer (stitch) can slot it during the live /review test.
+    """
+    from app.domain import Outline, OutlineUnit
+
+    return Outline(
+        strategic_frame="multiplier",
+        frame_rationale="Globex is a platform company; lead with leverage over many teams.",
+        company="Globex",
+        role_title="Staff Platform Engineer",
+        cover_letter_units=(
+            OutlineUnit(
+                unit_id="cover_letter.opening",
+                kind="cover_paragraph",
+                description="Open on the platform migration as the proof of leverage.",
+            ),
+        ),
+        resume_units=(
+            OutlineUnit(
+                unit_id="resume.northwind.billing.bullet_1",
+                kind="resume_bullet",
+                description="Surface the monolith-to-events migration.",
+            ),
+        ),
+    )
+
+
 @pytest.fixture
 def workspace(tmp_path):
     dest = tmp_path / "workspace"
@@ -140,6 +170,46 @@ def test_live_repository_falls_back_to_the_fixture_workspace(monkeypatch):
     repo = build_repository()
     assert isinstance(repo, FsWorkspaceRepository)
     assert repo.root.name == "workspace"
+
+
+def test_live_curate_renders_unverified_note_for_ungrounded_citation(workspace):
+    # An ungrounded (unresolvable) citation must render a muted "unverified" note, never a
+    # fabricated quote, on the curate screen.
+    from app.domain import Evidence, Unit, Variant
+    from app.adapters.workspace_fs import FsWorkspaceRepository
+
+    repo = FsWorkspaceRepository(workspace)
+    repo.save_outline(SLUG, _live_outline())
+    repo.save_variants(
+        SLUG,
+        [
+            Unit(
+                id="cover_letter.opening",
+                kind="cover_paragraph",
+                label="Opening",
+                context="Open on the migration.",
+                variants=[
+                    Variant(
+                        id="cover_letter.opening#1",
+                        text="A grounded paragraph.",
+                        evidence_items=(
+                            Evidence(
+                                id="evidence.md - made up", text="x", source="y", grounded=False
+                            ),
+                        ),
+                    )
+                ],
+            )
+        ],
+    )
+    gen = FakeGenerationPort()
+    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=True)
+    with TestClient(app) as c:
+        r = c.get("/curate/0")
+    assert r.status_code == 200
+    assert "Unverified citation:" in r.text
+    # The fabricated citation string must not be presented as a quoted evidence line.
+    assert "“evidence.md - made up”" not in r.text
 
 
 def test_live_reset_redirects_without_clearing(live_client):

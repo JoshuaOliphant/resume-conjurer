@@ -283,9 +283,11 @@ class FsWorkspaceRepository:
         if citation in cache:
             return cache[citation]
         if _L_CITATION_RE.match(citation) and citation in pool:
-            ev = pool[citation]
+            ev = pool[citation]  # a real pooled line: grounded (its text is a true quote)
         else:
-            ev = Evidence(id=citation, text=citation, source=citation)
+            # Self-citation fallback: we could not resolve a pooled quote, so mark it
+            # ungrounded and never let the UI present the citation string as a quote.
+            ev = Evidence(id=citation, text=citation, source=citation, grounded=False)
         cache[citation] = ev
         return ev
 
