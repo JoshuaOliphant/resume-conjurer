@@ -174,6 +174,11 @@ class FsWorkspaceRepository:
             evidence_pool=evidence_pool,
         )
 
+    def save_jd(self, slug: str, jd: str) -> None:
+        app_dir = self._app_dir(slug)
+        app_dir.mkdir(parents=True, exist_ok=True)
+        (app_dir / "jd.txt").write_text(jd if jd.endswith("\n") else jd + "\n")
+
     # --- outline -----------------------------------------------------------
 
     def save_outline(self, slug: str, outline: Outline) -> None:

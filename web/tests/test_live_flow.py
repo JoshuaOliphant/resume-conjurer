@@ -388,3 +388,39 @@ def test_live_reset_redirects_without_clearing(live_client):
     r = client.post("/reset", follow_redirects=False)
     assert r.status_code == 303
     assert r.headers["location"] == "/"
+
+
+def test_live_landing_states_honest_master_resume_source(live_client):
+    # The Start screen must tell the truth: reuse the workspace master resume, with no
+    # fabricated "last updated"/evidence-count copy and no non-functional upload control.
+    client, _ = live_client
+    r = client.get("/")
+    assert "Reusing master-resume.md from your workspace." in r.text
+    assert "2 days ago" not in r.text
+    assert "evidence entries" not in r.text
+    assert "Upload a different one" not in r.text
+
+
+def test_live_start_writes_the_pasted_jd_to_the_workspace(workspace):
+    repo = FsWorkspaceRepository(workspace)
+    gen = FakeGenerationPort()
+    manager = RunManager(repo=repo, gen=gen)
+    app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
+    with TestClient(app) as c:
+        r = c.post("/start", data={"jd": "Widget Wrangler at Globex. Unique-JD-Marker-42."})
+    assert r.status_code == 200
+    jd_txt = (workspace / "applications" / SLUG / "jd.txt").read_text()
+    assert "Unique-JD-Marker-42." in jd_txt
+
+
+def test_live_start_with_blank_jd_keeps_the_existing_jd(workspace):
+    jd_path = workspace / "applications" / SLUG / "jd.txt"
+    original = jd_path.read_text()
+    repo = FsWorkspaceRepository(workspace)
+    gen = FakeGenerationPort()
+    manager = RunManager(repo=repo, gen=gen)
+    app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
+    with TestClient(app) as c:
+        r = c.post("/start", data={"jd": "   "})  # whitespace-only -> not written
+    assert r.status_code == 200
+    assert jd_path.read_text() == original

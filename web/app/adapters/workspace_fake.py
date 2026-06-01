@@ -32,6 +32,9 @@ class FakeWorkspaceRepository:
     def load_inputs(self, slug: str) -> WorkspaceInputs:
         raise NotImplementedError
 
+    def save_jd(self, slug: str, jd: str) -> None:
+        raise NotImplementedError
+
     def save_outline(self, slug: str, outline: Outline) -> None:
         raise NotImplementedError
 

@@ -88,6 +88,10 @@ class WorkspaceRepository(Protocol):
         """Read grimoire, master resume, JD, evidence, and build the evidence pool."""
         ...
 
+    def save_jd(self, slug: str, jd: str) -> None:
+        """Persist the pasted job description to applications/<slug>/jd.txt before generating."""
+        ...
+
     def save_outline(self, slug: str, outline: Outline) -> None:
         """Persist the outline to applications/<slug>/outline.json."""
         ...

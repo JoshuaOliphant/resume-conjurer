@@ -122,16 +122,30 @@ def create_app(
         # Before generation has run (fresh live workspace) there is no application to show,
         # so render the Start form without app_data. base.html tolerates a missing app_data.
         app_data = None if _not_generated_yet() else repo.load_application(SLUG)
+        # Honest source line: the live backend reuses the workspace master resume; the
+        # offline config uses the bundled sample. No fabricated "last updated"/counts.
+        master_resume_note = (
+            "Reusing master-resume.md from your workspace."
+            if live
+            else "Using the bundled sample resume."
+        )
         return templates.TemplateResponse(
-            request, "entry.html", _ctx(request, "entry", app_data=app_data)
+            request,
+            "entry.html",
+            _ctx(request, "entry", app_data=app_data, master_resume_note=master_resume_note),
         )
 
     @app.post("/start")
     async def start(request: Request):
         # Offline (fake) config has variants ready, so step straight to the outline.
-        # The live config summons them in the background and shows a progress page.
+        # The live config writes the pasted JD into the workspace, then summons variants
+        # in the background and shows a progress page.
         if not live:
             return RedirectResponse("/outline", status_code=303)
+        form = await request.form()
+        jd = str(form.get("jd", "")).strip()
+        if jd:
+            repo.save_jd(SLUG, jd)
         run_manager.start(SLUG)
         return templates.TemplateResponse(
             request,

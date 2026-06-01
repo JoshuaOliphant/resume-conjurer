@@ -252,3 +252,13 @@ def test_reset_clears_selections(client, repo):
     r = client.post("/reset", follow_redirects=False)
     assert r.status_code == 303
     assert repo.get_picks(SLUG) == {}
+
+
+def test_entry_is_honest_and_has_no_dead_upload(client):
+    # Fake config: the Start screen states the bundled sample, with no fabricated
+    # "last updated"/count copy and no non-functional upload affordance.
+    r = client.get("/")
+    assert "Using the bundled sample resume." in r.text
+    assert "2 days ago" not in r.text
+    assert "7 evidence entries" not in r.text
+    assert "Upload a different one" not in r.text

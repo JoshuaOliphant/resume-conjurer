@@ -360,3 +360,15 @@ def test_default_repository_falls_back_to_fixture(monkeypatch: pytest.MonkeyPatc
     monkeypatch.delenv("CONJURER_WORKSPACE", raising=False)
     repo = default_repository()
     assert repo.root == FIXTURE_WORKSPACE.resolve()
+
+
+def test_save_jd_creates_app_dir_and_normalizes_newline(tmp_path: Path) -> None:
+    # Fresh workspace with no applications/<slug>/ yet; save_jd must create it.
+    repo = FsWorkspaceRepository(tmp_path)
+    jd_path = tmp_path / "applications" / SLUG / "jd.txt"
+
+    repo.save_jd(SLUG, "Staff Platform Engineer at Globex")  # no trailing newline
+    assert jd_path.read_text() == "Staff Platform Engineer at Globex\n"
+
+    repo.save_jd(SLUG, "Already newline-terminated\n")  # trailing newline preserved, not doubled
+    assert jd_path.read_text() == "Already newline-terminated\n"
