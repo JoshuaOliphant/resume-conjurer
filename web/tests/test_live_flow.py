@@ -138,6 +138,73 @@ def test_live_outline_renders_from_persisted_workspace(workspace):
     assert "Globex" in r.text
 
 
+def _ran_live_app(workspace):
+    """Run a fake generation to completion, then return a live app over that same manager.
+
+    Reusing the manager (rather than building a fresh one) is what makes metrics(SLUG)
+    populated, so /metrics and the /review summary have a real run to surface.
+    """
+    import asyncio
+
+    repo = FsWorkspaceRepository(workspace)
+    gen = FakeGenerationPort()
+    manager = RunManager(repo=repo, gen=gen)
+
+    async def go():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+
+    asyncio.run(go())
+    assert manager.status(SLUG).state == "done"
+    app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
+    return app, manager
+
+
+def test_metrics_endpoint_returns_run_metrics_after_a_run(workspace):
+    app, manager = _ran_live_app(workspace)
+    with TestClient(app) as c:
+        r = c.get("/metrics")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["slug"] == SLUG
+    assert body["line_count"] == manager.status(SLUG).units_total
+    assert body["total_cost_usd"] > 0
+    assert body["steps"][0]["name"] == "outline"
+
+
+def test_metrics_endpoint_is_empty_before_any_run(live_client):
+    client, _ = live_client
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    assert r.json() == {}
+
+
+def test_review_shows_the_run_summary_line(workspace):
+    app, _ = _ran_live_app(workspace)
+    with TestClient(app) as c:
+        r = c.get("/review")
+    assert r.status_code == 200
+    assert "This résumé" in r.text
+    assert "from cache" in r.text
+    assert "tokens" in r.text
+
+
+def test_review_omits_the_summary_when_no_run(live_client):
+    # The fake config has no run, so the review summary line is absent.
+    client, _ = live_client
+    # A fresh live workspace redirects /review home until generation runs; the offline fake
+    # config (default) renders /review with no run, so assert the summary is omitted there.
+    from app.main import create_app as _create_app
+
+    repo = FakeWorkspaceRepository()
+    gen = FakeGenerationPort()
+    app = _create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=False)
+    with TestClient(app) as c:
+        r = c.get("/review")
+    assert r.status_code == 200
+    assert "This résumé" not in r.text
+
+
 # --- Composition root (env-keyed) -----------------------------------------
 
 

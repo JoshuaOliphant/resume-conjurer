@@ -47,6 +47,69 @@ def test_run_reaches_done_and_persists_outputs(workspace):
     assert len(loaded.units) == status.units_total
 
 
+def test_run_aggregates_metrics_and_persists_them(workspace):
+    repo = FsWorkspaceRepository(workspace)
+    manager = RunManager(repo=repo, gen=FakeGenerationPort())
+
+    async def go():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+
+    asyncio.run(go())
+
+    metrics = manager.metrics(SLUG)
+    assert metrics is not None
+    assert metrics.slug == SLUG
+    # One "outline" step plus one StepMetrics per generated unit.
+    names = [s.name for s in metrics.steps]
+    assert names[0] == "outline"
+    units_total = manager.status(SLUG).units_total
+    assert len(metrics.steps) == units_total + 1
+    assert metrics.line_count == units_total
+    # Totals aggregate across every step.
+    assert metrics.total_cost_usd > 0
+    assert metrics.total_input_tokens > 0
+    # The warm-cache variant calls give a non-trivial variant cache hit rate.
+    assert metrics.variant_cache_hit_pct > 0
+
+    # Metrics were persisted to the workspace and load back equal.
+    assert (workspace / "applications" / SLUG / "metrics.json").exists()
+    assert repo.load_metrics(SLUG) == metrics
+
+
+def test_metrics_for_unstarted_slug_is_none(workspace):
+    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort())
+    assert manager.metrics(SLUG) is None
+
+
+def test_metrics_keep_partial_steps_on_error(workspace):
+    # A run that fails mid-loop still records metrics for the steps that completed before the
+    # failure (best-effort), so the surfaced figures reflect how far the summoning got.
+    class RaiseOnSecondUnit(FakeGenerationPort):
+        calls = 0
+
+        async def variants(self, slug, unit: OutlineUnit, n: int = 4):
+            type(self).calls += 1
+            if type(self).calls == 2:
+                raise RuntimeError("the summoning failed mid-flight")
+            return await super().variants(slug, unit, n)
+
+    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=RaiseOnSecondUnit())
+
+    async def go():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+
+    asyncio.run(go())
+
+    assert manager.status(SLUG).state == "error"
+    metrics = manager.metrics(SLUG)
+    assert metrics is not None
+    # outline + the one variant step that completed before the second raised.
+    assert [s.name for s in metrics.steps][0] == "outline"
+    assert metrics.line_count == 1
+
+
 def test_status_for_unstarted_slug_is_idle(workspace):
     manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort())
     status = manager.status(SLUG)

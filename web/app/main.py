@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -163,6 +163,14 @@ def create_app(
             response.headers["HX-Redirect"] = "/outline"
         return response
 
+    @app.get("/metrics")
+    def metrics():
+        # The current run's metrics as JSON (cost / caching / performance). Empty object when
+        # no run has completed yet — true in the fake config and in a fresh live workspace.
+        run_metrics = run_manager.metrics(SLUG)
+        payload = run_metrics.to_dict() if run_metrics is not None else {}
+        return JSONResponse(payload)
+
     @app.get("/outline", response_class=HTMLResponse)
     def outline(request: Request):
         if _not_generated_yet():
@@ -261,6 +269,7 @@ def create_app(
                 bullets=bullets,
                 lint=lint,
                 complete=complete,
+                run_metrics=run_manager.metrics(SLUG),
             ),
         )
 

@@ -18,9 +18,11 @@ this module only sequences calls and counts progress.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 
 from app.domain import Unit, label_for_unit_id
+from app.metrics import CallMetrics, RunMetrics, StepMetrics
 from app.ports import GenerationPort, WorkspaceRepository
 
 RunState = str  # one of: "idle" | "running" | "done" | "error"
@@ -44,9 +46,23 @@ class RunManager:
         self._gen = gen
         self._status: dict[str, RunStatus] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._metrics: dict[str, RunMetrics] = {}
 
     def status(self, slug: str) -> RunStatus:
         return self._status.get(slug, RunStatus())
+
+    def metrics(self, slug: str) -> RunMetrics | None:
+        return self._metrics.get(slug)
+
+    def _record_step(self, run_metrics: RunMetrics, name: str, started: float) -> None:
+        """Append one step's metrics: its wall time plus the generation port's last call.
+
+        Called after each outline()/variants() so partial progress is captured even when a
+        later step fails (the RunMetrics object is already visible via metrics()).
+        """
+        wall_ms = int((time.monotonic() - started) * 1000)
+        call = self._gen.last_call or CallMetrics.zero()
+        run_metrics.steps.append(StepMetrics(name=name, wall_ms=wall_ms, call=call))
 
     def start(self, slug: str) -> None:
         """Launch a background run for ``slug`` unless one is already running."""
@@ -64,8 +80,15 @@ class RunManager:
             await task
 
     async def _run(self, slug: str) -> None:
+        run_metrics = RunMetrics(slug=slug, steps=[])
+        # Publish the (initially empty) metrics up front so any steps recorded before an error
+        # are visible best-effort; the except path touches no metrics and so cannot mask the
+        # generation error with a metrics/persist failure.
+        self._metrics[slug] = run_metrics
         try:
+            started = time.monotonic()
             outline = await self._gen.outline(slug)
+            self._record_step(run_metrics, "outline", started)
             self._repo.save_outline(slug, outline)
             outline_units = outline.units
             self._status[slug] = RunStatus(
@@ -73,7 +96,9 @@ class RunManager:
             )
             units: list[Unit] = []
             for ou in outline_units:
+                started = time.monotonic()
                 variants = await self._gen.variants(slug, ou)
+                self._record_step(run_metrics, ou.unit_id, started)
                 # A unit with zero variants is a real generation failure: fail honestly
                 # here so the except below records state="error", rather than letting an
                 # empty unit reach (and 500) the curate/review screens later.
@@ -90,6 +115,7 @@ class RunManager:
                 )
                 self._status[slug].units_done = len(units)
             self._repo.save_variants(slug, units)
+            self._repo.save_metrics(slug, run_metrics)
             self._status[slug].state = "done"
         except Exception as exc:  # the agent can fail; we say so honestly rather than pretend.
             # Keep whatever progress counts the run reached so the error snapshot shows how

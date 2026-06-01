@@ -45,6 +45,13 @@
     </ul>
   </section>
 
+  {% if run_metrics %}
+  <p class="note">This résumé: ${{ '%.2f' % run_metrics.total_cost_usd }} ·
+    {{ run_metrics.total_input_tokens + run_metrics.total_output_tokens }} tokens ·
+    {{ '%.0f' % run_metrics.cache_hit_pct }}% from cache ·
+    {{ '%.1f' % (run_metrics.wall_ms / 1000) }}s</p>
+  {% endif %}
+
   <div class="actions actions--split">
     <a class="btn btn--quiet" href="/curate/0">{{ i.icon("arrow-left") }} Revisit picks</a>
     <a class="btn btn--primary" href="/export">Export {{ i.icon("arrow-right") }}</a>
