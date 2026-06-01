@@ -86,11 +86,15 @@ variant_opts = ClaudeAgentOptions(allowed_tools=["Read","Glob","Grep","Agent"], 
 
 ### Post-build verification (agent-sdk-verifier-py) — resolved
 
-- **Least privilege.** `allowed_tools` only auto-approves; `tools` restricts the available
-  toolset. The **outline** client sets `tools=["Read","Glob","Grep"]` (verified). The **variant**
-  client cannot: an explicit `tools` allowlist disables the plugin subagent dispatch (variants come
-  back empty — verified live), so it keeps the default toolset behind `allowed_tools`. Tightening it
-  further would require a `can_use_tool` callback, deferred.
+- **Least privilege + prompt-injection defense.** `allowed_tools` only auto-approves; `tools`
+  restricts the available toolset. The **outline** client sets `tools=["Read","Glob","Grep"]` and
+  may bypass (no mutating tools exist for it). The **variant** client cannot use a `tools` allowlist
+  (it disables plugin subagent dispatch — variants come back empty, verified live), so instead it
+  **drops `bypassPermissions` and supplies a `can_use_tool` guard** (`deny_mutating_tools`) denying
+  Bash/Write/Edit/MultiEdit/NotebookEdit/WebFetch/WebSearch/KillShell. This closes the
+  prompt-injection → RCE/exfiltration path from a hostile pasted JD while keeping Read/Glob/Grep/
+  Agent. Verified live: dispatch and the cache hit still work under the guard. (Raised by the push
+  security review; fixed, not deferred.)
 - **Resource lifecycle.** `aclose()` is part of the `GenerationPort` Protocol; `RunManager.aclose()`
   closes the generation port so the persistent variant client's subprocess is not orphaned on
   shutdown/cancellation. The fake's `aclose()` is a no-op.

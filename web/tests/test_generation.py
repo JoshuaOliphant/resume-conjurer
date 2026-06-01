@@ -10,14 +10,25 @@ from app.adapters.generation_sdk import (
     SdkGenerationPort,
     build_outline_prompt,
     build_variant_prompt,
+    deny_mutating_tools,
     outline_from_structured,
     variants_from_block,
 )
 from app.domain import FRAMES, Outline, OutlineUnit
 from app.ports import GenerationPort
+from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
 
 
 # --- The fake --------------------------------------------------------------
+
+
+def test_deny_mutating_tools_blocks_exec_allows_reads():
+    # The variant client's can_use_tool guard: exec/mutation/network denied, the rest allowed.
+    for blocked in ("Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "KillShell"):
+        result = asyncio.run(deny_mutating_tools(blocked, {"command": "rm -rf /"}, None))
+        assert isinstance(result, PermissionResultDeny)
+    allowed = asyncio.run(deny_mutating_tools("Read", {"file_path": "master-resume.md"}, None))
+    assert isinstance(allowed, PermissionResultAllow)
 
 
 def test_fake_satisfies_generation_port():

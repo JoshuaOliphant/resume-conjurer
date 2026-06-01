@@ -31,6 +31,16 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_PLUGIN_DIR = REPO_ROOT / "plugins" / "conjurer"
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
+# Mutating / executing / network tools the variant agent must never use. The variant
+# client reads the JD and evidence, which may be attacker-influenced (a pasted job post),
+# so a prompt injection must not be able to reach code execution or exfiltration. The
+# variant client cannot use a `tools` allowlist (that breaks plugin subagent dispatch), so
+# this denylist is enforced via a can_use_tool callback with permission_mode left off
+# bypass. Read/Glob/Grep/Agent stay auto-approved via allowed_tools.
+BLOCKED_VARIANT_TOOLS = frozenset(
+    {"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "KillShell"}
+)
+
 # A relayed variant block: "### Variant 1: <citation>" then body, ending before the
 # next header / an "*Axis: ...*" line / a "- [ ] Pick" line.
 # Inline whitespace around the citation is [ \t] (not \s) so an empty citation does not
@@ -116,6 +126,23 @@ def variants_from_block(text: str, unit: OutlineUnit) -> list[Variant]:
     return variants
 
 
+async def deny_mutating_tools(tool_name: str, input_data: dict[str, Any], context: Any) -> Any:
+    """can_use_tool guard for the variant client: deny exec/mutation/network tools.
+
+    Consulted only for tools not auto-approved via ``allowed_tools`` (Read/Glob/Grep/Agent),
+    so the safe read and dispatch tools never reach here; anything that could execute code,
+    write files, or reach the network is denied. This is the defense against a prompt
+    injection in the (user-pasted, possibly hostile) job description or evidence.
+    """
+    from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+
+    if tool_name in BLOCKED_VARIANT_TOOLS:
+        return PermissionResultDeny(
+            message=f"{tool_name} is not permitted during variant generation (read-only)."
+        )
+    return PermissionResultAllow()
+
+
 # --- The adapter (thin SDK I/O; live-tested) -------------------------------
 
 
@@ -136,11 +163,13 @@ class SdkGenerationPort:
         self.last_usage: dict[str, Any] | None = None
 
     def _base_options(self) -> dict[str, Any]:  # pragma: no cover - SDK wiring, live-tested
+        # No permission_mode here; each client sets its own. The outline client can safely
+        # bypass (its `tools` allowlist removes mutating tools entirely); the variant client
+        # must NOT bypass, so its can_use_tool guard is consulted.
         return dict(
             cwd=str(self.workspace),
             plugins=[{"type": "local", "path": str(self.plugin_dir)}],
             setting_sources=[],
-            permission_mode="bypassPermissions",
             model=self.model,
         )
 
@@ -150,10 +179,11 @@ class SdkGenerationPort:
 
         options = ClaudeAgentOptions(
             # `tools` restricts the AVAILABLE toolset (least privilege); `allowed_tools`
-            # only auto-approves. With bypassPermissions, restricting `tools` is what
-            # actually stops the agent from writing/executing in the workspace.
+            # only auto-approves. The outline step needs no subagent, so restricting `tools`
+            # to read-only here removes mutating tools entirely, making bypass safe.
             tools=["Read", "Glob", "Grep"],
             allowed_tools=["Read", "Glob", "Grep"],
+            permission_mode="bypassPermissions",
             output_format={"type": "json_schema", "schema": OUTLINE_SCHEMA},
             **self._base_options(),
         )
@@ -172,12 +202,13 @@ class SdkGenerationPort:
         from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
 
         if self._variant_client is None:
-            # NB: we do NOT restrict `tools` here. Verified live: an explicit `tools`
-            # allowlist disables the plugin subagent dispatch (variants come back empty),
-            # so the variant client keeps the default toolset and relies on allowed_tools.
-            # Tightening this would need a can_use_tool callback rather than `tools`.
+            # The variant client dispatches the plugin subagent, which an explicit `tools`
+            # allowlist breaks (verified live: variants come back empty). So we keep the
+            # default toolset but DROP bypassPermissions and supply a can_use_tool guard,
+            # so a prompt injection in the JD/evidence cannot reach Bash/Write/Edit/network.
             options = ClaudeAgentOptions(
                 allowed_tools=["Read", "Glob", "Grep", "Agent"],
+                can_use_tool=deny_mutating_tools,
                 **self._base_options(),
             )
             self._variant_client = ClaudeSDKClient(options=options)
