@@ -21,7 +21,28 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Coverage gate: see .claude/rules/testing.md. A passing `uv run pytest` proves 100%
+# line + branch coverage of app/. Live-only paths are marked under markers, not exempted.
+addopts = "--cov=app --cov-branch --cov-report=term-missing"
+markers = [
+    "live: exercises the real Claude API; skipped unless ANTHROPIC_API_KEY is set",
+]
 filterwarnings = [
     # Third-party: Starlette's TestClient warns about its bundled httpx. Not ours to fix.
     "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "^\\s*\\.\\.\\.$",            # Protocol method stubs
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
 ]
