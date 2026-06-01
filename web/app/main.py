@@ -226,9 +226,12 @@ def create_app(
         # its variants — not merely that the store has enough entries.
         complete = all(picks.get(u.id) in u.variant_ids for u in data.units)
         cover_text = "\n\n".join(v.text for (_, v) in cover)
-        if comp is not None:
-            # Live: stitch the picked variants into real cover_letter.md / resume.md, then
-            # run the grimoire linter over those stitched docs (the real check, not in-memory).
+        if comp is not None and complete:
+            # Live, and every line is picked: stitch the picked variants into real
+            # cover_letter.md / resume.md, then run the grimoire linter over those stitched
+            # docs (the real check, not in-memory). stitch requires one pick per unit, so we
+            # only run it when complete; otherwise we show the in-memory lint + the incomplete
+            # banner rather than 500-ing on a half-curated workspace.
             comp.stitch(SLUG)
             lint = comp.lint(SLUG)
         else:

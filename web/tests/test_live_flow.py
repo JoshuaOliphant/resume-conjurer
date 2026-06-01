@@ -304,6 +304,56 @@ def test_live_review_stitches_and_lints_the_real_docs(workspace):
     assert "billing migration end to end" in (app_dir / "cover_letter.md").read_text()
 
 
+def test_live_review_with_incomplete_picks_does_not_stitch_or_500(workspace):
+    # A live user can open /review mid-curation. stitch needs one pick per unit, so when the
+    # picks are incomplete we must NOT stitch (it would 500); we show the in-memory lint and
+    # the incomplete banner instead, the same calm surface as the fake config.
+    from app.domain import Unit, Variant
+
+    repo = FsWorkspaceRepository(workspace)
+    repo.save_outline(SLUG, _live_outline())
+    repo.save_variants(
+        SLUG,
+        [
+            Unit(
+                id="cover_letter.opening",
+                kind="cover_paragraph",
+                label="Opening",
+                context="Open on the migration.",
+                variants=[
+                    Variant("cover_letter.opening#1", "I led the billing migration.", ())
+                ],
+            ),
+            Unit(
+                id="resume.northwind.billing.bullet_1",
+                kind="resume_bullet",
+                label="Bullet 1",
+                context="Surface the migration.",
+                variants=[
+                    Variant(
+                        "resume.northwind.billing.bullet_1#1",
+                        "- Led the billing platform migration.",
+                        (),
+                    )
+                ],
+            ),
+        ],
+    )
+    # Pick only the cover unit, leaving the resume bullet unpicked (incomplete).
+    repo.set_pick(SLUG, "cover_letter.opening", "cover_letter.opening#1")
+    gen = FakeGenerationPort()
+    comp = ScriptCompositionPort(workspace)
+    app = create_app(
+        repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=True, comp=comp
+    )
+    with TestClient(app) as c:
+        r = c.get("/review")
+    assert r.status_code == 200
+    assert "haven’t chosen every line yet" in r.text
+    # No stitched documents were written, since stitch was (correctly) not run.
+    assert not (workspace / "applications" / SLUG / "cover_letter.md").exists()
+
+
 def test_live_export_reports_the_written_or_skipped_map(workspace):
     import shutil as _shutil
 
