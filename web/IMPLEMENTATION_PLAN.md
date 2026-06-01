@@ -137,6 +137,23 @@ real workspace.
 - Least privilege: `allowed_tools` limited to read/search (+`Agent` only if subagent fan-out);
   `can_use_tool` confines file reads to the workspace `cwd`.
 
+## Progress (live milestone)
+
+Phases 0,1,2,3,5 complete and committed; 60 offline tests at 100% line+branch; the
+`@pytest.mark.live` test passes against the real API (valid outline, grounded variants,
+`cache_read_input_tokens > 0`). Remaining: **Phase 4** (async runs + UI wiring).
+
+### Phase 4 design decision (offline display path)
+
+The app always uses a `WorkspaceRepository` + a `GenerationPort`, chosen by a composition root
+keyed on `CONJURER_BACKEND` (default `fake`). To preserve the shipped editorial UI and the 20
+route tests *unchanged* offline, the default config pairs a **fake repository** that serves the
+existing `data.get_application()` (rich, resolved evidence) and an in-memory pick store with the
+`FakeGenerationPort`. The `live` config pairs `FsWorkspaceRepository` + `SdkGenerationPort`. The
+async generation flow (`runs.py`) is tested offline with `FakeGenerationPort` writing into a temp
+`FsWorkspaceRepository`, so it reaches 100% without the API. This keeps the UI calm and the
+evidence rich offline while the real path stays the single source of truth on disk.
+
 ## Decisions
 
 - **Run model: single-user, fixed workspace — but built to extend.** One workspace dir (grimoire +
