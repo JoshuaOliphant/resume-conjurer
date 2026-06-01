@@ -1,7 +1,7 @@
 [project]
 name = "conjurer-web"
 version = "0.1.0"
-description = "Web UI for the Conjurer resume pipeline. Server-rendered FastAPI + Jinja2 + HTMX, mock data."
+description = "Web UI for the Conjurer resume pipeline. Server-rendered FastAPI + Jinja2 + HTMX; fixture-backed offline config and a live Claude Agent SDK backend."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",

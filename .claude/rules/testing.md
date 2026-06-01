@@ -36,8 +36,9 @@ with its test, not after.
 Prefer testing the path over excluding it. Only exclude genuinely unreachable or
 defensive-only code, and leave a one-line reason next to the pragma. Lines already excluded by
 project policy (in `[tool.coverage.report] exclude_lines`): Protocol method stubs (`...`),
-`if __name__ == "__main__":` blocks, and `if TYPE_CHECKING:` imports. Do not add blanket file-level
-exclusions.
+`if __name__ == "__main__":` blocks, `if TYPE_CHECKING:` imports, and `raise NotImplementedError`
+lines (live-only methods on the offline fake repository that are never called in fake mode). Do not
+add blanket file-level exclusions.
 
 ## Note on enforcement
 

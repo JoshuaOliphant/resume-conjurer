@@ -173,3 +173,31 @@ def test_variants_from_block_skips_empty_and_defaults_missing_citation():
     variants = variants_from_block(block, unit)
     assert len(variants) == 1
     assert variants[0].evidence_items[0].id == "master-resume.md"
+
+
+def test_variants_from_block_final_variant_multiline_to_end_of_string():
+    # A final variant whose body spans multiple lines and ends at end-of-string (no trailing
+    # Axis or Pick line) must be captured whole by the \Z alternative in _VARIANT_RE.
+    unit = OutlineUnit(
+        unit_id="resume.northwind.billing.bullet_1", kind="resume_bullet", description="headline"
+    )
+    block = (
+        "## Unit: resume.northwind.billing.bullet_1\n"
+        "### Variant 1: master-resume.md L16\n\n"
+        "- Led the billing migration to event-driven services.\n\n"
+        "*Axis: outcome-led*\n\n"
+        "- [ ] Pick\n\n"
+        "### Variant 2: master-resume.md L17\n\n"
+        "- Rolled the new billing backbone out across three regions\n"
+        "  with zero customer-visible downtime, then owned the on-call\n"
+        "  rotation that followed."  # no trailing newline, Axis, or Pick
+    )
+    variants = variants_from_block(block, unit)
+    assert [v.id for v in variants] == [
+        "resume.northwind.billing.bullet_1#1",
+        "resume.northwind.billing.bullet_1#2",
+    ]
+    # The whole multi-line body of the final variant survives to end-of-string.
+    assert "across three regions" in variants[1].text
+    assert "rotation that followed." in variants[1].text
+    assert variants[1].evidence_items[0].id == "master-resume.md L17"

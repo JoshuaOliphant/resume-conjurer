@@ -286,6 +286,62 @@ def test_set_pick_does_not_corrupt_other_units(repo: FsWorkspaceRepository) -> N
     }
 
 
+def test_relayed_block_survives_save_then_load_application(repo: FsWorkspaceRepository) -> None:
+    # Cross-parser round-trip: the SDK adapter parses a relayed variant-generator block into
+    # domain Units, the repository writes them to variants.md, and load_application reads them
+    # back — the citation and text must survive both parsers intact.
+    from app.adapters.generation_sdk import variants_from_block
+    from app.domain import OutlineUnit, Unit, label_for_unit_id
+
+    repo.save_outline(SLUG, _sample_outline())
+    unit_ou = OutlineUnit(
+        unit_id="resume.northwind.billing.bullet_1",
+        kind="resume_bullet",
+        description="Surface the monolith-to-events migration.",
+    )
+    block = (
+        "Dispatching the variant-generator now.\n"
+        "## Unit: resume.northwind.billing.bullet_1\n"
+        "<!-- conjurer:unit id=resume.northwind.billing.bullet_1 -->\n"
+        "### Variant 1: master-resume.md L16\n\n"
+        "- Architected the billing-platform migration to event-driven services,\n"
+        "  cutting invoice latency from 40s to under 2s across three regions.\n\n"
+        "*Axis: outcome-led*\n\n"
+        "- [ ] Pick\n\n"
+        "### Variant 2: master-resume.md L17\n\n"
+        "- Led the platform migration onto an event-driven backbone.\n\n"
+        "*Axis: ownership-led*\n\n"
+        "- [ ] Pick\n"
+    )
+    parsed_variants = variants_from_block(block, unit_ou)
+    units = [
+        Unit(
+            id=unit_ou.unit_id,
+            kind=unit_ou.kind,
+            label=label_for_unit_id(unit_ou.unit_id),
+            context=unit_ou.description,
+            variants=parsed_variants,
+        )
+    ]
+    repo.save_variants(SLUG, units)
+
+    app = repo.load_application(SLUG)
+    bullet = next(u for u in app.units if u.id == "resume.northwind.billing.bullet_1")
+    assert [v.id for v in bullet.variants] == [
+        "resume.northwind.billing.bullet_1#1",
+        "resume.northwind.billing.bullet_1#2",
+    ]
+    # Text survives the round-trip (the Axis/Pick scaffolding is stripped, the body kept).
+    assert "Architected the billing-platform migration" in bullet.variants[0].text
+    assert "across three regions" in bullet.variants[0].text
+    assert "Axis" not in bullet.variants[0].text and "Pick" not in bullet.variants[0].text
+    # The L-citation resolves back to the real master-resume line, grounded.
+    trace = bullet.variants[0].evidence()
+    assert trace[0].id == "master-resume.md L16"
+    assert trace[0].grounded is True
+    assert "billing platform from a monolith" in trace[0].text
+
+
 def test_load_application_without_outline_raises(repo: FsWorkspaceRepository) -> None:
     with pytest.raises(FileNotFoundError, match="No outline.json"):
         repo.load_application(SLUG)
