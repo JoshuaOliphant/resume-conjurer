@@ -43,7 +43,10 @@ async def ensure_session(request: Request, call_next):
     RedirectResponses the curate flow leans on.
     """
     sid = request.cookies.get(SESSION_COOKIE)
-    is_new = sid is None
+    # Treat an empty/blank cookie as no session, not as a real (shared "") one —
+    # cleared or proxy-stripped cookies arrive as "" and must not collapse clients
+    # into a single bucket.
+    is_new = not sid
     if is_new:
         sid = uuid4().hex
     request.state.session_id = sid

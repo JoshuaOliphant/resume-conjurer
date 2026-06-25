@@ -4,22 +4,29 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.deps import SESSION_COOKIE, get_application, store
+from app.deps import SESSION_COOKIE, get_application, get_store
 from app.main import app
 from app.providers.fixtures import EVIDENCE, _variant
+from app.selections import InMemorySelectionStore
 
 
 @pytest.fixture
 def client():
-    store.reset()
+    # Inject a fresh store per test through the port's override seam, rather than
+    # reaching past the SelectionStore abstraction to reset a module global. This
+    # is exactly how a different adapter would be swapped in, so the tests stay
+    # honest to the port.
+    test_store = InMemorySelectionStore()
+    app.dependency_overrides[get_store] = lambda: test_store
     with TestClient(app) as c:
+        c.app_store = test_store
         yield c
-    store.reset()
+    app.dependency_overrides.clear()
 
 
 def picks(client) -> dict[str, str]:
     """The picks stored for this client's session (its cookie identifies it)."""
-    return store.all(client.cookies.get(SESSION_COOKIE))
+    return client.app_store.all(client.cookies.get(SESSION_COOKIE))
 
 
 def test_entry_renders(client):
@@ -111,6 +118,22 @@ def test_selections_are_scoped_per_session(client):
         assert "Forty seconds to two." not in r.text
     # And the first session still has its pick.
     assert picks(client)["cover-open"] == "cover-open-4"
+
+
+def test_blank_session_cookie_mints_a_fresh_session(client):
+    # A cleared/proxy-stripped cookie arrives as "" — it must mint a fresh id, not
+    # collapse every such client into one shared "" pick bucket.
+    r = client.post(
+        "/curate/0",
+        data={"variant_id": "cover-open-1"},
+        headers={"Cookie": f"{SESSION_COOKIE}="},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    new_sid = r.cookies.get(SESSION_COOKIE)
+    assert new_sid  # a real, non-empty id was issued
+    assert client.app_store.all("") == {}  # nothing stored under the empty key
+    assert client.app_store.all(new_sid)["cover-open"] == "cover-open-1"
 
 
 def test_review_reflects_chosen_variant(client):

@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.deps import ensure_session, get_application, get_store, session_id
+from app.domain import Application
 from app.lint import lint_cover_letter
 from app.rail import template_context
 from app.selections import SelectionStore
@@ -24,8 +25,8 @@ templates = Jinja2Templates(directory=str(BASE / "templates"))
 
 
 @app.get("/", response_class=HTMLResponse)
-def entry(request: Request):
-    return templates.TemplateResponse(request, "entry.html", template_context(request, "entry", app_data=get_application()))
+def entry(request: Request, app_data: Application = Depends(get_application)):
+    return templates.TemplateResponse(request, "entry.html", template_context(request, "entry", app_data=app_data))
 
 
 @app.post("/start")
@@ -35,8 +36,8 @@ def start():
 
 
 @app.get("/outline", response_class=HTMLResponse)
-def outline(request: Request):
-    return templates.TemplateResponse(request, "outline.html", template_context(request, "outline", app_data=get_application()))
+def outline(request: Request, app_data: Application = Depends(get_application)):
+    return templates.TemplateResponse(request, "outline.html", template_context(request, "outline", app_data=app_data))
 
 
 @app.get("/curate", response_class=HTMLResponse)
@@ -48,10 +49,10 @@ def curate_start():
 def curate(
     request: Request,
     idx: int,
+    data: Application = Depends(get_application),
     sid: str = Depends(session_id),
     store: SelectionStore = Depends(get_store),
 ):
-    data = get_application()
     units = data.units
     if idx < 0 or idx >= len(units):
         return RedirectResponse("/review", status_code=303)
@@ -76,10 +77,10 @@ def curate(
 def curate_pick(
     idx: int,
     variant_id: str = Form(...),
+    data: Application = Depends(get_application),
     sid: str = Depends(session_id),
     store: SelectionStore = Depends(get_store),
 ):
-    data = get_application()
     units = data.units
     if not 0 <= idx < len(units):
         raise HTTPException(status_code=404, detail="No such line to curate.")
@@ -99,10 +100,10 @@ def curate_pick(
 @app.get("/review", response_class=HTMLResponse)
 def review(
     request: Request,
+    data: Application = Depends(get_application),
     sid: str = Depends(session_id),
     store: SelectionStore = Depends(get_store),
 ):
-    data = get_application()
     picks = store.all(sid)
     chosen = [(unit, unit.variant(picks.get(unit.id))) for unit in data.units]
     cover = [(u, v) for (u, v) in chosen if u.kind == "cover_paragraph"]
@@ -127,8 +128,8 @@ def review(
 
 
 @app.get("/export", response_class=HTMLResponse)
-def export(request: Request):
-    return templates.TemplateResponse(request, "export.html", template_context(request, "export", app_data=get_application()))
+def export(request: Request, app_data: Application = Depends(get_application)):
+    return templates.TemplateResponse(request, "export.html", template_context(request, "export", app_data=app_data))
 
 
 @app.post("/reset")

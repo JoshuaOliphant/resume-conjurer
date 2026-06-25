@@ -49,7 +49,3 @@ class InMemorySelectionStore:
 
     def clear(self, session_id: str) -> None:
         self._by_session.pop(session_id, None)
-
-    def reset(self) -> None:
-        """Drop every session. Test helper; not part of the port."""
-        self._by_session.clear()
