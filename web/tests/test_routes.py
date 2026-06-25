@@ -4,8 +4,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.data import EVIDENCE, Variant, get_application
-from app.main import SELECTIONS, app
+from app.main import SELECTIONS, app, get_application
+from app.providers.fixtures import EVIDENCE, _variant
 
 
 @pytest.fixture
@@ -140,20 +140,20 @@ def test_review_word_count_is_computed_not_hardcoded(client):
 
 
 def test_every_variant_resolves_its_evidence(client):
-    # Integrity sweep: no variant may cite an id missing from the pool.
+    # Integrity sweep: every trace shown is a real Evidence object from the pool.
     for unit in get_application().units:
         for v in unit.variants:
-            traces = v.evidence()
-            assert len(traces) == len(v.evidence_ids)
-            assert all(e is not None for e in traces)
+            assert all(e in EVIDENCE.values() for e in v.evidence)
 
 
-def test_variant_rejects_unknown_evidence_id():
+def test_variant_builder_rejects_unknown_evidence_id():
+    # The provider's builder owns id->Evidence resolution and rejects bad citations.
     with pytest.raises(ValueError, match="unknown evidence"):
-        Variant(id="bad", text="x", evidence_ids=("does-not-exist",))
-    # sanity: a real id constructs fine
+        _variant("bad", "x", "does-not-exist")
+    # sanity: a real id constructs fine and resolves to the pooled Evidence
     real_id = next(iter(EVIDENCE))
-    Variant(id="ok", text="x", evidence_ids=(real_id,))
+    v = _variant("ok", "x", real_id)
+    assert v.evidence == (EVIDENCE[real_id],)
 
 
 def test_export_renders(client):

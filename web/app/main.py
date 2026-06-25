@@ -10,13 +10,19 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.data import get_application, lint_results
+from app.lint import lint_cover_letter
+from app.providers.fixtures import FixtureProvider
 
 BASE = Path(__file__).parent
 
 app = FastAPI(title="Conjurer")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=str(BASE / "templates"))
+
+# The data source behind the ApplicationProvider port. Swapping this for a live
+# Agent SDK adapter is the documented "replace one mock adapter" change.
+provider = FixtureProvider()
+get_application = provider.get_application
 
 # Single-user mock store: unit_id -> chosen variant_id. A real build would scope
 # this to a session or persist it; here it just lets the flow remember picks.
@@ -103,11 +109,7 @@ def curate_pick(idx: int, variant_id: str = Form(...)):
 @app.get("/review", response_class=HTMLResponse)
 def review(request: Request):
     data = get_application()
-    chosen = []
-    for unit in data.units:
-        vid = SELECTIONS.get(unit.id)
-        variant = next((v for v in unit.variants if v.id == vid), unit.variants[0])
-        chosen.append((unit, variant))
+    chosen = [(unit, unit.variant(SELECTIONS.get(unit.id))) for unit in data.units]
     cover = [(u, v) for (u, v) in chosen if u.kind == "cover_paragraph"]
     bullets = [(u, v) for (u, v) in chosen if u.kind == "resume_bullet"]
     # Complete means every unit has a stored selection that is actually one of
@@ -123,7 +125,7 @@ def review(request: Request):
             app_data=data,
             cover=cover,
             bullets=bullets,
-            lint=lint_results(cover_text),
+            lint=lint_cover_letter(cover_text),
             complete=complete,
         ),
     )

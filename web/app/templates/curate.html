@@ -32,7 +32,7 @@
       </label>
       <span class="variant__check" aria-hidden="true">{{ i.icon("check") }}</span>
       <div class="variant__foot">
-        {% set traces = v.evidence() %}
+        {% set traces = v.evidence %}
         <details class="trace">
           <summary>{{ i.icon("chevron", "chev") }} Evidence
             ({{ traces|length }} {{ "trace" if traces|length == 1 else "traces" }})</summary>
