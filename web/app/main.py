@@ -1,80 +1,31 @@
 # ABOUTME: FastAPI app serving the Conjurer pipeline UI (entry → outline → curate → review → export).
-# ABOUTME: Server-rendered Jinja2 + HTMX. Picks live in a session-scoped SelectionStore behind a port.
+# ABOUTME: Server-rendered Jinja2 + HTMX. Routes orchestrate; wiring is in deps.py, the rail in rail.py.
 
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.deps import ensure_session, get_application, get_store, session_id
 from app.lint import lint_cover_letter
-from app.providers.fixtures import FixtureProvider
-from app.selections import InMemorySelectionStore, SelectionStore
+from app.rail import template_context
+from app.selections import SelectionStore
 
 BASE = Path(__file__).parent
 
 app = FastAPI(title="Conjurer")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
+app.middleware("http")(ensure_session)
 templates = Jinja2Templates(directory=str(BASE / "templates"))
-
-# Adapters behind the ports. Swapping FixtureProvider for a live Agent SDK
-# adapter, or InMemorySelectionStore for a workspace-backed one, is the
-# documented "replace one adapter" change — no route touches their internals.
-provider = FixtureProvider()
-get_application = provider.get_application
-store: SelectionStore = InMemorySelectionStore()
-
-SESSION_COOKIE = "cj_session"
-
-# The five pipeline steps, in order, for the rail.
-STEPS = [
-    ("entry", "Start", "/"),
-    ("outline", "Outline", "/outline"),
-    ("curate", "Curate", "/curate"),
-    ("review", "Review", "/review"),
-    ("export", "Export", "/export"),
-]
-
-
-@app.middleware("http")
-async def ensure_session(request: Request, call_next):
-    """Give every browser a stable session id so picks are scoped to one run.
-
-    Done in middleware (not a route dependency) so the cookie is set on the
-    outgoing response no matter what type a route returns — including the
-    RedirectResponses the curate flow leans on.
-    """
-    sid = request.cookies.get(SESSION_COOKIE)
-    is_new = sid is None
-    if is_new:
-        sid = uuid4().hex
-    request.state.session_id = sid
-    response = await call_next(request)
-    if is_new:
-        response.set_cookie(SESSION_COOKIE, sid, httponly=True, samesite="lax")
-    return response
-
-
-def session_id(request: Request) -> str:
-    return request.state.session_id
-
-
-def get_store() -> SelectionStore:
-    return store
-
-
-def _ctx(request: Request, active: str, **extra) -> dict:
-    active_i = next((i for i, (key, _, _) in enumerate(STEPS) if key == active), 0)
-    return {"request": request, "steps": STEPS, "active_step": active, "active_i": active_i, **extra}
 
 
 @app.get("/", response_class=HTMLResponse)
 def entry(request: Request):
-    return templates.TemplateResponse(request, "entry.html", _ctx(request, "entry", app_data=get_application()))
+    return templates.TemplateResponse(request, "entry.html", template_context(request, "entry", app_data=get_application()))
 
 
 @app.post("/start")
@@ -85,7 +36,7 @@ def start():
 
 @app.get("/outline", response_class=HTMLResponse)
 def outline(request: Request):
-    return templates.TemplateResponse(request, "outline.html", _ctx(request, "outline", app_data=get_application()))
+    return templates.TemplateResponse(request, "outline.html", template_context(request, "outline", app_data=get_application()))
 
 
 @app.get("/curate", response_class=HTMLResponse)
@@ -108,7 +59,7 @@ def curate(
     return templates.TemplateResponse(
         request,
         "curate.html",
-        _ctx(
+        template_context(
             request,
             "curate",
             app_data=data,
@@ -163,7 +114,7 @@ def review(
     return templates.TemplateResponse(
         request,
         "review.html",
-        _ctx(
+        template_context(
             request,
             "review",
             app_data=data,
@@ -177,7 +128,7 @@ def review(
 
 @app.get("/export", response_class=HTMLResponse)
 def export(request: Request):
-    return templates.TemplateResponse(request, "export.html", _ctx(request, "export", app_data=get_application()))
+    return templates.TemplateResponse(request, "export.html", template_context(request, "export", app_data=get_application()))
 
 
 @app.post("/reset")

@@ -4,7 +4,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import SESSION_COOKIE, app, get_application, store
+from app.deps import SESSION_COOKIE, get_application, store
+from app.main import app
 from app.providers.fixtures import EVIDENCE, _variant
 
 
