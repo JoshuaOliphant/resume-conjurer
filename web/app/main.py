@@ -1,45 +1,32 @@
 # ABOUTME: FastAPI app serving the Conjurer pipeline UI (entry → outline → curate → review → export).
-# ABOUTME: Server-rendered Jinja2 + HTMX. Selections held in a single-user in-memory store (mock).
+# ABOUTME: Server-rendered Jinja2 + HTMX. Routes orchestrate; wiring is in deps.py, the rail in rail.py.
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.data import get_application, lint_results
+from app.deps import ensure_session, get_application, get_store, session_id
+from app.domain import Application
+from app.lint import lint_cover_letter
+from app.rail import template_context
+from app.selections import SelectionStore
 
 BASE = Path(__file__).parent
 
 app = FastAPI(title="Conjurer")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
+app.middleware("http")(ensure_session)
 templates = Jinja2Templates(directory=str(BASE / "templates"))
-
-# Single-user mock store: unit_id -> chosen variant_id. A real build would scope
-# this to a session or persist it; here it just lets the flow remember picks.
-SELECTIONS: dict[str, str] = {}
-
-# The five pipeline steps, in order, for the rail.
-STEPS = [
-    ("entry", "Start", "/"),
-    ("outline", "Outline", "/outline"),
-    ("curate", "Curate", "/curate"),
-    ("review", "Review", "/review"),
-    ("export", "Export", "/export"),
-]
-
-
-def _ctx(request: Request, active: str, **extra) -> dict:
-    active_i = next((i for i, (key, _, _) in enumerate(STEPS) if key == active), 0)
-    return {"request": request, "steps": STEPS, "active_step": active, "active_i": active_i, **extra}
 
 
 @app.get("/", response_class=HTMLResponse)
-def entry(request: Request):
-    return templates.TemplateResponse(request, "entry.html", _ctx(request, "entry", app_data=get_application()))
+def entry(request: Request, app_data: Application = Depends(get_application)):
+    return templates.TemplateResponse(request, "entry.html", template_context(request, "entry", app_data=app_data))
 
 
 @app.post("/start")
@@ -49,8 +36,8 @@ def start():
 
 
 @app.get("/outline", response_class=HTMLResponse)
-def outline(request: Request):
-    return templates.TemplateResponse(request, "outline.html", _ctx(request, "outline", app_data=get_application()))
+def outline(request: Request, app_data: Application = Depends(get_application)):
+    return templates.TemplateResponse(request, "outline.html", template_context(request, "outline", app_data=app_data))
 
 
 @app.get("/curate", response_class=HTMLResponse)
@@ -59,8 +46,13 @@ def curate_start():
 
 
 @app.get("/curate/{idx}", response_class=HTMLResponse)
-def curate(request: Request, idx: int):
-    data = get_application()
+def curate(
+    request: Request,
+    idx: int,
+    data: Application = Depends(get_application),
+    sid: str = Depends(session_id),
+    store: SelectionStore = Depends(get_store),
+):
     units = data.units
     if idx < 0 or idx >= len(units):
         return RedirectResponse("/review", status_code=303)
@@ -68,22 +60,27 @@ def curate(request: Request, idx: int):
     return templates.TemplateResponse(
         request,
         "curate.html",
-        _ctx(
+        template_context(
             request,
             "curate",
             app_data=data,
             unit=unit,
             idx=idx,
             total=len(units),
-            selected=SELECTIONS.get(unit.id),
+            selected=store.get(sid, unit.id),
             prev_idx=idx - 1 if idx > 0 else None,
         ),
     )
 
 
 @app.post("/curate/{idx}")
-def curate_pick(idx: int, variant_id: str = Form(...)):
-    data = get_application()
+def curate_pick(
+    idx: int,
+    variant_id: str = Form(...),
+    data: Application = Depends(get_application),
+    sid: str = Depends(session_id),
+    store: SelectionStore = Depends(get_store),
+):
     units = data.units
     if not 0 <= idx < len(units):
         raise HTTPException(status_code=404, detail="No such line to curate.")
@@ -93,7 +90,7 @@ def curate_pick(idx: int, variant_id: str = Form(...)):
     # content to the user that they never chose.
     if variant_id not in unit.variant_ids:
         raise HTTPException(status_code=422, detail="That variant isn't an option for this line.")
-    SELECTIONS[unit.id] = variant_id
+    store.set(sid, unit.id, variant_id)
     nxt = idx + 1
     if nxt >= len(units):
         return RedirectResponse("/review", status_code=303)
@@ -101,40 +98,41 @@ def curate_pick(idx: int, variant_id: str = Form(...)):
 
 
 @app.get("/review", response_class=HTMLResponse)
-def review(request: Request):
-    data = get_application()
-    chosen = []
-    for unit in data.units:
-        vid = SELECTIONS.get(unit.id)
-        variant = next((v for v in unit.variants if v.id == vid), unit.variants[0])
-        chosen.append((unit, variant))
+def review(
+    request: Request,
+    data: Application = Depends(get_application),
+    sid: str = Depends(session_id),
+    store: SelectionStore = Depends(get_store),
+):
+    picks = store.all(sid)
+    chosen = [(unit, unit.variant(picks.get(unit.id))) for unit in data.units]
     cover = [(u, v) for (u, v) in chosen if u.kind == "cover_paragraph"]
     bullets = [(u, v) for (u, v) in chosen if u.kind == "resume_bullet"]
     # Complete means every unit has a stored selection that is actually one of
     # its variants — not merely that the store has enough entries.
-    complete = all(SELECTIONS.get(u.id) in u.variant_ids for u in data.units)
+    complete = all(picks.get(u.id) in u.variant_ids for u in data.units)
     cover_text = "\n\n".join(v.text for (_, v) in cover)
     return templates.TemplateResponse(
         request,
         "review.html",
-        _ctx(
+        template_context(
             request,
             "review",
             app_data=data,
             cover=cover,
             bullets=bullets,
-            lint=lint_results(cover_text),
+            lint=lint_cover_letter(cover_text),
             complete=complete,
         ),
     )
 
 
 @app.get("/export", response_class=HTMLResponse)
-def export(request: Request):
-    return templates.TemplateResponse(request, "export.html", _ctx(request, "export", app_data=get_application()))
+def export(request: Request, app_data: Application = Depends(get_application)):
+    return templates.TemplateResponse(request, "export.html", template_context(request, "export", app_data=app_data))
 
 
 @app.post("/reset")
-def reset():
-    SELECTIONS.clear()
+def reset(sid: str = Depends(session_id), store: SelectionStore = Depends(get_store)):
+    store.clear(sid)
     return RedirectResponse("/", status_code=303)
