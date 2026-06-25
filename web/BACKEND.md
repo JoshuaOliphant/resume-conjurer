@@ -33,15 +33,20 @@ cut, because the mock UI was shaped to the real pipeline's output.
 
 | Already in the repo | Is actually the… |
 |---|---|
-| `app/data.py` frozen dataclasses — `Evidence`, `Variant`, `Unit`, `Frame`, `Application`, `LintCheck` | **Domain model** the core and ports speak in |
+| `app/domain.py` frozen dataclasses — `Evidence`, `Variant`, `Unit`, `Frame`, `Application` | **Domain model** the core and ports speak in |
 | `outline.json` schema (`plugins/.../references/pipeline.md`) | **Outline port contract** |
 | The `## Unit:` / `### Variant N` block format (`variant-generator.md`) | **Variant port contract** |
-| `get_application()`, `lint_results()` in `data.py` | **Stub adapters** we replace |
-| `stitch.py`, `composer.py`, `lint.py`, `export_docs.py` | **Driven adapters, ready-made** (pure functions over a workspace dir) |
+| `app/providers/` — `ApplicationProvider` port + `FixtureProvider` adapter | **Stub adapter** behind a typed port; the seam we replace |
+| `app/selections.py` — `SelectionStore` port + `InMemorySelectionStore` | **Curation-state port**; swap the mock for a workspace-backed store |
+| `app/lint.py` (`lint_cover_letter`) | The **lint piece** of the CompositionPort, pure over text |
+| `stitch.py`, `composer.py`, `lint.py`, `export_docs.py` (in the plugin) | **Driven adapters, ready-made** (pure functions over a workspace dir) |
 
-"Wire the backend" therefore means: replace one mock adapter (`get_application`) with two real
-ones — a workspace repository and a generation adapter — and let the deterministic scripts do the
-rest. The domain model and the wire formats do not change.
+The read-side hexagon is **already wired in the mock**: the domain model is separate from the
+adapters, routes depend on the `ApplicationProvider` and `SelectionStore` ports, and the
+composition root (`app/deps.py`) is the single place an adapter is chosen. So "wire the backend"
+means: replace the `FixtureProvider` with a generation adapter and back `SelectionStore` with the
+workspace — and let the deterministic scripts do the rest. The domain model, the ports, and the
+wire formats do not change.
 
 ## The hexagon for this app
 
@@ -98,7 +103,8 @@ The variant step is a 6-unit × 4-variant fan-out — roughly **30–60s** of ge
 backend cannot survive that as written:
 
 - Routes are synchronous request/response; a 60s blocking POST is unacceptable.
-- `SELECTIONS` is a module-level in-memory dict — single-user, lost on reload, not scoped to a run.
+- Picks are scoped to a run now (a session-keyed `SelectionStore`, not a module global), but they
+  still live in process memory — lost on reload, and not yet the `variants.md` the CLI reads.
 
 What the live backend needs:
 
@@ -161,6 +167,11 @@ adapter and the CLI must keep producing and consuming exactly those.
 
 ## Minimal change set (when implementation is greenlit)
 
+Already done (the read-side hexagon): the domain model lives in `app/domain.py`; the
+`ApplicationProvider` and `SelectionStore` ports are expressed; `FixtureProvider` and
+`InMemorySelectionStore` are the mock adapters behind them; and `app/deps.py` is the composition
+root where an adapter is chosen. What remains is the write/generation side:
+
 1. `WorkspaceRepository` (filesystem adapter): resolve a workspace + `applications/<slug>/`, read
    grimoire / master-resume / jd / evidence, read+write `outline.json` and `variants.md`
    (including toggling `- [x] Pick`).
@@ -171,10 +182,12 @@ adapter and the CLI must keep producing and consuming exactly those.
    background task; per-unit completion drives the progress UI.
 3. `CompositionPort`: thin wrappers over `stitch.py` / `lint.py` / `export_docs.py`
    (import the functions; they are already pure).
-4. Rewrite `data.py`'s `get_application()` to hydrate the domain dataclasses from the workspace
-   files instead of fixtures — the dataclasses themselves stay.
-5. Replace `SELECTIONS` with pick-persistence to `variants.md`; add the async generation route
-   pair (kick-off + poll/SSE) and a working-state partial for the rail's Outline/Curate steps.
-6. Tests: a fake `GenerationPort` (deterministic fixtures — the current mock becomes the test
+4. Add a workspace-backed `ApplicationProvider` that hydrates the domain dataclasses from the
+   workspace files instead of fixtures — the dataclasses, ports, and `app/deps.py` wiring stay;
+   only the adapter bound in the composition root changes.
+5. Back `SelectionStore` with `variants.md` pick-persistence (a workspace adapter for the existing
+   port, swapped in `app/deps.py`); add the async generation route pair (kick-off + poll/SSE) and
+   a working-state partial for the rail's Outline/Curate steps.
+6. Tests: a fake `GenerationPort` (deterministic fixtures — `FixtureProvider` is already the test
    double) so route/flow tests stay fast and offline; one integration test that runs the real
    adapter against a tiny fixture workspace.

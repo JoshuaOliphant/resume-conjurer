@@ -6,8 +6,14 @@ decision at a time.
 
 This is a **design build with mock data**. The real engine is Claude running inside Claude Code
 (see the plugin in `../plugins/conjurer/`), so there is no live generation here. Everything is
-served from fixtures in `app/data.py`, shaped exactly like the real pipeline's output so the visual
-and interaction design transfer directly if the app is ever wired to a backend.
+served from fixtures in `app/providers/fixtures.py`, shaped exactly like the real pipeline's output
+so the visual and interaction design transfer directly if the app is ever wired to a backend.
+
+The app is laid out as the ports-and-adapters hexagon documented in
+[`BACKEND.md`](BACKEND.md), so that wiring is a seam, not a rewrite: the domain model
+(`app/domain.py`) is separate from the adapters that supply it, and routes depend on ports
+(`ApplicationProvider`, `SelectionStore`) rather than on the mock. Swapping the fixture provider
+for a live backend is a one-line change in the composition root (`app/deps.py`).
 
 ## Stack
 
