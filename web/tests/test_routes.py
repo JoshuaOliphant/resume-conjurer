@@ -4,16 +4,21 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import SELECTIONS, app, get_application
+from app.main import SESSION_COOKIE, app, get_application, store
 from app.providers.fixtures import EVIDENCE, _variant
 
 
 @pytest.fixture
 def client():
-    SELECTIONS.clear()
+    store.reset()
     with TestClient(app) as c:
         yield c
-    SELECTIONS.clear()
+    store.reset()
+
+
+def picks(client) -> dict[str, str]:
+    """The picks stored for this client's session (its cookie identifies it)."""
+    return store.all(client.cookies.get(SESSION_COOKIE))
 
 
 def test_entry_renders(client):
@@ -67,20 +72,20 @@ def test_curate_out_of_range_goes_to_review(client):
 def test_pick_rejects_variant_not_in_unit(client):
     r = client.post("/curate/0", data={"variant_id": "not-a-real-id"}, follow_redirects=False)
     assert r.status_code == 422
-    assert "cover-open" not in SELECTIONS  # nothing stored on rejection
+    assert "cover-open" not in picks(client)  # nothing stored on rejection
 
 
 def test_pick_out_of_range_idx_returns_404(client):
     r = client.post("/curate/999", data={"variant_id": "cover-open-1"}, follow_redirects=False)
     assert r.status_code == 404
-    assert not SELECTIONS
+    assert not picks(client)
 
 
 def test_pick_stores_selection_and_advances(client):
     r = client.post("/curate/0", data={"variant_id": "cover-open-2"}, follow_redirects=False)
     assert r.status_code == 303
     assert r.headers["location"] == "/curate/1"
-    assert SELECTIONS["cover-open"] == "cover-open-2"
+    assert picks(client)["cover-open"] == "cover-open-2"
 
 
 def test_last_pick_advances_to_review(client):
@@ -94,6 +99,17 @@ def test_last_pick_advances_to_review(client):
     )
     assert r.status_code == 303
     assert r.headers["location"] == "/review"
+
+
+def test_selections_are_scoped_per_session(client):
+    # Two browsers (separate cookie jars) must not share picks.
+    client.post("/curate/0", data={"variant_id": "cover-open-4"}, follow_redirects=False)
+    with TestClient(app) as other:
+        r = other.get("/review")
+        # The second session never picked, so it sees the first variant, not "cover-open-4".
+        assert "Forty seconds to two." not in r.text
+    # And the first session still has its pick.
+    assert picks(client)["cover-open"] == "cover-open-4"
 
 
 def test_review_reflects_chosen_variant(client):
@@ -164,7 +180,7 @@ def test_export_renders(client):
 
 def test_reset_clears_selections(client):
     client.post("/curate/0", data={"variant_id": "cover-open-1"}, follow_redirects=False)
-    assert SELECTIONS
+    assert picks(client)
     r = client.post("/reset", follow_redirects=False)
     assert r.status_code == 303
-    assert not SELECTIONS
+    assert not picks(client)
