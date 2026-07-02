@@ -51,8 +51,7 @@ scopes"), so there is nothing analogous to harden.
    (via `logging`, with traceback) in addition to being recorded on `RunStatus.error` —
    not only held in memory for whoever happens to be polling.
 
-6. **AC-6 (polish)**: `Outline.strategic_frame` is typed `Literal["scale", "friction",
-   "conviction", "multiplier"]`; `RunMetrics` gains an `add_step()` method and `runs.py`
+6. **AC-6 (polish)**: `RunMetrics` gains an `add_step()` method and `runs.py`
    uses it instead of `.steps.append(...)`; `workspace_fs.py`'s frame lookup uses
    `outline.frame_name` (safe fallback) instead of `FRAMES[outline.strategic_frame]`
    (KeyError-prone); the fire-and-forget task in `RunManager.start()` gets a
