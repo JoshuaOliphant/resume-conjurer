@@ -18,12 +18,15 @@ this module only sequences calls and counts progress.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass
 
 from app.domain import Unit, label_for_unit_id
 from app.metrics import CallMetrics, RunMetrics, StepMetrics
 from app.ports import GenerationPort, WorkspaceRepository
+
+logger = logging.getLogger(__name__)
 
 RunState = str  # one of: "idle" | "running" | "done" | "error"
 
@@ -62,7 +65,7 @@ class RunManager:
         """
         wall_ms = int((time.monotonic() - started) * 1000)
         call = self._gen.last_call or CallMetrics.zero()
-        run_metrics.steps.append(StepMetrics(name=name, wall_ms=wall_ms, call=call))
+        run_metrics.add_step(StepMetrics(name=name, wall_ms=wall_ms, call=call))
 
     def start(self, slug: str) -> None:
         """Launch a background run for ``slug`` unless one is already running."""
@@ -71,7 +74,20 @@ class RunManager:
         # Mark running synchronously so the route can render the progress page and the
         # very next status poll already reflects an in-flight run.
         self._status[slug] = RunStatus(state="running")
-        self._tasks[slug] = asyncio.create_task(self._run(slug))
+        task = asyncio.create_task(self._run(slug))
+        # _run catches every exception it can raise itself, so this task should always
+        # complete cleanly today — this callback is defense-in-depth against that
+        # invariant breaking in a future edit, since nothing else awaits a fire-and-forget
+        # task (join() is only called by tests).
+        task.add_done_callback(self._log_task_exception)
+        self._tasks[slug] = task
+
+    def _log_task_exception(self, task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("run task raised uncaught: %r", exc, exc_info=exc)
 
     async def join(self, slug: str) -> None:
         """Await the background task for ``slug`` (a no-op if none is in flight)."""
@@ -118,6 +134,10 @@ class RunManager:
             self._repo.save_metrics(slug, run_metrics)
             self._status[slug].state = "done"
         except Exception as exc:  # the agent can fail; we say so honestly rather than pretend.
+            # A generation failure's only other home is RunStatus.error, visible solely to
+            # whoever happens to be polling; log it so there is a durable trace once they
+            # aren't.
+            logger.exception("generation run failed for slug=%s", slug)
             # Keep whatever progress counts the run reached so the error snapshot shows how
             # far the summoning got (e.g. "failed after 3 of 6 lines"), not a reset to zero.
             prev = self._status.get(slug, RunStatus())

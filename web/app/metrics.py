@@ -112,6 +112,10 @@ class RunMetrics:
     slug: str
     steps: list[StepMetrics] = field(default_factory=list)
 
+    def add_step(self, step: StepMetrics) -> None:
+        """The one sanctioned way to append a step (over mutating ``.steps`` directly)."""
+        self.steps.append(step)
+
     @property
     def _variant_steps(self) -> list[StepMetrics]:
         # The per-unit steps: everything except the single outline call.

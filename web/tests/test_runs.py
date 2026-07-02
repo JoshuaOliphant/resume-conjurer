@@ -258,6 +258,28 @@ def test_aclose_after_completion_skips_cancel(workspace):
     asyncio.run(go())
 
 
+def test_log_task_exception_logs_a_real_uncaught_exception(workspace, caplog):
+    # _run catches every exception it can raise today, so the done-callback's "real
+    # exception" branch is unreachable through the normal start()/_run() path — this is
+    # exactly the defense-in-depth the callback exists for if that invariant ever breaks.
+    # Exercise it directly rather than excluding the line from coverage.
+    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort())
+
+    async def boom():
+        raise RuntimeError("a future bug broke _run's exception safety")
+
+    async def go():
+        task = asyncio.create_task(boom())
+        with pytest.raises(RuntimeError):
+            await task
+        manager._log_task_exception(task)
+
+    with caplog.at_level("ERROR"):
+        asyncio.run(go())
+
+    assert "run task raised uncaught" in caplog.text
+
+
 def test_can_close_cancels_pending_runs(workspace):
     repo = FsWorkspaceRepository(workspace)
     gate = asyncio.Event()
@@ -275,3 +297,84 @@ def test_can_close_cancels_pending_runs(workspace):
         await manager.aclose()  # cancels the still-gated task cleanly
 
     asyncio.run(go())
+
+
+def test_cancel_mid_variants_loop_leaves_a_running_snapshot_not_an_error(workspace):
+    # Cancellation partway through the per-unit loop (not just mid-outline) must leave the
+    # run's last snapshot as-is: asyncio.CancelledError is a BaseException in modern Python,
+    # so _run's `except Exception` must NOT catch it and record state="error" — that would
+    # misreport a clean shutdown as a generation failure.
+    repo = FsWorkspaceRepository(workspace)
+    gate = asyncio.Event()
+
+    class GatedOnSecondUnit(FakeGenerationPort):
+        calls = 0
+
+        async def variants(self, slug, unit: OutlineUnit, n: int = 4):
+            type(self).calls += 1
+            if type(self).calls == 2:
+                await gate.wait()
+            return await super().variants(slug, unit, n)
+
+    manager = RunManager(repo=repo, gen=GatedOnSecondUnit())
+
+    async def go():
+        manager.start(SLUG)
+        while manager.status(SLUG).units_done < 1:
+            await asyncio.sleep(0)
+        assert manager.status(SLUG).state == "running"
+        await manager.aclose()  # cancels the task gated inside the second unit's variants()
+
+    asyncio.run(go())
+
+    status = manager.status(SLUG)
+    assert status.state == "running"  # not "error": cancellation isn't a generation failure
+    assert status.units_done == 1
+
+
+def test_concurrent_runs_across_slugs_stay_isolated(workspace):
+    # Two slugs racing through RunManager must not share state: one slug finishing (or
+    # progressing) must not be visible through the other slug's status/metrics.
+    repo = FsWorkspaceRepository(workspace)
+    other_slug = "other-app"
+    (workspace / "applications" / other_slug).mkdir(parents=True)
+    gate_a = asyncio.Event()
+    gate_b = asyncio.Event()
+
+    class GatedGen(FakeGenerationPort):
+        async def outline(self, slug):
+            await (gate_a if slug == SLUG else gate_b).wait()
+            return await super().outline(slug)
+
+    manager = RunManager(repo=repo, gen=GatedGen())
+
+    async def go():
+        manager.start(SLUG)
+        manager.start(other_slug)
+        # Both in flight, neither has reached the outline yet.
+        assert manager.status(SLUG).state == "running"
+        assert manager.status(other_slug).state == "running"
+        assert manager.status(SLUG).units_total == 0
+        assert manager.status(other_slug).units_total == 0
+
+        # Release only other_slug; it must run to completion while SLUG stays gated and
+        # untouched by other_slug's progress.
+        gate_b.set()
+        await manager.join(other_slug)
+        assert manager.status(other_slug).state == "done"
+        assert manager.status(SLUG).state == "running"
+        assert manager.status(SLUG).units_total == 0
+
+        gate_a.set()
+        await manager.join(SLUG)
+
+    asyncio.run(go())
+
+    assert manager.status(SLUG).state == "done"
+    assert manager.status(other_slug).state == "done"
+    metrics_a = manager.metrics(SLUG)
+    metrics_b = manager.metrics(other_slug)
+    assert metrics_a is not None and metrics_a.slug == SLUG
+    assert metrics_b is not None and metrics_b.slug == other_slug
+    assert (workspace / "applications" / SLUG / "outline.json").exists()
+    assert (workspace / "applications" / other_slug / "outline.json").exists()
