@@ -1,0 +1,25 @@
+{# ABOUTME: HTMX-polled progress partial for a live generation run. #}
+{# ABOUTME: Textual, stepped progress (no animation), so it is motion-free by design. #}
+{% import "_icons.html" as i %}
+<div id="summon" class="summon summon--{{ status.state }}"
+     {% if status.state in ("idle", "running") %}hx-get="/generate/status" hx-trigger="every 2s" hx-target="#summon" hx-swap="outerHTML"{% endif %}>
+  {% if status.state == "error" %}
+  <div class="ground-note" role="alert">
+    {{ i.icon("alert") }}
+    <span><b>The summoning failed.</b> {{ status.error }} Conjurer won’t pretend it produced
+      something it didn’t — fix the cause and start again.</span>
+  </div>
+  <div class="actions"><a class="btn btn--quiet" href="/">{{ i.icon("arrow-left") }} Back to start</a></div>
+  {% else %}
+  <p class="summon__count" aria-live="polite">
+    {% if status.units_total %}Summoned {{ status.units_done }} of {{ status.units_total }} lines.{% else %}Summoning the outline…{% endif %}
+  </p>
+  <div class="progress" aria-hidden="true">
+    <span class="progress__track">
+      <span class="progress__fill" style="width: {% if status.units_total %}{{ (status.units_done / status.units_total * 100) | round }}{% else %}6{% endif %}%"></span>
+    </span>
+  </div>
+  <p class="summon__hint">Generating grounded variants for each line. This stays open; you don’t
+    need to refresh.</p>
+  {% endif %}
+</div>

@@ -1,60 +1,61 @@
-# ABOUTME: Composition root + request dependencies — binds adapters to ports and resolves a session.
-# ABOUTME: Keeps wiring and the session cookie/middleware out of the route handlers in main.py.
-"""Where the ports get their concrete adapters, and how a request finds its session.
+# ABOUTME: Composition root — resolves which adapters back each port for this process.
+# ABOUTME: Keyed on env (CONJURER_BACKEND, CONJURER_WORKSPACE); routes never name a concrete adapter.
+"""Where the ports get their concrete adapters.
 
-This is the app's composition root: the single place that picks which adapter
-stands behind each port (the mock today, a live backend later). Routes never name
-a concrete adapter — they take `get_application` / `get_store` and a `session_id`,
-so swapping an adapter is a one-line change here.
+One place resolves which backend (fake/offline vs live SDK) and which workspace, keyed on
+env. The default is ``fake``, preserving the shipped editorial UI offline. Routes take a
+``WorkspaceRepository`` / ``GenerationPort`` / ``CompositionPort`` and never name a concrete
+adapter, so swapping one is a one-line change here.
 """
 
 from __future__ import annotations
 
-from uuid import uuid4
+import os
+from pathlib import Path
 
-from fastapi import Request
-
-from app.domain import Application
-from app.providers import ApplicationProvider
-from app.providers.fixtures import FixtureProvider
-from app.selections import InMemorySelectionStore, SelectionStore
-
-SESSION_COOKIE = "cj_session"
-
-# The adapters bound to the ports for this process. Swap either line to change
-# the backing implementation; nothing downstream needs to know.
-provider: ApplicationProvider = FixtureProvider()
-store: SelectionStore = InMemorySelectionStore()
+from app.adapters.composition import ScriptCompositionPort
+from app.adapters.generation_fake import FakeGenerationPort
+from app.adapters.generation_sdk import SdkGenerationPort
+from app.adapters.workspace_fake import FakeWorkspaceRepository
+from app.adapters.workspace_fs import FsWorkspaceRepository
+from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
 
 
-def get_application() -> Application:
-    return provider.get_application()
+def is_live() -> bool:
+    return os.environ.get("CONJURER_BACKEND", "fake") == "live"
 
 
-def get_store() -> SelectionStore:
-    return store
+def workspace_root() -> Path:
+    """The live workspace root, from ``CONJURER_WORKSPACE``.
 
-
-async def ensure_session(request: Request, call_next):
-    """Give every browser a stable session id so picks are scoped to one run.
-
-    Done in middleware (not a route dependency) so the cookie is set on the
-    outgoing response no matter what type a route returns — including the
-    RedirectResponses the curate flow leans on.
+    No silent fallback: a live backend with no workspace configured must fail loudly
+    rather than default to the tracked test fixture directory, which a live run would
+    then write generated JD/outline/variants/metrics into.
     """
-    sid = request.cookies.get(SESSION_COOKIE)
-    # Treat an empty/blank cookie as no session, not as a real (shared "") one —
-    # cleared or proxy-stripped cookies arrive as "" and must not collapse clients
-    # into a single bucket.
-    is_new = not sid
-    if is_new:
-        sid = uuid4().hex
-    request.state.session_id = sid
-    response = await call_next(request)
-    if is_new:
-        response.set_cookie(SESSION_COOKIE, sid, httponly=True, samesite="lax")
-    return response
+    env = os.environ.get("CONJURER_WORKSPACE")
+    if not env:
+        raise RuntimeError(
+            "CONJURER_BACKEND=live requires CONJURER_WORKSPACE to point at a workspace "
+            "directory (grimoire.md, master-resume.md, applications/); refusing to guess."
+        )
+    return Path(env)
 
 
-def session_id(request: Request) -> str:
-    return request.state.session_id
+def build_repository() -> WorkspaceRepository:
+    if is_live():
+        return FsWorkspaceRepository(workspace_root())
+    return FakeWorkspaceRepository()
+
+
+def build_generation() -> GenerationPort:
+    if is_live():
+        return SdkGenerationPort(workspace_root())
+    return FakeGenerationPort()
+
+
+def build_composition() -> CompositionPort | None:
+    # Live stitches+lints+exports the real workspace docs; fake has no workspace to stitch,
+    # so it keeps the in-memory lint and the static export template (comp is None).
+    if is_live():
+        return ScriptCompositionPort(workspace_root())
+    return None

@@ -1,0 +1,17 @@
+# Progress: conjurer-backend-reconciliation
+
+Request: Reconcile PR #3 (feature/conjurer-backend-generation-port, live Claude Agent SDK backend for the Conjurer web app) with the separately-merged PR #4 (routes/composition-root/rail split on main) by porting PR #3's live backend (ports.py, adapters/, runs.py, metrics.py) onto PR #4's file layout (main.py routes only + deps.py composition root + rail.py template context), keeping PR #3's ports/adapters as the functional backend since PR #4 only wraps a static mock. Fix 5 pr-review-toolkit findings: (1) live-mode default workspace silently falls back to the committed test fixture dir, (2) Variant evidence-grounding invariant unenforced at construction, (3) unvalidated slug is a path-traversal-shaped hole in WorkspaceRepository, (4) no logging anywhere so runs.py's except block leaves no durable trace, (5) duplicated/dead composition-root functions (default_repository, build_run_manager). Apply suggested polish: Outline.strategic_frame as Literal, RunMetrics.add_step() over direct list mutation, FRAMES safe fallback via outline.frame_name, README wording fixes, a garbled comment fix. Add missing test coverage: concurrent RunManager runs across two slugs, workspace_fs malformed-JSON/invalid-slug edge cases, cancellation mid-variants-loop. Push the result to the existing origin/feature/conjurer-backend-generation-port branch (PR #3 already open) rather than opening a new PR.
+
+- 2026-07-02T01:49:42+00:00 loop initialized (driver=auto)
+- 2026-07-02T01:50:27+00:00 → SPEC: Environment confirmed: continuing on feature/conjurer-backend-generation-port (PR #3 open), bd+gh present, uv run pytest is the test runner, no observability harness needed for this scope
+- 2026-07-02T01:51:13+00:00 → PLAN: Spec committed: 9 AC covering layout, 5 findings, polish, tests, gate, delivery target
+- 2026-07-02T01:51:52+00:00 → BUILD: Plan committed: 6 remaining tasks (#7-#11 plus finishing #3-#6's verification), each mapped to an AC
+- 2026-07-02T02:02:53+00:00 All 11 tasks done: layout ported, 5 findings fixed, polish applied, new tests added, suite green at 100% coverage + ruff clean, committed in 4 logical commits
+- 2026-07-02T02:02:53+00:00 → VERIFY: No ready tasks, none in flight: mechanical checks green (154 tests, 100% coverage, ruff clean), moving to AC walk-through
+- 2026-07-02T02:04:50+00:00 VERIFY: all 9 AC confirmed (AC-1..AC-8 via the 154-test suite + 100% coverage + ruff/ty clean; AC-9 pending SHIP). Bonus: pre-existing ty diagnostics in test_runs.py also resolved along the way, spawned follow-up task dismissed as stale.
+- 2026-07-02T02:04:50+00:00 → REVIEW: Mechanical + spec-compliance checks all green
+- 2026-07-02T02:08:01+00:00 REVIEW: code-review approved (2 informational suggestions, not blocking), security-review found nothing at 8+/10 confidence. Clean gate, no BUILD round-trip needed.
+- 2026-07-02T02:11:34+00:00 simplify pass complete: 1 real altitude finding applied (slug validation now consistent across both adapters), reuse/simplification/efficiency clean. Re-verified: 154 passed, 100% coverage.
+- 2026-07-02T02:11:34+00:00 → SHIP: REVIEW clean (code-review approve, security-review no findings), simplify applied, re-verified green
+- 2026-07-02T02:12:58+00:00 Pushed 9 commits to origin/feature/conjurer-backend-generation-port and posted a summary comment on PR #3: https://github.com/JoshuaOliphant/resume-conjurer/pull/3
+- 2026-07-02T02:12:58+00:00 → DONE: https://github.com/JoshuaOliphant/resume-conjurer/pull/3

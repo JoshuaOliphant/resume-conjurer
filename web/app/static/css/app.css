@@ -521,6 +521,15 @@ kbd {
 .empty__title { font-size: var(--text-lg); font-weight: 600; margin-top: var(--space-3); }
 .empty__sub { color: var(--muted); margin-top: var(--space-2); line-height: var(--lh-prose); }
 
+/* --------------------------------------------------------------- Summoning */
+/* Live-run progress. Deliberately textual and stepped ("Summoned 3 of 6"): the
+   count IS the progress indicator, so it conveys state without animation and reads
+   identically under prefers-reduced-motion. The bar is decorative reinforcement only. */
+.summon__count { font-size: var(--text-md); font-weight: 600; color: var(--ink); }
+.summon .progress { margin-top: var(--space-4); margin-bottom: var(--space-4); }
+.summon__hint { font-size: var(--text-sm); color: var(--muted); line-height: var(--lh-prose); }
+.summon--error .ground-note { margin-top: 0; }
+
 /* --------------------------------------------------------------- Responsive */
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }

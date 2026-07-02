@@ -25,6 +25,20 @@
     </div>
   </div>
 
+  {% if exported %}
+  <section class="lint panel">
+    <p class="lint__title">Exported files</p>
+    <ul class="lint__list">
+      {% for fmt, status in exported.items() %}
+      <li class="lint__row lint__row--{{ 'pass' if status == 'written' else 'fail' }}">
+        {{ i.icon("check" if status == "written" else "alert") }}
+        <span><b>{{ fmt }}.</b> <span class="lint__detail">{{ status }}</span></span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
   <p class="note">PDF and .docx use <code>pandoc</code>. If it isn’t installed, Markdown is the deliverable
     and the other two are skipped. Conjurer won’t pretend a file exists that doesn’t.</p>
 

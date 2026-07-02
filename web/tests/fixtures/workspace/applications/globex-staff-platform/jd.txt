@@ -1,0 +1,14 @@
+Globex — Staff Platform Engineer
+
+We need an engineer who has taken a core platform through a major architectural migration at
+scale, owns reliability end to end, and multiplies the teams around them.
+
+Responsibilities:
+- Lead platform-level architectural change across multiple regions.
+- Own reliability: on-call, incident response, and the tooling that makes both calmer.
+- Build paved-road tooling that other engineering teams adopt.
+
+Requirements:
+- Deep experience with event-driven and distributed systems.
+- A track record of owning a platform end to end.
+- Deep Kubernetes operations at scale a strong plus.

@@ -1,60 +1,88 @@
-# ABOUTME: The Conjurer domain model — the frozen dataclasses the core and ports speak in.
-# ABOUTME: Pure types only; no fixtures, no I/O, no provider coupling. Adapters hydrate these.
+# ABOUTME: The Conjurer domain model — evidence, variants, units, frame, application, lint.
+# ABOUTME: Pure types shared by every adapter (fake fixtures and the live SDK backend) and the UI.
 """Domain model for the Conjurer pipeline.
 
-These are the types the application core (entry -> outline -> curate -> review ->
-export) is written against, independent of where the data comes from. A provider
-adapter (the mock fixtures today, a live Agent SDK backend later) is responsible
-for building these objects; the routes and templates only ever see the model.
+These are pure data types with no I/O and no global state. Both the fake fixtures
+(``app.data``) and the live workspace/generation adapters build *these* objects, so
+the templates and routes never know which backend produced them.
 
-The trust mechanic lives in the shape of the model: a `Variant` carries its
-resolved `Evidence`, so by construction every trace shown on screen exists in the
-pool the provider validated against. Resolving an unknown evidence id is a
-provider-layer error, not something the templates have to guard.
+The trust mechanic — a variant may only cite evidence that exists in the application's
+pool — is enforced by whatever builds a ``Variant`` (the adapter), not by this module.
+A ``Variant`` therefore carries its evidence already resolved, so ``variant.evidence()``
+needs no global lookup and the template can render only traces that were put there.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from typing import Literal
 
 UnitKind = Literal["resume_bullet", "cover_paragraph"]
 
+# The four strategic frames, keyed by the value the outline stores in `strategic_frame`.
+FRAMES: dict[str, str] = {
+    "scale": "Scale",
+    "friction": "Friction removed",
+    "conviction": "Conviction",
+    "multiplier": "Force multiplier",
+}
+
+# A slug names one applications/<slug>/ directory on the live workspace filesystem, so it
+# must be a safe path segment: no ``.``/``/`` and no leading hyphen (which some tools read
+# as a flag). This is the one invariant every WorkspaceRepository adapter can lean on.
+_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_-]{0,78}[a-z0-9])?$")
+
+
+def validate_slug(slug: str) -> None:
+    """Raise ValueError if ``slug`` is not a safe applications/<slug>/ path segment."""
+    if not _SLUG_RE.match(slug):
+        raise ValueError(f"Invalid slug: {slug!r}")
+
+
+def label_for_unit_id(unit_id: str) -> str:
+    """A short human label for a unit: the id's last segment, spaced and title-cased."""
+    suffix = unit_id.rsplit(".", 1)[-1]
+    return suffix.replace("_", " ").strip().title()
+
 
 @dataclass(frozen=True)
 class Evidence:
-    """A line lifted from the master resume that a variant can cite."""
+    """One line from the master resume or evidence pool that a variant can cite."""
 
     id: str
     text: str
-    source: str  # where in the master resume this line lives
+    source: str  # where in the master resume / evidence this line lives
+    # True when the evidence resolves to a real pooled line (its text is a genuine quote).
+    # False for a self-citation fallback, where ``text`` is only the citation string and the
+    # UI must not present it as a verified quote.
+    grounded: bool = True
 
 
 @dataclass(frozen=True)
 class Variant:
-    """One grounded rephrasing of a unit, carrying the evidence it draws from.
-
-    `evidence` is already resolved to `Evidence` objects, so every trace is valid
-    by construction. The provider that builds the variant owns the id -> Evidence
-    resolution and rejects citations outside its pool.
-    """
+    """One generated phrasing of a unit, carrying its already-resolved evidence trace."""
 
     id: str
     text: str
-    evidence: tuple[Evidence, ...] = ()
+    evidence_items: tuple[Evidence, ...] = ()
+
+    def evidence(self) -> list[Evidence]:
+        # Method (not the raw field) so templates keep calling ``v.evidence()``.
+        return list(self.evidence_items)
 
 
 @dataclass
 class Unit:
-    """A single bullet or paragraph to tailor, with its candidate variants."""
+    """A single bullet or paragraph being tailored, with its competing variants."""
 
     id: str
     kind: UnitKind
     label: str  # short role of this unit, e.g. "Opening bullet"
     context: str  # why this unit matters for this JD
     variants: list[Variant]
-    # When the JD asks for something the master resume only thinly supports, we
-    # say so plainly rather than inventing. None means well-grounded.
+    # When the JD asks for something the master resume only thinly supports, we say so
+    # plainly rather than inventing. None means well-grounded.
     grounding_note: str | None = None
 
     @property
@@ -69,19 +97,10 @@ class Unit:
     def variant_ids(self) -> set[str]:
         return {v.id for v in self.variants}
 
-    def variant(self, variant_id: str | None) -> Variant:
-        """Resolve a chosen variant id, falling back to the first variant.
-
-        An unselected (or unknown) unit renders its first variant — the documented
-        review-screen fallback. Callers that must reject unknown ids should check
-        `variant_id in unit.variant_ids` first.
-        """
-        return next((v for v in self.variants if v.id == variant_id), self.variants[0])
-
 
 @dataclass(frozen=True)
 class Frame:
-    """The single strategic frame the outline step chose for this application."""
+    """The chosen strategic frame for an application: a display name and its rationale."""
 
     name: str
     rationale: str
@@ -89,7 +108,7 @@ class Frame:
 
 @dataclass
 class Application:
-    """One tailored application: a JD, the chosen frame, and the units to curate."""
+    """One tailored application: the JD context, chosen frame, units, and evidence pool."""
 
     slug: str
     company: str
@@ -97,3 +116,78 @@ class Application:
     jd_excerpt: str
     frame: Frame
     units: list[Unit]
+    # The full evidence pool this application's variants may cite, keyed by id.
+    evidence: dict[str, Evidence] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # The trust mechanic, enforced: a variant may claim ``grounded=True`` only for
+        # evidence that is actually this application's pool entry for that id. This is the
+        # one invariant the whole product exists to protect (no hallucinated resume claims
+        # presented as verified quotes), so it is checked here rather than left to adapter
+        # convention.
+        for unit in self.units:
+            for variant in unit.variants:
+                for item in variant.evidence_items:
+                    if not item.grounded:
+                        continue
+                    pooled = self.evidence.get(item.id)
+                    if pooled != item:
+                        raise ValueError(
+                            f"Variant {variant.id!r} claims grounded evidence {item.id!r} "
+                            "that does not match this application's evidence pool."
+                        )
+
+
+@dataclass(frozen=True)
+class LintCheck:
+    """One grimoire style check run against the stitched documents."""
+
+    label: str
+    detail: str
+    passed: bool
+
+
+# --- Outline (the generation step before variants) -------------------------
+# Mirrors applications/<slug>/outline.json (see plugins/conjurer .../references/pipeline.md):
+# one strategic frame plus the unit skeleton, in document order, with no variants yet.
+
+
+@dataclass(frozen=True)
+class OutlineUnit:
+    """One unit in the outline skeleton: its id, kind, and what it must accomplish."""
+
+    unit_id: str
+    kind: UnitKind
+    description: str
+
+
+@dataclass(frozen=True)
+class Outline:
+    """The strategic outline: chosen frame plus the cover-letter and resume unit skeletons."""
+
+    strategic_frame: str  # one of FRAMES keys: scale | friction | conviction | multiplier
+    frame_rationale: str
+    company: str
+    role_title: str
+    cover_letter_units: tuple[OutlineUnit, ...]
+    resume_units: tuple[OutlineUnit, ...]
+
+    @property
+    def frame_name(self) -> str:
+        return FRAMES.get(self.strategic_frame, self.strategic_frame)
+
+    @property
+    def units(self) -> tuple[OutlineUnit, ...]:
+        # Document order: cover letter first, then resume bullets (matches the UI rail).
+        return self.cover_letter_units + self.resume_units
+
+
+@dataclass(frozen=True)
+class WorkspaceInputs:
+    """The raw source material a generation step reads for one application."""
+
+    grimoire: str
+    master_resume: str
+    jd: str
+    evidence: str
+    evidence_pool: dict[str, Evidence]

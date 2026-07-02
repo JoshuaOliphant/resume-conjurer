@@ -4,7 +4,7 @@
 
 Every screen renders the same five-step rail with one step marked active. That is
 a presentation concern, not routing, so it lives here; routes call
-`template_context(...)` to fold the rail state into whatever else a page needs.
+``template_context(...)`` to fold the rail state into whatever else a page needs.
 """
 
 from __future__ import annotations
@@ -22,6 +22,11 @@ STEPS = [
 
 
 def template_context(request: Request, active: str, **extra) -> dict:
-    """Build a template context with the rail state for `active` folded in."""
     active_i = next((i for i, (key, _, _) in enumerate(STEPS) if key == active), 0)
-    return {"request": request, "steps": STEPS, "active_step": active, "active_i": active_i, **extra}
+    return {
+        "request": request,
+        "steps": STEPS,
+        "active_step": active,
+        "active_i": active_i,
+        **extra,
+    }
