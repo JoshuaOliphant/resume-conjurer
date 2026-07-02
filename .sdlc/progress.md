@@ -4,3 +4,4 @@ Request: Reconcile PR #3 (feature/conjurer-backend-generation-port, live Claude 
 
 - 2026-07-02T01:49:42+00:00 loop initialized (driver=auto)
 - 2026-07-02T01:50:27+00:00 → SPEC: Environment confirmed: continuing on feature/conjurer-backend-generation-port (PR #3 open), bd+gh present, uv run pytest is the test runner, no observability harness needed for this scope
+- 2026-07-02T01:51:13+00:00 → PLAN: Spec committed: 9 AC covering layout, 5 findings, polish, tests, gate, delivery target
