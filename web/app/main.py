@@ -1,9 +1,8 @@
 # ABOUTME: FastAPI app serving the Conjurer pipeline UI (entry → outline → curate → review → export).
-# ABOUTME: A composition root wires a WorkspaceRepository + GenerationPort + RunManager into the routes.
+# ABOUTME: Routes orchestrate; wiring is in deps.py, the rail + template context in rail.py.
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,68 +12,17 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.adapters.composition import ScriptCompositionPort
-from app.adapters.generation_fake import FakeGenerationPort
-from app.adapters.generation_sdk import SdkGenerationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
-from app.adapters.workspace_fs import FsWorkspaceRepository
 from app.data import lint_results
+from app.deps import build_composition, build_generation, build_repository, is_live
 from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
+from app.rail import template_context
 from app.runs import RunManager
 
 BASE = Path(__file__).parent
 
 # Single fixed workspace today; the slug is the seam a future multi-user resolver scopes.
 SLUG = "globex-staff-platform"
-
-# The five pipeline steps, in order, for the rail.
-STEPS = [
-    ("entry", "Start", "/"),
-    ("outline", "Outline", "/outline"),
-    ("curate", "Curate", "/curate"),
-    ("review", "Review", "/review"),
-    ("export", "Export", "/export"),
-]
-
-
-# --- Composition root ------------------------------------------------------
-# One place resolves which backend (fake/offline vs live SDK) and which workspace,
-# keyed on env. The default is `fake`, preserving the shipped editorial UI offline.
-
-
-def _is_live() -> bool:
-    return os.environ.get("CONJURER_BACKEND", "fake") == "live"
-
-
-def _workspace_root() -> Path:
-    env = os.environ.get("CONJURER_WORKSPACE")
-    if env:
-        return Path(env)
-    return BASE.parent / "tests" / "fixtures" / "workspace"
-
-
-def build_repository() -> WorkspaceRepository:
-    if _is_live():
-        return FsWorkspaceRepository(_workspace_root())
-    return FakeWorkspaceRepository()
-
-
-def build_generation() -> GenerationPort:
-    if _is_live():
-        return SdkGenerationPort(_workspace_root())
-    return FakeGenerationPort()
-
-
-def build_composition() -> CompositionPort | None:
-    # Live stitches+lints+exports the real workspace docs; fake has no workspace to stitch,
-    # so it keeps the in-memory lint and the static export template (comp is None).
-    if _is_live():
-        return ScriptCompositionPort(_workspace_root())
-    return None
-
-
-def build_run_manager() -> RunManager:
-    return RunManager(repo=build_repository(), gen=build_generation())
 
 
 def create_app(
@@ -101,16 +49,6 @@ def create_app(
     app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
     templates = Jinja2Templates(directory=str(BASE / "templates"))
 
-    def _ctx(request: Request, active: str, **extra) -> dict:
-        active_i = next((i for i, (key, _, _) in enumerate(STEPS) if key == active), 0)
-        return {
-            "request": request,
-            "steps": STEPS,
-            "active_step": active,
-            "active_i": active_i,
-            **extra,
-        }
-
     def _not_generated_yet() -> bool:
         # Live only: a fresh workspace has no outline.json yet, so load_application would
         # raise FileNotFoundError. The fake repo always has its fixture application, and its
@@ -132,7 +70,9 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "entry.html",
-            _ctx(request, "entry", app_data=app_data, master_resume_note=master_resume_note),
+            template_context(
+                request, "entry", app_data=app_data, master_resume_note=master_resume_note
+            ),
         )
 
     @app.post("/start")
@@ -150,7 +90,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "summoning.html",
-            _ctx(request, "outline", status=run_manager.status(SLUG), app_data=None),
+            template_context(request, "outline", status=run_manager.status(SLUG), app_data=None),
         )
 
     @app.get("/generate/status", response_class=HTMLResponse)
@@ -176,7 +116,9 @@ def create_app(
         if _not_generated_yet():
             return RedirectResponse("/", status_code=303)
         return templates.TemplateResponse(
-            request, "outline.html", _ctx(request, "outline", app_data=repo.load_application(SLUG))
+            request,
+            "outline.html",
+            template_context(request, "outline", app_data=repo.load_application(SLUG)),
         )
 
     @app.get("/curate", response_class=HTMLResponse)
@@ -197,7 +139,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "curate.html",
-            _ctx(
+            template_context(
                 request,
                 "curate",
                 app_data=data,
@@ -261,7 +203,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "review.html",
-            _ctx(
+            template_context(
                 request,
                 "review",
                 app_data=data,
@@ -283,7 +225,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "export.html",
-            _ctx(request, "export", app_data=repo.load_application(SLUG), exported=exported),
+            template_context(request, "export", app_data=repo.load_application(SLUG), exported=exported),
         )
 
     @app.post("/reset")
@@ -302,6 +244,4 @@ _repo = build_repository()
 _gen = build_generation()
 _comp = build_composition()
 _run_manager = RunManager(repo=_repo, gen=_gen)
-app = create_app(
-    repo=_repo, gen=_gen, run_manager=_run_manager, live=_is_live(), comp=_comp
-)
+app = create_app(repo=_repo, gen=_gen, run_manager=_run_manager, live=is_live(), comp=_comp)

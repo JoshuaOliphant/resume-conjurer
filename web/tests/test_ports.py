@@ -4,7 +4,7 @@
 from pathlib import Path
 
 from app.adapters.composition import ScriptCompositionPort
-from app.adapters.workspace_fs import FsWorkspaceRepository, default_repository
+from app.adapters.workspace_fs import FsWorkspaceRepository
 from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
 
 FIXTURE = Path(__file__).parent / "fixtures" / "workspace"
@@ -12,10 +12,6 @@ FIXTURE = Path(__file__).parent / "fixtures" / "workspace"
 
 def test_fs_repository_satisfies_workspace_repository():
     assert isinstance(FsWorkspaceRepository(FIXTURE), WorkspaceRepository)
-
-
-def test_default_repository_satisfies_workspace_repository():
-    assert isinstance(default_repository(), WorkspaceRepository)
 
 
 def test_script_composition_satisfies_composition_port():

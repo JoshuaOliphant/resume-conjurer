@@ -12,13 +12,8 @@ from app.adapters.generation_sdk import SdkGenerationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.adapters.workspace_fs import FsWorkspaceRepository
 from app.adapters.composition import ScriptCompositionPort
-from app.main import (
-    build_composition,
-    build_generation,
-    build_repository,
-    build_run_manager,
-    create_app,
-)
+from app.deps import build_composition, build_generation, build_repository
+from app.main import create_app
 from app.runs import RunManager, RunStatus
 
 SLUG = "globex-staff-platform"
@@ -230,20 +225,27 @@ def test_build_generation_live_is_sdk(monkeypatch, workspace):
     assert isinstance(build_generation(), SdkGenerationPort)
 
 
-def test_build_run_manager_pairs_repo_and_gen(monkeypatch, workspace):
-    monkeypatch.setenv("CONJURER_BACKEND", "live")
-    monkeypatch.setenv("CONJURER_WORKSPACE", str(workspace))
-    manager = build_run_manager()
-    assert isinstance(manager, RunManager)
-
-
-def test_live_repository_falls_back_to_the_fixture_workspace(monkeypatch):
-    # Live config with no CONJURER_WORKSPACE resolves the bundled fixture workspace.
+def test_live_repository_requires_workspace_env(monkeypatch):
+    # No silent fallback to the tracked test fixture: a live run without CONJURER_WORKSPACE
+    # would otherwise write generated JD/outline/variants/metrics into it.
     monkeypatch.setenv("CONJURER_BACKEND", "live")
     monkeypatch.delenv("CONJURER_WORKSPACE", raising=False)
-    repo = build_repository()
-    assert isinstance(repo, FsWorkspaceRepository)
-    assert repo.root.name == "workspace"
+    with pytest.raises(RuntimeError, match="CONJURER_WORKSPACE"):
+        build_repository()
+
+
+def test_live_generation_requires_workspace_env(monkeypatch):
+    monkeypatch.setenv("CONJURER_BACKEND", "live")
+    monkeypatch.delenv("CONJURER_WORKSPACE", raising=False)
+    with pytest.raises(RuntimeError, match="CONJURER_WORKSPACE"):
+        build_generation()
+
+
+def test_live_composition_requires_workspace_env(monkeypatch):
+    monkeypatch.setenv("CONJURER_BACKEND", "live")
+    monkeypatch.delenv("CONJURER_WORKSPACE", raising=False)
+    with pytest.raises(RuntimeError, match="CONJURER_WORKSPACE"):
+        build_composition()
 
 
 def test_live_landing_tolerates_ungenerated_workspace(live_client):
