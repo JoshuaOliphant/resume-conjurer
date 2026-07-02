@@ -157,6 +157,7 @@ def test_error_path_sets_state_error_with_message(workspace):
 
     status = manager.status(SLUG)
     assert status.state == "error"
+    assert status.error is not None
     assert "the summoning failed" in status.error
 
 
@@ -185,6 +186,7 @@ def test_zero_variant_unit_fails_the_run_honestly(workspace):
 
     status = manager.status(SLUG)
     assert status.state == "error"
+    assert status.error is not None
     assert "No variants generated for" in status.error
     assert status.error.endswith(empty_unit_id[0])
 
@@ -211,10 +213,13 @@ def test_error_mid_loop_keeps_partial_progress_snapshot(workspace):
 
     status = manager.status(SLUG)
     assert status.state == "error"
+    assert status.error is not None
     assert "the summoning failed mid-flight" in status.error
     # One unit completed before the second raised; the total is the full outline.
     assert status.units_done == 1
-    assert status.units_total == len(manager._gen._outline_units)
+    gen = manager._gen
+    assert isinstance(gen, FakeGenerationPort)
+    assert status.units_total == len(gen._outline_units)
 
 
 def test_join_on_unstarted_slug_is_a_noop(workspace):
