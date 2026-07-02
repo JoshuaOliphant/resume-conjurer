@@ -1,7 +1,7 @@
 {
   "feature": "conjurer-backend-reconciliation",
   "request": "Reconcile PR #3 (feature/conjurer-backend-generation-port, live Claude Agent SDK backend for the Conjurer web app) with the separately-merged PR #4 (routes/composition-root/rail split on main) by porting PR #3's live backend (ports.py, adapters/, runs.py, metrics.py) onto PR #4's file layout (main.py routes only + deps.py composition root + rail.py template context), keeping PR #3's ports/adapters as the functional backend since PR #4 only wraps a static mock. Fix 5 pr-review-toolkit findings: (1) live-mode default workspace silently falls back to the committed test fixture dir, (2) Variant evidence-grounding invariant unenforced at construction, (3) unvalidated slug is a path-traversal-shaped hole in WorkspaceRepository, (4) no logging anywhere so runs.py's except block leaves no durable trace, (5) duplicated/dead composition-root functions (default_repository, build_run_manager). Apply suggested polish: Outline.strategic_frame as Literal, RunMetrics.add_step() over direct list mutation, FRAMES safe fallback via outline.frame_name, README wording fixes, a garbled comment fix. Add missing test coverage: concurrent RunManager runs across two slugs, workspace_fs malformed-JSON/invalid-slug edge cases, cancellation mid-variants-loop. Push the result to the existing origin/feature/conjurer-backend-generation-port branch (PR #3 already open) rather than opening a new PR.",
-  "state": "VERIFY",
+  "state": "DONE",
   "driver": "auto",
   "iteration": 2,
   "budgets": {
@@ -45,8 +45,23 @@
       "at": "2026-07-02T02:02:53+00:00",
       "to": "VERIFY",
       "reason": "No ready tasks, none in flight: mechanical checks green (154 tests, 100% coverage, ruff clean), moving to AC walk-through"
+    },
+    {
+      "at": "2026-07-02T02:04:50+00:00",
+      "to": "REVIEW",
+      "reason": "Mechanical + spec-compliance checks all green"
+    },
+    {
+      "at": "2026-07-02T02:11:34+00:00",
+      "to": "SHIP",
+      "reason": "REVIEW clean (code-review approve, security-review no findings), simplify applied, re-verified green"
+    },
+    {
+      "at": "2026-07-02T02:12:58+00:00",
+      "to": "DONE",
+      "reason": "https://github.com/JoshuaOliphant/resume-conjurer/pull/3"
     }
   ],
   "started": "2026-07-02T01:49:42+00:00",
-  "updated": "2026-07-02T02:02:53+00:00"
+  "updated": "2026-07-02T02:12:58+00:00"
 }
