@@ -1,0 +1,37 @@
+{
+  "feature": "conjurer-backend-reconciliation",
+  "request": "Reconcile PR #3 (feature/conjurer-backend-generation-port, live Claude Agent SDK backend for the Conjurer web app) with the separately-merged PR #4 (routes/composition-root/rail split on main) by porting PR #3's live backend (ports.py, adapters/, runs.py, metrics.py) onto PR #4's file layout (main.py routes only + deps.py composition root + rail.py template context), keeping PR #3's ports/adapters as the functional backend since PR #4 only wraps a static mock. Fix 5 pr-review-toolkit findings: (1) live-mode default workspace silently falls back to the committed test fixture dir, (2) Variant evidence-grounding invariant unenforced at construction, (3) unvalidated slug is a path-traversal-shaped hole in WorkspaceRepository, (4) no logging anywhere so runs.py's except block leaves no durable trace, (5) duplicated/dead composition-root functions (default_repository, build_run_manager). Apply suggested polish: Outline.strategic_frame as Literal, RunMetrics.add_step() over direct list mutation, FRAMES safe fallback via outline.frame_name, README wording fixes, a garbled comment fix. Add missing test coverage: concurrent RunManager runs across two slugs, workspace_fs malformed-JSON/invalid-slug edge cases, cancellation mid-variants-loop. Push the result to the existing origin/feature/conjurer-backend-generation-port branch (PR #3 already open) rather than opening a new PR.",
+  "state": "SPEC",
+  "driver": "auto",
+  "iteration": 1,
+  "budgets": {
+    "max_iterations": 50,
+    "max_attempts_per_task": 3,
+    "max_wait_ticks": 200
+  },
+  "in_flight": [],
+  "wait_ticks": 0,
+  "attempts": {},
+  "review": {
+    "reviewers": [
+      "code-review",
+      "security-review"
+    ],
+    "mode": "block"
+  },
+  "last_progress_iteration": 1,
+  "history": [
+    {
+      "at": "2026-07-02T01:49:42+00:00",
+      "to": "INIT",
+      "reason": "initialized"
+    },
+    {
+      "at": "2026-07-02T01:50:27+00:00",
+      "to": "SPEC",
+      "reason": "Environment confirmed: continuing on feature/conjurer-backend-generation-port (PR #3 open), bd+gh present, uv run pytest is the test runner, no observability harness needed for this scope"
+    }
+  ],
+  "started": "2026-07-02T01:49:42+00:00",
+  "updated": "2026-07-02T01:50:27+00:00"
+}
