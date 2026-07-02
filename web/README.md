@@ -44,9 +44,11 @@ uv run uvicorn app.main:app --reload --port 8400
 
 Open http://127.0.0.1:8400 and walk the flow: Start → (summon) → Outline → Curate → Review → Export.
 
-Auth: the live backend uses `ANTHROPIC_API_KEY`. If it is unset, the SDK falls back to your
-authenticated `claude` CLI (fine for local dev, not the production auth path). From 2026-06-15,
-Agent SDK usage on subscription plans draws from a separate monthly Agent SDK credit.
+Auth: the live backend uses `ANTHROPIC_API_KEY`. If it is unset, the SDK falls back to the
+local `claude` CLI (which must itself be installed and authenticated — fine for local dev,
+not the production auth path). Per Anthropic's docs as of writing, Agent SDK usage on
+subscription plans draws from a separate monthly Agent SDK credit; check current pricing
+before relying on this for production auth.
 
 ## Test
 
