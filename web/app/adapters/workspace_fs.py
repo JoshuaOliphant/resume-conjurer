@@ -17,14 +17,12 @@ citation so we can resolve each variant's evidence trace back into the domain.
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 
 from app.domain import (
     Application,
     Evidence,
-    FRAMES,
     Frame,
     Outline,
     OutlineUnit,
@@ -33,6 +31,7 @@ from app.domain import (
     Variant,
     WorkspaceInputs,
     label_for_unit_id,
+    validate_slug,
 )
 from app.metrics import RunMetrics
 
@@ -149,6 +148,7 @@ class FsWorkspaceRepository:
         self.root = root
 
     def _app_dir(self, slug: str) -> Path:
+        validate_slug(slug)
         return self.root / "applications" / slug
 
     # --- inputs ------------------------------------------------------------
@@ -350,16 +350,7 @@ class FsWorkspaceRepository:
             company=outline.company,
             role=outline.role_title,
             jd_excerpt=_jd_excerpt(inputs.jd),
-            frame=Frame(name=FRAMES[outline.strategic_frame], rationale=outline.frame_rationale),
+            frame=Frame(name=outline.frame_name, rationale=outline.frame_rationale),
             units=units,
             evidence=dict(resolved),
         )
-
-
-def default_repository() -> FsWorkspaceRepository:
-    """Resolve the workspace root in one place: env ``CONJURER_WORKSPACE`` or the fixture."""
-    env = os.environ.get("CONJURER_WORKSPACE")
-    if env:
-        return FsWorkspaceRepository(Path(env))
-    fallback = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "workspace"
-    return FsWorkspaceRepository(fallback)

@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
 import pytest
 
-from app.adapters.workspace_fs import FsWorkspaceRepository, default_repository
+from app.adapters.workspace_fs import FsWorkspaceRepository
 from app.domain import Outline, OutlineUnit, Unit, Variant, Evidence
 from app.metrics import CallMetrics, RunMetrics, StepMetrics
 
@@ -121,6 +122,22 @@ def test_load_outline_infers_kind_from_prefix(repo: FsWorkspaceRepository) -> No
     assert loaded is not None
     assert loaded.cover_letter_units[0].kind == "cover_paragraph"
     assert loaded.resume_units[0].kind == "resume_bullet"
+
+
+def test_load_outline_raises_on_malformed_json(repo: FsWorkspaceRepository, workspace: Path) -> None:
+    # A crash mid-write (or a hand-edited file) leaves invalid JSON on disk; that must
+    # surface as a real error, not a silently empty/default outline.
+    path = workspace / "applications" / SLUG / "outline.json"
+    path.write_text("{not valid json")
+    with pytest.raises(json.JSONDecodeError):
+        repo.load_outline(SLUG)
+
+
+def test_repository_methods_reject_a_path_traversal_slug(repo: FsWorkspaceRepository) -> None:
+    with pytest.raises(ValueError, match="Invalid slug"):
+        repo.load_outline("../../etc")
+    with pytest.raises(ValueError, match="Invalid slug"):
+        repo.save_jd("..", "some jd text")
 
 
 # --- save_variants / load_application --------------------------------------
@@ -381,19 +398,11 @@ def test_metrics_round_trip(repo: FsWorkspaceRepository, workspace: Path) -> Non
     assert loaded == metrics
 
 
-# --- default_repository ----------------------------------------------------
-
-
-def test_default_repository_uses_env_when_set(monkeypatch: pytest.MonkeyPatch, workspace: Path) -> None:
-    monkeypatch.setenv("CONJURER_WORKSPACE", str(workspace))
-    repo = default_repository()
-    assert repo.root == workspace
-
-
-def test_default_repository_falls_back_to_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("CONJURER_WORKSPACE", raising=False)
-    repo = default_repository()
-    assert repo.root == FIXTURE_WORKSPACE.resolve()
+def test_load_metrics_raises_on_malformed_json(repo: FsWorkspaceRepository, workspace: Path) -> None:
+    path = workspace / "applications" / SLUG / "metrics.json"
+    path.write_text("not json at all")
+    with pytest.raises(json.JSONDecodeError):
+        repo.load_metrics(SLUG)
 
 
 def test_save_jd_creates_app_dir_and_normalizes_newline(tmp_path: Path) -> None:

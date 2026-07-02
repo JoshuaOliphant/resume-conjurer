@@ -106,9 +106,12 @@ def outline_from_structured(data: dict[str, Any]) -> Outline:
 def variants_from_block(text: str, unit: OutlineUnit) -> list[Variant]:
     """Parse a relayed variant-generator block into domain Variants for one unit.
 
-    Each variant carries its citation as a lightweight Evidence(id=citation); the
-    workspace repository resolves citations to real master-resume lines on load, so the
-    UI's trace renders the actual cited text.
+    Each variant carries its citation as a lightweight, ungrounded Evidence(id=citation) —
+    ``text`` here is only the citation string, not the real quote, so ``grounded=False``
+    until the workspace repository resolves it to a real master-resume line on load. These
+    Variants are transient (persisted to variants.md and immediately re-hydrated via
+    ``load_application``); nothing should treat this intermediate ``grounded=False`` value
+    as final.
     """
     variants: list[Variant] = []
     for match in _VARIANT_RE.finditer(text):
@@ -121,7 +124,9 @@ def variants_from_block(text: str, unit: OutlineUnit) -> list[Variant]:
             Variant(
                 id=f"{unit.unit_id}#{n}",
                 text=body,
-                evidence_items=(Evidence(id=citation, text=citation, source=citation),),
+                evidence_items=(
+                    Evidence(id=citation, text=citation, source=citation, grounded=False),
+                ),
             )
         )
     return variants
@@ -210,8 +215,8 @@ class SdkGenerationPort:
             # default toolset but DROP bypassPermissions and supply a can_use_tool guard,
             # so a prompt injection in the JD/evidence cannot reach Bash/Write/Edit/network.
             # allowed_tools auto-approves the safe set; guard_variant_tool denies everything
-            # else by default. NB (lead to live-verify): subagent dispatch must still work
-            # under this allowlist — `Agent`/`Task` are allowed so the variant-generator runs.
+            # else by default. Verified live: subagent dispatch still works under this
+            # allowlist — `Agent`/`Task` are allowed so the variant-generator runs.
             options = ClaudeAgentOptions(
                 allowed_tools=["Read", "Glob", "Grep", "Agent"],
                 can_use_tool=guard_variant_tool,

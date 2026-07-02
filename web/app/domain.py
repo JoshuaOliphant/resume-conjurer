@@ -14,6 +14,7 @@ needs no global lookup and the template can render only traces that were put the
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -26,6 +27,17 @@ FRAMES: dict[str, str] = {
     "conviction": "Conviction",
     "multiplier": "Force multiplier",
 }
+
+# A slug names one applications/<slug>/ directory on the live workspace filesystem, so it
+# must be a safe path segment: no ``.``/``/`` and no leading hyphen (which some tools read
+# as a flag). This is the one invariant every WorkspaceRepository adapter can lean on.
+_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_-]{0,78}[a-z0-9])?$")
+
+
+def validate_slug(slug: str) -> None:
+    """Raise ValueError if ``slug`` is not a safe applications/<slug>/ path segment."""
+    if not _SLUG_RE.match(slug):
+        raise ValueError(f"Invalid slug: {slug!r}")
 
 
 def label_for_unit_id(unit_id: str) -> str:
@@ -106,6 +118,24 @@ class Application:
     units: list[Unit]
     # The full evidence pool this application's variants may cite, keyed by id.
     evidence: dict[str, Evidence] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # The trust mechanic, enforced: a variant may claim ``grounded=True`` only for
+        # evidence that is actually this application's pool entry for that id. This is the
+        # one invariant the whole product exists to protect (no hallucinated resume claims
+        # presented as verified quotes), so it is checked here rather than left to adapter
+        # convention.
+        for unit in self.units:
+            for variant in unit.variants:
+                for item in variant.evidence_items:
+                    if not item.grounded:
+                        continue
+                    pooled = self.evidence.get(item.id)
+                    if pooled != item:
+                        raise ValueError(
+                            f"Variant {variant.id!r} claims grounded evidence {item.id!r} "
+                            "that does not match this application's evidence pool."
+                        )
 
 
 @dataclass(frozen=True)
