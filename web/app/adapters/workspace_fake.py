@@ -17,7 +17,7 @@ The generation-persistence methods (``load_inputs`` / ``save_outline`` / ``load_
 from __future__ import annotations
 
 from app.data import get_application
-from app.domain import Application, Outline, Unit, WorkspaceInputs
+from app.domain import Application, Outline, Unit, WorkspaceInputs, validate_slug
 from app.metrics import RunMetrics
 
 
@@ -54,16 +54,20 @@ class FakeWorkspaceRepository:
     # --- picks -------------------------------------------------------------
 
     def set_pick(self, slug: str, unit_id: str, variant_id: str) -> None:
+        validate_slug(slug)
         self._picks.setdefault(slug, {})[unit_id] = variant_id
 
     def get_picks(self, slug: str) -> dict[str, str]:
+        validate_slug(slug)
         return dict(self._picks.get(slug, {}))
 
     def clear(self, slug: str) -> None:
         """Drop every pick for ``slug`` (the offline equivalent of /reset)."""
+        validate_slug(slug)
         self._picks.pop(slug, None)
 
     # --- hydration ---------------------------------------------------------
 
     def load_application(self, slug: str) -> Application:
+        validate_slug(slug)
         return get_application()
