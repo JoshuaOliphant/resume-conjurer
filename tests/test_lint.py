@@ -71,6 +71,26 @@ def test_em_dash_in_bullet_still_flagged():
     assert any(f.rule == "em_dash" for f in findings)
 
 
+def test_em_dash_after_bold_lead_in_still_flagged():
+    findings = lint.lint_text("**My pitch:** I built X — and shipped it.\n", source=Path("cover_letter.md"))
+    assert any(f.rule == "em_dash" for f in findings)
+
+
+def test_filler_after_bold_lead_in_still_flagged():
+    findings = lint.lint_text("**My pitch:** I just shipped it.\n", source=Path("cover_letter.md"))
+    assert any(f.rule.startswith("filler:") for f in findings)
+
+
+def test_bold_label_alone_on_line_not_flagged():
+    findings = lint.lint_text("**Just Shipped**\n- Did things.\n", source=Path("resume.md"))
+    assert not any(f.rule.startswith("filler:") for f in findings)
+
+
+def test_bold_label_with_double_hyphen_delimiter_not_flagged():
+    findings = lint.lint_text("**Platform Team** -- just getting started\n", source=Path("resume.md"))
+    assert not any(f.rule.startswith("filler:") for f in findings)
+
+
 def test_lint_app_dir_routes_cover_letter_and_resume(tmp_path):
     # Write a cover letter over 350 words to trigger the length rule.
     cover_words = " ".join(["achievement"] * 360)
