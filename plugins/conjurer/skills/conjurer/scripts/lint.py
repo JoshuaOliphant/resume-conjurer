@@ -64,10 +64,20 @@ BUZZWORDS = [
 COVER_LETTER_WORD_LIMIT = 350
 
 
+# A bold label standing alone, optionally followed by a delimiter and a date:
+# `**Education**` or `**Platform Team** — 2021 to present`. Anything after the closing
+# `**` other than a delimiter means the bold is a lead-in to a prose sentence.
+BOLD_LABEL_RE = re.compile(r"\*\*[^*]+\*\*\s*(?:—|--|$)")
+
+
 def _is_structural(line: str) -> bool:
-    """A markdown header or a bold label/date line — structural typography, not prose."""
+    """A markdown header or a bold label/date line — structural typography, not prose.
+
+    A bold lead-in that opens a sentence (`**My pitch:** I built X — and shipped it.`)
+    is prose, so it stays subject to the prose checks.
+    """
     stripped = line.lstrip()
-    return stripped.startswith("#") or stripped.startswith("**")
+    return stripped.startswith("#") or bool(BOLD_LABEL_RE.match(stripped))
 
 
 @dataclass
