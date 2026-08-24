@@ -28,3 +28,6 @@ grimoire.md
 !web/tests/fixtures/workspace/master-resume.md
 !web/tests/fixtures/workspace/applications/
 !web/tests/fixtures/workspace/applications/**
+
+# macOS
+.DS_Store
