@@ -123,12 +123,14 @@ hand-maintained docs.
 
 ### Issue tracker
 
-Issues live in this repo's GitHub Issues, driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-The five canonical roles, each label string equal to its name. See `docs/agents/triage-labels.md`.
+GitHub issues via `gh`; specs are parent issues labelled `spec`, slices are labelled
+`ready-for-agent` or `ready-for-human`. See `docs/agents/issue-tracker.md`.
 
 ### Domain docs
 
-Single-context: one `CONTEXT.md` and one `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single context: `CONTEXT.md` and `docs/adr/` at the root. See `docs/agents/domain.md`.
+
+### Tests and gates
+
+Plain pytest in two suites (`tests/` for the plugin scripts, `web/tests/` for the web app), 100%
+line and branch coverage. See `docs/agents/testing.md`.

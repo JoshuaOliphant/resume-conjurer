@@ -5,7 +5,10 @@ description = "Dev tooling for the resume-conjurer plugin scripts (tests only; r
 requires-python = ">=3.11"
 
 [dependency-groups]
-dev = ["pytest>=8.0.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=7.1.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

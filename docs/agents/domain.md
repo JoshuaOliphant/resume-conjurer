@@ -1,53 +1,36 @@
-# Domain Docs
+# Domain docs
 
-How the engineering skills should consume this repo's domain documentation when exploring the codebase.
-
-**Layout: single-context.** One `CONTEXT.md` and one `docs/adr/` at the repo root cover the whole repo, including both `plugins/conjurer/` and `web/`.
+How agents read this repo's domain documentation before working in it.
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root, or
-- **`CONTEXT-MAP.md`** at the repo root if it exists: it points at one `CONTEXT.md` per context. Read each one relevant to the topic.
-- **`docs/adr/`**: read ADRs that touch the area you're about to work in. In multi-context repos, also check `src/<context>/docs/adr/` for context-scoped decisions.
+- `CONTEXT.md` at the repo root, or `CONTEXT-MAP.md` if it exists, which points at one
+  `CONTEXT.md` per context. Read each one relevant to the topic.
+- `docs/adr/`: the ADRs that touch the area about to change. In a multi-context repo, also the
+  context's own `docs/adr/`.
 
-If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
+If a file doesn't exist, proceed without it. Don't flag the absence or create the file up front;
+`compost:spec` and `compost:deepen` create them when a term or decision actually settles.
 
-## File structure
+## Layout: single context
 
-Single-context repo (most repos):
+One `CONTEXT.md` and one `docs/adr/` at the repo root cover the whole repo, both
+`plugins/conjurer/` and `web/`. They share one domain and one set of on-disk contracts.
 
 ```
 /
 ├── CONTEXT.md
-├── docs/adr/
-│   ├── 0001-event-sourced-orders.md
-│   └── 0002-postgres-for-write-model.md
-└── src/
-```
-
-Multi-context repo (presence of `CONTEXT-MAP.md` at the root):
-
-```
-/
-├── CONTEXT-MAP.md
-├── docs/adr/                          ← system-wide decisions
-└── src/
-    ├── ordering/
-    │   ├── CONTEXT.md
-    │   └── docs/adr/                  ← context-specific decisions
-    └── billing/
-        ├── CONTEXT.md
-        └── docs/adr/
+└── docs/adr/
 ```
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
-
-If the concept you need isn't in the glossary yet, that's a signal: either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
+Name domain concepts (in issue titles, test names, hypotheses, refactor proposals) with the terms
+`CONTEXT.md` defines, never the synonyms it lists under _Avoid_. A concept missing from the
+glossary is either invented language to reconsider or a real gap for `compost:spec` to fill.
 
 ## Flag ADR conflicts
 
-If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
+When work would contradict an ADR, say so explicitly instead of overriding it quietly:
 
-> _Contradicts ADR-0007 (event-sourced orders), but worth reopening because…_
+> Contradicts ADR-0007 (event-sourced orders), but worth reopening because...
