@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.generation_sdk import SdkGenerationPort
 from app.adapters.verification_fake import FakeVerificationPort, NoVerificationPort
+from app.adapters.verification_jev import JevVerificationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.adapters.workspace_fs import FsWorkspaceRepository
 from app.adapters.composition import ScriptCompositionPort
@@ -231,10 +232,37 @@ def test_build_verification_defaults_to_fake(monkeypatch):
     assert isinstance(build_verification(), FakeVerificationPort)
 
 
-def test_build_verification_live_is_a_no_op_until_jev_lands(monkeypatch):
+@pytest.mark.parametrize(
+    ("verifier", "api_key", "expected"),
+    [
+        pytest.param("jev", "ts-key", JevVerificationPort, id="jev-with-key-checks-claims"),
+        pytest.param(None, "ts-key", NoVerificationPort, id="unset-checks-nothing"),
+    ],
+)
+def test_build_verification_live_follows_conjurer_verifier(monkeypatch, verifier, api_key, expected):
     monkeypatch.setenv("CONJURER_BACKEND", "live")
     monkeypatch.delenv("CONJURER_WORKSPACE", raising=False)
-    assert isinstance(build_verification(), NoVerificationPort)
+    if verifier is None:
+        monkeypatch.delenv("CONJURER_VERIFIER", raising=False)
+    else:
+        monkeypatch.setenv("CONJURER_VERIFIER", verifier)
+    monkeypatch.setenv("TYPESAFE_API_KEY", api_key)
+    assert isinstance(build_verification(), expected)
+
+
+@pytest.mark.parametrize(
+    ("verifier", "message"),
+    [
+        pytest.param("jev", "TYPESAFE_API_KEY", id="jev-without-key-refuses-to-start"),
+        pytest.param("jevv", "must be 'jev' or unset", id="unknown-verifier-refuses-to-start"),
+    ],
+)
+def test_build_verification_live_refuses_a_verifier_it_cannot_run(monkeypatch, verifier, message):
+    monkeypatch.setenv("CONJURER_BACKEND", "live")
+    monkeypatch.setenv("CONJURER_VERIFIER", verifier)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match=message):
+        build_verification()
 
 
 def test_live_repository_requires_workspace_env(monkeypatch):
