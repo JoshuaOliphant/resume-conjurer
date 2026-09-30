@@ -122,7 +122,8 @@ def resolve_citation(citation: str, pool: Mapping[str, Evidence]) -> tuple[Evide
     file: str | None = None
     for text in _REFERENCE_SPLIT_RE.split(citation.strip()):
         reference = _REFERENCE_RE.match(text)
-        file = reference and reference.group("file") or file
+        if reference and reference.group("file"):
+            file = reference.group("file")
         resolved = _resolve_reference(reference, file, pool) if reference and file else []
         items.extend(resolved or [_ungrounded(text)])
     return tuple(items)
