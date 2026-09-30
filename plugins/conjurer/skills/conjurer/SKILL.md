@@ -64,10 +64,18 @@ they are available whenever the conjurer plugin is installed.
    unit, and issue all unit calls in a single tool-use block so they run in parallel. Assemble the
    returned blocks into `applications/<slug>/variants.md`. See `references/pipeline.md` for the
    file format.
+   - **4b. Claim check**: `python3 <SKILL_DIR>/scripts/verify.py applications/<slug> <workspace>`.
+     It checks each variant against the evidence it cites and writes `support.json`. Without
+     `TYPESAFE_API_KEY` it prints that the check was skipped; carry on. Otherwise it prints one
+     line per flagged variant; mention each flag, in plain words, when presenting that variant
+     while curating. Never hide or drop a flagged variant.
 5. **Curate**: present the variants conversationally. When the user picks, mark exactly one
    `- [x] Pick` per unit in `variants.md`.
 6. **Stitch**: `python3 <SKILL_DIR>/scripts/stitch.py applications/<slug> <workspace>/master-resume.md`.
    Writes `cover_letter.md` and `resume.md`.
+   - **6b. Check the picks**: `python3 <SKILL_DIR>/scripts/verify.py applications/<slug> <workspace> --picks`.
+     Tell the user about any picked line it flags; the fix is to edit the line or add the fact to
+     the master resume.
 7. **Lint**: `python3 <SKILL_DIR>/scripts/lint.py applications/<slug>`. Report findings; fix any
    and re-run until clean.
 8. **Export (optional)**: offer to export the finished documents for submission with
@@ -84,7 +92,8 @@ is not in the evidence, say it is unsupported rather than fabricating it.
 ## Additional Resources
 
 - **`references/pipeline.md`** — outline schema, strategic frames, variants.md format, exact commands.
-- **`scripts/`** — `new_workspace.py`, `init_app.py`, `stitch.py`, `lint.py`, `extract_text.py`
-  (docx ingest), `export_docs.py` (PDF/docx export).
+- **`scripts/`** — `new_workspace.py`, `init_app.py`, `stitch.py`, `lint.py`, `verify.py` (claim
+  check, optional `TYPESAFE_API_KEY`), `extract_text.py` (docx ingest), `export_docs.py` (PDF/docx
+  export).
 - **`agents/variant-generator.md`** (plugin agent) — the per-unit generator.
 - Workspace setup: the `/conjurer:grimoire` and `/conjurer:master-resume` commands.
