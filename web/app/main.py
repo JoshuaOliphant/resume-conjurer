@@ -21,6 +21,7 @@ from app.deps import (
     build_verification,
     is_live,
 )
+from app.domain import support_check
 from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
 from app.rail import template_context
 from app.runs import RunManager
@@ -216,6 +217,7 @@ def create_app(
                 cover=cover,
                 bullets=bullets,
                 lint=lint,
+                support=support_check(chosen),
                 complete=complete,
                 run_metrics=run_manager.metrics(SLUG),
             ),

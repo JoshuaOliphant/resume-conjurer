@@ -633,3 +633,44 @@ def test_save_support_fingerprints_a_saved_transient_citation_like_the_cli(
     repo.save_support(SLUG, {variant.id: Support(verdict="traced")})
     expected = _cli_rows(workspace, {variant.id: ("traced", [])})[variant.id]["fingerprint"]
     assert repo.load_support(SLUG)[variant.id].fingerprint == expected
+
+
+@pytest.mark.parametrize(
+    ("opening_verdicts", "opening_note"),
+    [
+        pytest.param(
+            {"cover_letter.opening#1": ("adds_detail", ["12"]), "cover_letter.opening#2": ("conflicts", [])},
+            "None of these lines is fully backed by your evidence. Add the fact to your master resume, "
+            "or pick the closest and edit it.",
+            id="every-variant-flagged-gets-the-note",
+        ),
+        pytest.param(
+            {"cover_letter.opening#1": ("adds_detail", ["12"]), "cover_letter.opening#2": ("traced", [])},
+            None,
+            id="one-unflagged-variant-no-note",
+        ),
+        pytest.param(
+            {"cover_letter.opening#1": ("adds_detail", ["12"])},
+            None,
+            id="one-variant-unchecked-by-absence-no-note",
+        ),
+    ],
+)
+def test_load_application_notes_a_unit_whose_every_variant_is_flagged(
+    repo: FsWorkspaceRepository,
+    workspace: Path,
+    opening_verdicts: dict[str, tuple[str, list[str]]],
+    opening_note: str | None,
+) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    empty = Unit(id="resume.northwind.billing.bullet_2", kind="resume_bullet", label="Bullet 2", context="c", variants=[])
+    repo.save_variants(SLUG, [*_sample_units(repo.load_inputs(SLUG).evidence_pool), empty])
+    _write_support(workspace, _cli_rows(workspace, opening_verdicts))
+
+    notes = {unit.id: unit.grounding_note for unit in repo.load_application(SLUG).units}
+
+    assert notes == {
+        "cover_letter.opening": opening_note,
+        "resume.northwind.billing.bullet_1": None,
+        "resume.northwind.billing.bullet_2": None,
+    }

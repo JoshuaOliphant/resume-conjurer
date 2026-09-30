@@ -170,6 +170,25 @@ class LintCheck:
     passed: bool
 
 
+ALL_FLAGGED_NOTE = (
+    "None of these lines is fully backed by your evidence. "
+    "Add the fact to your master resume, or pick the closest and edit it."
+)
+
+SUPPORT_CHECK_LABEL = "Every picked line traces to your evidence"
+
+
+def support_check(picked: list[tuple[Unit, Variant]]) -> LintCheck | None:
+    """The review row naming each picked line the claim check flagged; None when no pick was checked."""
+    checked = [(unit, variant.support) for unit, variant in picked if variant.support is not None]
+    if not checked:
+        return None
+    flagged = [f"{unit.label}: {support.note}." for unit, support in checked if support.flagged]
+    if not flagged:
+        return LintCheck(SUPPORT_CHECK_LABEL, "No picked line was flagged.", True)
+    return LintCheck(SUPPORT_CHECK_LABEL, " ".join(flagged), False)
+
+
 # --- Outline (the generation step before variants) -------------------------
 # Mirrors applications/<slug>/outline.json (see plugins/conjurer .../references/pipeline.md):
 # one strategic frame plus the unit skeleton, in document order, with no variants yet.
