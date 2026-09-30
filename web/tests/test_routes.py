@@ -81,7 +81,8 @@ def _cards(html: str) -> dict[str, str]:
     return {card.split('value="', 1)[1].split('"', 1)[0]: card for card in cards}
 
 
-def _curate_page(variants: list[Variant]) -> str:
+def _page(variants: list[Variant], path: str) -> str:
+    """One page rendered for an application holding a single unit with these variants."""
     unit = Unit(id="resume.northwind.billing.bullet_1", kind="resume_bullet", label="Billing bullet",
                 context="Surface the migration.", variants=variants)
     app_data = Application(slug=SLUG, company="Globex", role="Staff Platform Engineer", jd_excerpt="x",
@@ -95,7 +96,7 @@ def _curate_page(variants: list[Variant]) -> str:
     gen = FakeGenerationPort()
     app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen, verifier=NoVerificationPort()), live=False)
     with TestClient(app) as c:
-        r = c.get("/curate/0")
+        r = c.get(path)
     assert r.status_code == 200
     return r.text
 
@@ -111,7 +112,7 @@ def test_curate_notes_a_flagged_variant_and_leaves_a_traced_one_unchanged():
                     support=Support(verdict="adds_detail", note=note, unsourced_numbers=("12",))),
         ]
 
-    cards = _cards(_curate_page(variants(Support(verdict="traced"))))
+    cards = _cards(_page(variants(Support(verdict="traced")), "/curate/0"))
 
     assert list(cards) == ["bullet#1", "bullet#2"]
     flagged = cards["bullet#2"]
@@ -119,7 +120,7 @@ def test_curate_notes_a_flagged_variant_and_leaves_a_traced_one_unchanged():
     assert foot < flagged.index(str(escape(note))) < flagged.index('<details class="trace" open>')
 
     traced = cards["bullet#1"]
-    assert traced == _cards(_curate_page(variants(None)))["bullet#1"]
+    assert traced == _cards(_page(variants(None), "/curate/0"))["bullet#1"]
     assert "checked" not in traced.lower() and "verified" not in traced.lower()
 
 
@@ -199,6 +200,52 @@ def test_review_complete_hides_incomplete_banner(client):
         )
     r = client.get("/review")
     assert "haven’t chosen every line yet" not in r.text
+
+
+SUPPORT_ROW_LABEL = "Every picked line traces to your evidence"
+EXPORT_LINK = '<a class="btn btn--primary" href="/export">'
+
+
+def _support_row(html: str) -> str | None:
+    """The review checklist row for the claim check, or None when the page has none."""
+    rows = [row.split("</li>", 1)[0] for row in html.split('<li class="lint__row')[1:]]
+    return next((row for row in rows if SUPPORT_ROW_LABEL in row), None)
+
+
+@pytest.mark.parametrize(
+    ("support", "state"),
+    [
+        pytest.param(Support(verdict="conflicts", note="Conflicts with your evidence"), "fail", id="flagged-pick-fails"),
+        pytest.param(Support(verdict="traced"), "pass", id="unflagged-pick-passes"),
+        pytest.param(None, None, id="unchecked-pick-no-row"),
+    ],
+)
+def test_review_support_row_follows_the_pick_and_never_blocks_export(support: Support | None, state: str | None):
+    variant = Variant(id="bullet#1", text="Cut invoicing to 2s.", evidence_items=(EVIDENCE["billing-migration"],),
+                      support=support)
+    html = _page([variant], "/review")
+
+    row = _support_row(html)
+    if state is None:
+        assert row is None
+    else:
+        assert row is not None and row.startswith(f' lint__row--{state}"')
+    assert EXPORT_LINK in html
+
+
+def test_review_names_each_flagged_pick_with_its_note(client):
+    units = get_application().units
+    picks = {"cover-open": "cover-open-1", "bullet-kubernetes": "bullet-kubernetes-1"}
+    for idx, unit in enumerate(units):
+        client.post(f"/curate/{idx}", data={"variant_id": picks.get(unit.id, unit.variants[1].id)})
+
+    html = client.get("/review").text
+
+    note = "Adds detail your evidence doesn&#39;t state"
+    row = _support_row(html)
+    assert row is not None and row.startswith(' lint__row--fail"')
+    assert f"Opening paragraph: {note}. Kubernetes bullet: {note}." in row
+    assert EXPORT_LINK in html
 
 
 def test_review_unselected_unit_shows_first_variant(client):

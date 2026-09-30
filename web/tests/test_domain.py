@@ -8,11 +8,13 @@ from app.domain import (
     Application,
     Evidence,
     Frame,
+    LintCheck,
     Outline,
     OutlineUnit,
     Support,
     Unit,
     Variant,
+    support_check,
     validate_slug,
 )
 
@@ -135,3 +137,41 @@ def test_support_is_flagged_only_when_it_carries_a_note(support: Support, flagge
 
 def test_a_variant_has_no_support_verdict_until_one_is_attached():
     assert Variant(id="u#1", text="t").support is None
+
+
+# --- Review support row -------------------------------------------------------
+
+ADDS_DETAIL = Support(verdict="adds_detail", note="Adds detail your evidence doesn't state: 12")
+CONFLICTS = Support(verdict="conflicts", note="Conflicts with your evidence")
+TRACED = Support(verdict="traced")
+
+
+def _pick(label: str, support: Support | None) -> tuple[Unit, Variant]:
+    unit_id = label.lower().replace(" ", "_")
+    variant = Variant(id=f"{unit_id}#1", text="a line", support=support)
+    return Unit(id=unit_id, kind="resume_bullet", label=label, context="c", variants=[variant]), variant
+
+
+@pytest.mark.parametrize(
+    ("picked", "expected"),
+    [
+        pytest.param([], None, id="no-picks-no-row"),
+        pytest.param([_pick("Opening", None), _pick("Bullet", None)], None, id="no-pick-checked-no-row"),
+        pytest.param(
+            [_pick("Opening", TRACED), _pick("Bullet", None)],
+            LintCheck("Every picked line traces to your evidence", "No picked line was flagged.", True),
+            id="no-pick-flagged-passes",
+        ),
+        pytest.param(
+            [_pick("Opening", ADDS_DETAIL), _pick("Bullet", TRACED), _pick("Closing", CONFLICTS), _pick("Kicker", None)],
+            LintCheck(
+                "Every picked line traces to your evidence",
+                "Opening: Adds detail your evidence doesn't state: 12. Closing: Conflicts with your evidence.",
+                False,
+            ),
+            id="flagged-picks-fail-and-are-named-in-order",
+        ),
+    ],
+)
+def test_support_check_names_flagged_picks(picked: list[tuple[Unit, Variant]], expected: LintCheck | None):
+    assert support_check(picked) == expected

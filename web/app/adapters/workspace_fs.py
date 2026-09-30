@@ -24,6 +24,7 @@ from pathlib import Path
 
 from app.adapters.scripts_path import ensure_scripts_on_path
 from app.domain import (
+    ALL_FLAGGED_NOTE,
     Application,
     Evidence,
     Frame,
@@ -84,6 +85,11 @@ def resolve_citation(citation: str, pool: Mapping[str, Evidence]) -> tuple[Evide
 def _claim_fingerprint(text: str, items: tuple[Evidence, ...]) -> str:
     """The support.json fingerprint of a variant: its text and the pooled lines it cites."""
     return verify.fingerprint(text, [item.text for item in items if item.grounded])
+
+
+def _all_flagged(variants: list[Variant]) -> bool:
+    """True when the unit has variants and the claim check flagged every one of them."""
+    return bool(variants) and all(v.support is not None and v.support.flagged for v in variants)
 
 
 def _support_row(support: Support, fingerprint: str) -> dict:
@@ -405,6 +411,7 @@ class FsWorkspaceRepository:
                     label=label_for_unit_id(punit.unit_id),
                     context=context,
                     variants=variants,
+                    grounding_note=ALL_FLAGGED_NOTE if _all_flagged(variants) else None,
                 )
             )
 
