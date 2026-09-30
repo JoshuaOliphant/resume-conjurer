@@ -139,6 +139,7 @@ class JevStub:
         self.status = 200
         self.raw_body = None
         self.delay = 0.0
+        self.missing_bytes = 0
         self.requests = []
 
     def questions_for(self, claim):
@@ -158,7 +159,7 @@ def jev():
             payload = stub.raw_body or json.dumps(stub.responses[(question, body["state"]["claim"])]).encode()
             self.send_response(stub.status)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Content-Length", str(len(payload) + stub.missing_bytes))
             self.end_headers()
             self.wfile.write(payload)
 
@@ -321,15 +322,16 @@ def test_check_variant_without_a_grounded_line_asks_only_the_pool(jev):
 
 
 @pytest.mark.parametrize(
-    "status, raw_body, error",
+    "status, raw_body, missing_bytes, error",
     [
-        pytest.param(500, b'{"error": "internal"}', "HTTP Error 500", id="server-error"),
-        pytest.param(200, b"<html>gateway</html>", "Expecting value", id="malformed-body"),
-        pytest.param(200, b'{"model": "jev-1.13.0", "usage": {}}', "'answers'", id="missing-answers"),
+        pytest.param(500, b'{"error": "internal"}', 0, "HTTP Error 500", id="server-error"),
+        pytest.param(200, b"<html>gateway</html>", 0, "Expecting value", id="malformed-body"),
+        pytest.param(200, b'{"model": "jev-1.13.0", "usage": {}}', 0, "'answers'", id="missing-answers"),
+        pytest.param(200, b'{"model": "jev-1.13.0", "answ', 40, "IncompleteRead", id="truncated-body"),
     ],
 )
-def test_check_variant_records_a_failed_request_as_unchecked(jev, caplog, status, raw_body, error):
-    jev.status, jev.raw_body = status, raw_body
+def test_check_variant_records_a_failed_request_as_unchecked(jev, caplog, status, raw_body, missing_bytes, error):
+    jev.status, jev.raw_body, jev.missing_bytes = status, raw_body, missing_bytes
     with caplog.at_level(logging.WARNING, logger="verify"):
         row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [MIGRATION], "sk-test", url=jev.url)
     assert row["verdict"] == "unchecked"
