@@ -47,7 +47,7 @@ ALLOWED_VARIANT_TOOLS = frozenset({"Read", "Glob", "Grep", "Agent", "Task"})
 # Inline whitespace around the citation is [ \t] (not \s) so an empty citation does not
 # let the matcher swallow the newlines into the next line; the body is DOTALL.
 _VARIANT_RE = re.compile(
-    r"^###[ \t]+Variant[ \t]+(\d+)[ \t]*:[ \t]*(?P<citation>.*?)[ \t]*$\n(?P<body>.*?)"
+    r"^###[ \t]+Variant[ \t]+\d+[ \t]*:[ \t]*(?P<citation>.*?)[ \t]*$\n(?P<body>.*?)"
     r"(?=^###[ \t]+Variant[ \t]+\d+[ \t]*:|^\*Axis:|^-[ \t]*\[[ xX]\][ \t]*Pick|\Z)",
     re.MULTILINE | re.DOTALL,
 )
@@ -118,14 +118,13 @@ def variants_from_block(text: str, unit: OutlineUnit) -> list[Variant]:
     """
     variants: list[Variant] = []
     for match in _VARIANT_RE.finditer(text):
-        n = int(match.group(1))
         citation = match.group("citation").strip() or "master-resume.md"
         body = match.group("body").strip()
         if not body:
             continue
         variants.append(
             Variant(
-                id=f"{unit.unit_id}#{n}",
+                id=f"{unit.unit_id}#{len(variants) + 1}",
                 text=body,
                 evidence_items=(
                     Evidence(id=citation, text=citation, source=citation, grounded=False),

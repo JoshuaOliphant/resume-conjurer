@@ -549,7 +549,6 @@ def test_save_support_stamps_fingerprints_that_load_application_matches(
         variant_id: replace(support[variant_id], fingerprint=row["fingerprint"])
         for variant_id, row in cli.items()
     }
-    # A verdict for a variant variants.md does not hold gets no fingerprint, so it never shows.
     stamped["resume.northwind.billing.bullet_1#9"] = Support(verdict="traced", fingerprint="")
     assert repo.load_support(SLUG) == stamped
     variants = {v.id: v for unit in repo.load_application(SLUG).units for v in unit.variants}

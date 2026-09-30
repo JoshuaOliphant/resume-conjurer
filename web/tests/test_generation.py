@@ -221,17 +221,22 @@ def test_variants_from_block_parses_citations_and_ids():
     assert "Axis" not in variants[0].text and "Pick" not in variants[0].text
 
 
-def test_variants_from_block_skips_empty_and_defaults_missing_citation():
+def test_variants_from_block_skips_empty_numbers_the_rest_in_order_and_defaults_missing_citation():
     unit = OutlineUnit(unit_id="cover_letter.opening", kind="cover_paragraph", description="open")
     block = (
         "### Variant 1: \n\n"
         "I led the billing migration that took invoicing from 40s to under 2s.\n\n"
         "- [ ] Pick\n\n"
-        "### Variant 2: master-resume.md L3\n\n\n"  # empty body -> skipped
+        "### Variant 2: master-resume.md L3\n\n\n"
+        "- [ ] Pick\n\n"
+        "### Variant 3: master-resume.md L16\n\n"
+        "I cut paging volume 60%.\n\n"
         "- [ ] Pick\n"
     )
     variants = variants_from_block(block, unit)
-    assert len(variants) == 1
+    # Ids match the numbers save_variants writes to variants.md, so verdicts keyed by id attach.
+    assert [v.id for v in variants] == ["cover_letter.opening#1", "cover_letter.opening#2"]
+    assert variants[1].text == "I cut paging volume 60%."
     assert variants[0].evidence_items[0].id == "master-resume.md"
 
 
