@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from app.adapters.workspace_fs import FsWorkspaceRepository
+from app.adapters.workspace_fs import FsWorkspaceRepository, resolve_citation
 from app.domain import Outline, OutlineUnit, Unit, Variant, Evidence
 from app.metrics import CallMetrics, RunMetrics, StepMetrics
 
@@ -83,6 +83,68 @@ def test_load_inputs_skips_blank_lines_but_keeps_numbering(repo: FsWorkspaceRepo
     assert all(ev.text.strip() for ev in inputs.evidence_pool.values())
     # Line 1 is the "# Jordan Rivera" heading (first non-blank line).
     assert inputs.evidence_pool["master-resume.md L1"].text == "# Jordan Rivera"
+
+
+def test_load_inputs_indexes_evidence_md_lines(repo: FsWorkspaceRepository) -> None:
+    ev = repo.load_inputs(SLUG).evidence_pool["evidence.md L13"]
+    assert ev.text.startswith("- On-call: idempotency keys")
+    assert ev.source == "evidence.md L13"
+
+
+# --- resolve_citation ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("citation", "expected_ids"),
+    [
+        ("master-resume.md L16", ["master-resume.md L16"]),
+        ("master-resume.md L16; master-resume.md L17", ["master-resume.md L16", "master-resume.md L17"]),
+        ("master-resume.md L16, L17", ["master-resume.md L16", "master-resume.md L17"]),
+        ("master-resume.md L16-L17", ["master-resume.md L16", "master-resume.md L17"]),
+        ("master-resume.md L14-16", ["master-resume.md L15", "master-resume.md L16"]),
+        ("evidence.md L13", ["evidence.md L13"]),
+        ("evidence.md - billing migration", ["evidence.md L11"]),
+        ("evidence.md - On-call", ["evidence.md L13"]),
+        ("evidence.md - Project receipts", [f"evidence.md L{n}" for n in range(11, 17)]),
+        ("master-resume.md L16; evidence.md - cost", ["master-resume.md L16", "evidence.md L15"]),
+        ("master-resume.md L16, evidence.md - cost", ["master-resume.md L16", "evidence.md L15"]),
+    ],
+    ids=[
+        "single-line",
+        "semicolon-list",
+        "shorthand-line-list",
+        "range-with-L",
+        "range-skips-blank-line",
+        "evidence-line",
+        "evidence-bullet-label",
+        "evidence-label-case-insensitive",
+        "evidence-heading-expands-to-bullets",
+        "mixed-files",
+        "comma-before-file",
+    ],
+)
+def test_resolve_citation_grounds_every_pooled_line(
+    repo: FsWorkspaceRepository, citation: str, expected_ids: list[str]
+) -> None:
+    pool = repo.load_inputs(SLUG).evidence_pool
+    items = resolve_citation(citation, pool)
+    assert [e.id for e in items] == expected_ids
+    assert all(e.grounded and pool[e.id] is e for e in items)
+
+
+@pytest.mark.parametrize(
+    "citation",
+    ["master-resume.md", "master-resume.md L999", "master-resume.md L18-16", "evidence.md - hobbies", "notes.md L3", ""],
+    ids=["no-line", "missing-line", "reversed-range", "unknown-label", "unknown-file", "empty"],
+)
+def test_resolve_citation_keeps_unresolvable_citation_ungrounded(repo: FsWorkspaceRepository, citation: str) -> None:
+    items = resolve_citation(citation, repo.load_inputs(SLUG).evidence_pool)
+    assert items == (Evidence(id=citation, text=citation, source=citation, grounded=False),)
+
+
+def test_resolve_citation_grounds_what_it_can_in_a_partial_list(repo: FsWorkspaceRepository) -> None:
+    items = resolve_citation("master-resume.md L16; notes.md", repo.load_inputs(SLUG).evidence_pool)
+    assert [(e.id, e.grounded) for e in items] == [("master-resume.md L16", True), ("notes.md", False)]
 
 
 # --- outline round-trip ----------------------------------------------------
@@ -217,22 +279,39 @@ def test_load_application_unresolvable_citation_renders_truthfully(repo: FsWorks
     repo.save_outline(SLUG, _sample_outline())
     pool = repo.load_inputs(SLUG).evidence_pool
     units = _sample_units(pool)
-    # Replace one variant's evidence with a free-form citation that is not an L<n> id.
+    # Replace one variant's evidence with a citation to a file outside the evidence pool.
     units[0].variants[0] = Variant(
         id="cover_letter.opening#1",
         text="A grounded paragraph.",
-        evidence_items=(Evidence(id="evidence.md - billing migration", text="x", source="y"),),
+        evidence_items=(Evidence(id="notes.md - side project", text="x", source="y"),),
     )
     repo.save_variants(SLUG, units)
 
     app = repo.load_application(SLUG)
     trace = app.units[0].variants[0].evidence()
-    assert trace[0].id == "evidence.md - billing migration"
-    assert trace[0].text == "evidence.md - billing migration"
-    assert trace[0].source == "evidence.md - billing migration"
+    assert trace[0].id == "notes.md - side project"
+    assert trace[0].text == "notes.md - side project"
+    assert trace[0].source == "notes.md - side project"
     # An unresolved / free-form citation is NOT grounded: the UI must not present its
     # "text" (which is only the citation string) as a verified quote.
     assert trace[0].grounded is False
+
+
+def test_load_application_grounds_every_line_of_a_multi_citation(repo: FsWorkspaceRepository) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    pool = repo.load_inputs(SLUG).evidence_pool
+    units = _sample_units(pool)
+    units[0].variants[0] = Variant(
+        id="cover_letter.opening#1",
+        text="I led the migration and cut paging 60%.",
+        evidence_items=(pool["master-resume.md L16"], pool["evidence.md L13"]),
+    )
+    repo.save_variants(SLUG, units)
+
+    app = repo.load_application(SLUG)
+    trace = app.units[0].variants[0].evidence()
+    assert [e.id for e in trace] == ["master-resume.md L16", "evidence.md L13"]
+    assert all(e.grounded and app.evidence[e.id] is e for e in trace)
 
 
 def test_save_variants_with_no_evidence_cites_master_resume(repo: FsWorkspaceRepository, workspace: Path) -> None:

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 from app.domain import (
@@ -46,7 +47,19 @@ AXIS_LINE_RE = re.compile(r"^\*Axis:.*?\*\s*$", re.MULTILINE)
 COVER_LETTER_PREFIX = "cover_letter."
 RESUME_PREFIX = "resume."
 
-_L_CITATION_RE = re.compile(r"^master-resume\.md L\d+$")
+MASTER_RESUME = "master-resume.md"
+EVIDENCE = "evidence.md"
+
+# One cited reference inside a (possibly multi-part) citation: an optional file, then either a
+# line or line range (`L16`, `L16-18`, `L16-L18`) or a ` - <label>` naming evidence.md content.
+_REFERENCE_RE = re.compile(
+    r"^(?:(?P<file>[\w.\-]+\.md)\s*)?"
+    r"(?:L(?P<start>\d+)(?:\s*[-–]\s*L?(?P<end>\d+))?|-\s+(?P<label>.+))$"
+)
+# References are separated by `;`, or by `,` when the next one names a file or a line.
+_REFERENCE_SPLIT_RE = re.compile(r"\s*;\s*|\s*,\s*(?=[\w.\-]+\.md\b|L\d)")
+_BULLET_RE = re.compile(r"^\s*[-*]\s+(?:(?P<label>[^:]+):)?")
+_HEADING_RE = re.compile(r"^#+\s+(?P<heading>.+?)\s*$")
 
 
 def _kind_for(unit_id: str) -> UnitKind:
@@ -61,6 +74,58 @@ def _jd_excerpt(jd: str, sentences: int = 2) -> str:
     body = " ".join(jd.split())
     parts = re.split(r"(?<=[.!?])\s+", body)
     return " ".join(parts[:sentences]).strip()
+
+
+def _ungrounded(citation: str) -> Evidence:
+    """A citation that resolves to no pooled line: shown as a citation, never as a quote."""
+    return Evidence(id=citation, text=citation, source=citation, grounded=False)
+
+
+def _evidence_md_by_label(label: str, pool: Mapping[str, Evidence]) -> list[Evidence]:
+    """The evidence.md bullets a ` - <label>` names: a bullet's lead label, else a heading's bullets."""
+    wanted = label.strip().casefold()
+    by_bullet: list[Evidence] = []
+    by_heading: list[Evidence] = []
+    in_heading = False
+    for ev in pool.values():
+        if not ev.id.startswith(f"{EVIDENCE} L"):
+            continue
+        heading = _HEADING_RE.match(ev.text)
+        if heading:
+            in_heading = heading.group("heading").casefold() == wanted
+            continue
+        bullet = _BULLET_RE.match(ev.text)
+        if bullet is None:
+            continue
+        if bullet.group("label") and bullet.group("label").strip().casefold() == wanted:
+            by_bullet.append(ev)
+        if in_heading:
+            by_heading.append(ev)
+    return by_bullet or by_heading
+
+
+def _resolve_reference(reference: re.Match[str], file: str, pool: Mapping[str, Evidence]) -> list[Evidence]:
+    if reference.group("label") is not None:
+        return _evidence_md_by_label(reference.group("label"), pool) if file == EVIDENCE else []
+    start = int(reference.group("start"))
+    end = int(reference.group("end") or start)
+    return [pool[key] for n in range(start, end + 1) if (key := f"{file} L{n}") in pool]
+
+
+def resolve_citation(citation: str, pool: Mapping[str, Evidence]) -> tuple[Evidence, ...]:
+    """Resolve every reference in a variant's citation to its pooled evidence lines.
+
+    A reference that resolves to nothing stays as an ungrounded citation, so the trace never
+    presents text the pool does not hold. A bare line (`L17`) inherits the preceding file.
+    """
+    items: list[Evidence] = []
+    file: str | None = None
+    for text in _REFERENCE_SPLIT_RE.split(citation.strip()):
+        reference = _REFERENCE_RE.match(text)
+        file = reference and reference.group("file") or file
+        resolved = _resolve_reference(reference, file, pool) if reference and file else []
+        items.extend(resolved or [_ungrounded(text)])
+    return tuple(items)
 
 
 class _ParsedVariant:
@@ -161,11 +226,12 @@ class FsWorkspaceRepository:
         evidence = (app_dir / "evidence.md").read_text()
 
         evidence_pool: dict[str, Evidence] = {}
-        for n, line in enumerate(master_resume.splitlines(), start=1):
-            if not line.strip():
-                continue
-            ev_id = f"master-resume.md L{n}"
-            evidence_pool[ev_id] = Evidence(id=ev_id, text=line, source=ev_id)
+        for file, text in ((MASTER_RESUME, master_resume), (EVIDENCE, evidence)):
+            for n, line in enumerate(text.splitlines(), start=1):
+                if not line.strip():
+                    continue
+                ev_id = f"{file} L{n}"
+                evidence_pool[ev_id] = Evidence(id=ev_id, text=line, source=ev_id)
 
         return WorkspaceInputs(
             grimoire=grimoire,
@@ -235,7 +301,7 @@ class FsWorkspaceRepository:
             lines.append("")
             for n, variant in enumerate(unit.variants, start=1):
                 items = variant.evidence_items
-                citation = items[0].id if items else "master-resume.md"
+                citation = "; ".join(item.id for item in items) if items else MASTER_RESUME
                 lines.append(f"### Variant {n}: {citation}")
                 lines.append("")
                 lines.append(variant.text)
@@ -295,20 +361,6 @@ class FsWorkspaceRepository:
 
     # --- hydration ---------------------------------------------------------
 
-    def _resolve_citation(
-        self, citation: str, pool: dict[str, Evidence], cache: dict[str, Evidence]
-    ) -> Evidence:
-        if citation in cache:
-            return cache[citation]
-        if _L_CITATION_RE.match(citation) and citation in pool:
-            ev = pool[citation]  # a real pooled line: grounded (its text is a true quote)
-        else:
-            # Self-citation fallback: we could not resolve a pooled quote, so mark it
-            # ungrounded and never let the UI present the citation string as a quote.
-            ev = Evidence(id=citation, text=citation, source=citation, grounded=False)
-        cache[citation] = ev
-        return ev
-
     def load_application(self, slug: str) -> Application:
         outline = self.load_outline(slug)
         if outline is None:
@@ -320,19 +372,18 @@ class FsWorkspaceRepository:
         order = {u.unit_id: i for i, u in enumerate(outline.units)}
 
         parsed = _parse_variants_md((self._app_dir(slug) / "variants.md").read_text())
-        resolved: dict[str, Evidence] = {}
+        cited: dict[str, Evidence] = {}
 
         units: list[Unit] = []
         for punit in parsed:
             context = contexts.get(punit.unit_id, "")
-            variants = [
-                Variant(
-                    id=f"{punit.unit_id}#{pv.n}",
-                    text=pv.text,
-                    evidence_items=(self._resolve_citation(pv.citation, pool, resolved),),
+            variants = []
+            for pv in punit.variants:
+                items = resolve_citation(pv.citation, pool)
+                cited.update((item.id, item) for item in items)
+                variants.append(
+                    Variant(id=f"{punit.unit_id}#{pv.n}", text=pv.text, evidence_items=items)
                 )
-                for pv in punit.variants
-            ]
             units.append(
                 Unit(
                     id=punit.unit_id,
@@ -352,5 +403,5 @@ class FsWorkspaceRepository:
             jd_excerpt=_jd_excerpt(inputs.jd),
             frame=Frame(name=outline.frame_name, rationale=outline.frame_rationale),
             units=units,
-            evidence=dict(resolved),
+            evidence=cited,
         )
