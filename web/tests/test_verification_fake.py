@@ -1,4 +1,4 @@
-# ABOUTME: Tests for the offline VerificationPort adapters: the scripted fake and the no-op.
+# ABOUTME: Tests for the offline VerificationPort adapters: the scripted fake and the no-op, plus aclose for all.
 # ABOUTME: The fake answers only for the unit it is asked about and can be told to fail.
 
 import asyncio
@@ -6,6 +6,7 @@ import asyncio
 import pytest
 
 from app.adapters.verification_fake import FakeVerificationPort, NoVerificationPort
+from app.adapters.verification_jev import JevVerificationPort
 from app.data import EVIDENCE, get_application
 from app.domain import Support
 
@@ -38,7 +39,11 @@ def test_no_verification_port_returns_no_verdicts():
 
 @pytest.mark.parametrize(
     "verifier",
-    [pytest.param(FakeVerificationPort(), id="fake"), pytest.param(NoVerificationPort(), id="no-op")],
+    [
+        pytest.param(FakeVerificationPort(), id="fake"),
+        pytest.param(NoVerificationPort(), id="no-op"),
+        pytest.param(JevVerificationPort("ts-key"), id="jev"),
+    ],
 )
 def test_aclose_holds_nothing_to_release(verifier):
     assert asyncio.run(verifier.aclose()) is None
