@@ -73,14 +73,17 @@ def build_outline_prompt(slug: str) -> str:
     )
 
 
-def build_variant_prompt(unit: OutlineUnit, n: int = 4) -> str:
+def build_variant_prompt(slug: str, unit: OutlineUnit, n: int = 4) -> str:
     """Prompt that dispatches the conjurer:variant-generator subagent for one unit."""
     return (
         f"Use the conjurer:variant-generator subagent to generate {n} grounded variants for this "
-        "single unit, citing evidence from master-resume.md (cite as 'master-resume.md L<line>'). "
-        f"Read grimoire.md and master-resume.md for grounding.\nUnit: {unit.unit_id} - "
-        f"{unit.description}\nReturn the variant-generator's '## Unit:' block verbatim as your "
-        "final message."
+        "single unit. Read grimoire.md for voice, and master-resume.md and "
+        f"applications/{slug}/evidence.md for grounding. Cite every line a variant draws on, as "
+        "`master-resume.md L<n>` or `evidence.md L<n>` references (line ranges allowed) "
+        "separated by `; `, for example `master-resume.md L16` or "
+        "`master-resume.md L16-18; evidence.md L11`.\n"
+        f"Unit: {unit.unit_id} - {unit.description}\n"
+        "Return the variant-generator's '## Unit:' block verbatim as your final message."
     )
 
 
@@ -238,7 +241,7 @@ class SdkGenerationPort:
     async def variants(  # pragma: no cover - live-tested
         self, slug: str, unit: OutlineUnit, n: int = 4
     ) -> list[Variant]:
-        text = await self._variant_text(build_variant_prompt(unit, n))
+        text = await self._variant_text(build_variant_prompt(slug, unit, n))
         return variants_from_block(text, unit)
 
     async def aclose(self) -> None:  # pragma: no cover - live-tested
