@@ -1,4 +1,4 @@
-# ABOUTME: Tests for the citation grammar shared by the CLI claim check and the web app.
+# ABOUTME: Tests for the citation grammar shared by the plugin scripts and the web app.
 # ABOUTME: Covers pooling master-resume.md and evidence.md lines and resolving citation strings.
 import pytest
 

@@ -1,4 +1,4 @@
-# ABOUTME: The citation grammar shared by the CLI claim check and the web app.
+# ABOUTME: The citation grammar for variant citations, shared by the plugin scripts and the web app.
 # ABOUTME: Pools master-resume.md and evidence.md lines, and resolves a variant's citation to them.
 """Resolve a variant's citation string to the evidence lines it names.
 

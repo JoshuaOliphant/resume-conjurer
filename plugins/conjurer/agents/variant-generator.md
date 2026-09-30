@@ -65,5 +65,6 @@ paragraphs; resume units output a single bullet starting with `- ` and an action
 - [ ] Pick
 ```
 
-Citations are specific: a path plus section or line range (for example `master-resume.md L14`
-or `evidence.md - billing migration`). No em dashes in citations.
+Cite every line a variant draws on, as `master-resume.md L<n>` or `evidence.md L<n>` references
+(line ranges allowed) separated by `; `, for example `master-resume.md L16` or
+`master-resume.md L16-18; evidence.md L11`. No em dashes in citations.

@@ -2,6 +2,10 @@
 # ABOUTME: The SDK I/O itself is covered by the live test (test_generation_live.py).
 
 import asyncio
+import re
+from pathlib import Path
+
+import pytest
 
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.generation_sdk import (
@@ -14,9 +18,20 @@ from app.adapters.generation_sdk import (
     outline_from_structured,
     variants_from_block,
 )
+from app.adapters.workspace_fs import FsWorkspaceRepository, resolve_citation
 from app.domain import FRAMES, Outline, OutlineUnit
 from app.ports import GenerationPort
 from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+
+SLUG = "globex-staff-platform"
+FIXTURE_WORKSPACE = Path(__file__).parent / "fixtures" / "workspace"
+VARIANT_GENERATOR_MD = DEFAULT_PLUGIN_DIR / "agents" / "variant-generator.md"
+EXAMPLE_CITATION_RE = re.compile(r"`((?:master-resume|evidence)\.md L[^`<]+)`")
+LEAD_BULLET = OutlineUnit(unit_id="resume.acme.bullet_1", kind="resume_bullet", description="Lead bullet")
+CITATION_INSTRUCTIONS = {
+    "web-variant-prompt": build_variant_prompt(SLUG, LEAD_BULLET),
+    "variant-generator-md": VARIANT_GENERATOR_MD.read_text(),
+}
 
 
 # --- The fake --------------------------------------------------------------
@@ -126,12 +141,32 @@ def test_build_outline_prompt_mentions_slug_and_frames():
     assert "Do not generate variants" in prompt
 
 
-def test_build_variant_prompt_dispatches_the_subagent():
-    unit = OutlineUnit(unit_id="resume.acme.bullet_1", kind="resume_bullet", description="Lead bullet")
-    prompt = build_variant_prompt(unit, n=4)
+def test_build_variant_prompt_dispatches_the_subagent_with_both_evidence_sources():
+    prompt = build_variant_prompt(SLUG, LEAD_BULLET, n=4)
     assert "conjurer:variant-generator" in prompt
+    assert "generate 4 grounded variants" in prompt
     assert "resume.acme.bullet_1" in prompt
     assert "Lead bullet" in prompt
+    assert "master-resume.md" in prompt
+    assert f"applications/{SLUG}/evidence.md" in prompt
+
+
+@pytest.mark.parametrize("instructions", CITATION_INSTRUCTIONS.values(), ids=CITATION_INSTRUCTIONS.keys())
+def test_generator_is_asked_to_cite_every_line_it_uses(instructions: str):
+    assert "`master-resume.md L<n>`" in instructions
+    assert "`evidence.md L<n>`" in instructions
+    assert "line ranges" in instructions
+    assert "separated by `; `" in instructions
+
+
+@pytest.mark.parametrize("instructions", CITATION_INSTRUCTIONS.values(), ids=CITATION_INSTRUCTIONS.keys())
+def test_every_example_citation_resolves_fully_against_the_evidence_pool(instructions: str):
+    pool = FsWorkspaceRepository(FIXTURE_WORKSPACE).load_inputs(SLUG).evidence_pool
+    examples = EXAMPLE_CITATION_RE.findall(instructions)
+    assert any("evidence.md L" in example and "; " in example for example in examples)
+    assert any(re.search(r"L\d+-\d+", example) for example in examples)
+    for example in examples:
+        assert all(evidence.grounded for evidence in resolve_citation(example, pool)), example
 
 
 def test_outline_from_structured_maps_kinds_and_units():
