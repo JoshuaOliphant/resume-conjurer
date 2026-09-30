@@ -3,12 +3,20 @@
 
 import pytest
 from fastapi.testclient import TestClient
+from markupsafe import escape
 
 from app.adapters.generation_fake import FakeGenerationPort
+from app.adapters.scripts_path import ensure_scripts_on_path
+from app.adapters.verification_fake import NoVerificationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import EVIDENCE, _v, get_application
+from app.domain import Application, Frame, Support, Unit, Variant
 from app.main import SLUG, create_app
 from app.runs import RunManager
+
+ensure_scripts_on_path()
+
+import verify  # noqa: E402
 
 
 @pytest.fixture
@@ -19,7 +27,7 @@ def repo():
 @pytest.fixture
 def client(repo):
     gen = FakeGenerationPort()
-    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=False)
+    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=False)
     with TestClient(app) as c:
         yield c
 
@@ -64,6 +72,70 @@ def test_curate_shows_limited_evidence_note(client):
     idx = next(i for i, u in enumerate(units) if u.grounding_note)
     r = client.get(f"/curate/{idx}")
     assert "Limited evidence" in r.text
+
+
+def _cards(html: str) -> dict[str, str]:
+    """Each variant card's HTML on the curate page, keyed by its variant id, in page order."""
+    stack = html.split('<div class="actions', 1)[0]
+    cards = stack.split('<div class="variant">')[1:]
+    return {card.split('value="', 1)[1].split('"', 1)[0]: card for card in cards}
+
+
+def _curate_page(variants: list[Variant]) -> str:
+    unit = Unit(id="resume.northwind.billing.bullet_1", kind="resume_bullet", label="Billing bullet",
+                context="Surface the migration.", variants=variants)
+    app_data = Application(slug=SLUG, company="Globex", role="Staff Platform Engineer", jd_excerpt="x",
+                           frame=Frame(name="Scale", rationale="why"), units=[unit], evidence=dict(EVIDENCE))
+
+    class _StubRepo(FakeWorkspaceRepository):
+        def load_application(self, slug: str) -> Application:
+            return app_data
+
+    stub = _StubRepo()
+    gen = FakeGenerationPort()
+    app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen, verifier=NoVerificationPort()), live=False)
+    with TestClient(app) as c:
+        r = c.get("/curate/0")
+    assert r.status_code == 200
+    return r.text
+
+
+def test_curate_notes_a_flagged_variant_and_leaves_a_traced_one_unchanged():
+    note = verify.note_for("adds_detail", ["12"])
+    evidence = (EVIDENCE["billing-migration"],)
+
+    def variants(traced_support: Support | None) -> list[Variant]:
+        return [
+            Variant(id="bullet#1", text="Cut invoicing to 2s.", evidence_items=evidence, support=traced_support),
+            Variant(id="bullet#2", text="Cut invoicing to 2s for 12 teams.", evidence_items=evidence,
+                    support=Support(verdict="adds_detail", note=note, unsourced_numbers=("12",))),
+        ]
+
+    cards = _cards(_curate_page(variants(Support(verdict="traced"))))
+
+    assert list(cards) == ["bullet#1", "bullet#2"]
+    flagged = cards["bullet#2"]
+    foot = flagged.index('class="variant__foot"')
+    assert foot < flagged.index(str(escape(note))) < flagged.index('<details class="trace" open>')
+
+    traced = cards["bullet#1"]
+    assert traced == _cards(_curate_page(variants(None)))["bullet#1"]
+    assert "checked" not in traced.lower() and "verified" not in traced.lower()
+
+
+def test_curate_notes_the_fixture_overreaches(client):
+    units = get_application().units
+    note = str(escape(verify.note_for("adds_detail", [])))
+    for unit_id, flagged_id, clean_id in [
+        ("cover-open", "cover-open-1", "cover-open-2"),
+        ("bullet-kubernetes", "bullet-kubernetes-1", "bullet-kubernetes-2"),
+    ]:
+        idx = next(i for i, u in enumerate(units) if u.id == unit_id)
+        cards = _cards(client.get(f"/curate/{idx}").text)
+        assert list(cards) == [v.id for v in units[idx].variants]
+        assert note in cards[flagged_id]
+        assert note not in cards[clean_id]
+    assert "the last three years" in _cards(client.get("/curate/0").text)["cover-open-1"]
 
 
 def test_curate_out_of_range_goes_to_review(client):
@@ -200,7 +272,7 @@ def test_review_skips_zero_variant_unit_without_500(repo):
 
     stub = _StubRepo()
     gen = FakeGenerationPort()
-    app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen), live=False)
+    app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen, verifier=NoVerificationPort()), live=False)
     with TestClient(app) as c:
         r = c.get("/review")
     assert r.status_code == 200
@@ -233,7 +305,7 @@ def test_curate_renders_zero_variant_unit_without_500(repo):
 
     stub = _StubRepo()
     gen = FakeGenerationPort()
-    app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen), live=False)
+    app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen, verifier=NoVerificationPort()), live=False)
     with TestClient(app) as c:
         r = c.get("/curate/0")
     assert r.status_code == 200

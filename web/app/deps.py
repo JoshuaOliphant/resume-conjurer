@@ -16,9 +16,10 @@ from pathlib import Path
 from app.adapters.composition import ScriptCompositionPort
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.generation_sdk import SdkGenerationPort
+from app.adapters.verification_fake import FakeVerificationPort, NoVerificationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.adapters.workspace_fs import FsWorkspaceRepository
-from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
+from app.ports import CompositionPort, GenerationPort, VerificationPort, WorkspaceRepository
 
 
 def is_live() -> bool:
@@ -51,6 +52,13 @@ def build_generation() -> GenerationPort:
     if is_live():
         return SdkGenerationPort(workspace_root())
     return FakeGenerationPort()
+
+
+def build_verification() -> VerificationPort:
+    # Live checks nothing until the Jev claim check is wired in (#14).
+    if is_live():
+        return NoVerificationPort()
+    return FakeVerificationPort()
 
 
 def build_composition() -> CompositionPort | None:

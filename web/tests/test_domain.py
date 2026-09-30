@@ -10,6 +10,7 @@ from app.domain import (
     Frame,
     Outline,
     OutlineUnit,
+    Support,
     Unit,
     Variant,
     validate_slug,
@@ -111,3 +112,26 @@ def test_application_rejects_a_grounded_variant_whose_pool_entry_text_differs():
     tampered_pool_entry = Evidence(id=ev.id, text="a fabricated quote", source=ev.source)
     with pytest.raises(ValueError, match="does not match this application's evidence pool"):
         _application_with((ev,), {ev.id: tampered_pool_entry})
+
+
+# --- Support verdicts ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("support", "flagged"),
+    [
+        pytest.param(Support(verdict="traced"), False, id="traced-has-no-note"),
+        pytest.param(Support(verdict="untraced"), False, id="untraced-has-no-note"),
+        pytest.param(
+            Support(verdict="adds_detail", note="Adds detail your evidence doesn't state: 12"),
+            True,
+            id="noted-verdict-is-flagged",
+        ),
+    ],
+)
+def test_support_is_flagged_only_when_it_carries_a_note(support: Support, flagged: bool):
+    assert support.flagged is flagged
+
+
+def test_a_variant_has_no_support_verdict_until_one_is_attached():
+    assert Variant(id="u#1", text="t").support is None

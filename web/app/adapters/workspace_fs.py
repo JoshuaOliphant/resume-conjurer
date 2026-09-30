@@ -1,5 +1,5 @@
 # ABOUTME: Filesystem WorkspaceRepository — reads/writes one application's workspace files.
-# ABOUTME: Round-trips outline.json and variants.md and hydrates the domain Application.
+# ABOUTME: Round-trips outline.json, variants.md, and support.json and hydrates the domain Application.
 
 """Filesystem-backed :class:`WorkspaceRepository`.
 
@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from app.adapters.scripts_path import ensure_scripts_on_path
@@ -28,6 +29,7 @@ from app.domain import (
     Frame,
     Outline,
     OutlineUnit,
+    Support,
     Unit,
     UnitKind,
     Variant,
@@ -40,6 +42,7 @@ from app.metrics import RunMetrics
 ensure_scripts_on_path()
 
 import citations  # noqa: E402
+import verify  # noqa: E402
 
 # variants.md grammar. The unit marker and pick line mirror stitch.py exactly so
 # the two stay in lockstep; the variant header adds capturing groups for the
@@ -76,6 +79,41 @@ def resolve_citation(citation: str, pool: Mapping[str, Evidence]) -> tuple[Evide
     return tuple(
         pool[line.id] if line.grounded else _ungrounded(line.id)
         for line in citations.resolve_citation(citation, {key: ev.text for key, ev in pool.items()})
+    )
+
+
+def claim_fingerprint(variant: Variant, pool: Mapping[str, Evidence]) -> str:
+    """The support.json fingerprint of a variant: its text and the pooled lines it cites."""
+    cited = [
+        line.text
+        for item in variant.evidence_items
+        for line in resolve_citation(item.id, pool)
+        if line.grounded
+    ]
+    return verify.fingerprint(variant.text, cited)
+
+
+def _support_row(support: Support) -> dict:
+    return {
+        "verdict": support.verdict,
+        "relation": support.relation,
+        "relation_confidence": support.relation_confidence,
+        "unstated": support.unstated,
+        "unsourced_numbers": list(support.unsourced_numbers),
+        "fingerprint": support.fingerprint,
+    }
+
+
+def _support_from_row(row: dict) -> Support:
+    note = verify.note_for(row["verdict"], row["unsourced_numbers"])
+    return Support(
+        verdict=row["verdict"],
+        note=note or None,
+        unsourced_numbers=tuple(row["unsourced_numbers"]),
+        relation=row["relation"],
+        relation_confidence=row["relation_confidence"],
+        unstated=row["unstated"],
+        fingerprint=row["fingerprint"],
     )
 
 
@@ -307,6 +345,23 @@ class FsWorkspaceRepository:
             return None
         return RunMetrics.from_dict(json.loads(path.read_text()))
 
+    # --- support -----------------------------------------------------------
+
+    def save_support(self, slug: str, support: dict[str, Support]) -> None:
+        document = {
+            "model": verify.JEV_MODEL,
+            "variants": {variant_id: _support_row(s) for variant_id, s in support.items()},
+        }
+        path = self._app_dir(slug) / "support.json"
+        path.write_text(json.dumps(document, indent=2) + "\n")
+
+    def load_support(self, slug: str) -> dict[str, Support]:
+        path = self._app_dir(slug) / "support.json"
+        if not path.exists():
+            return {}
+        rows = json.loads(path.read_text())["variants"]
+        return {variant_id: _support_from_row(row) for variant_id, row in rows.items()}
+
     # --- hydration ---------------------------------------------------------
 
     def load_application(self, slug: str) -> Application:
@@ -320,6 +375,7 @@ class FsWorkspaceRepository:
         order = {u.unit_id: i for i, u in enumerate(outline.units)}
 
         parsed = _parse_variants_md((self._app_dir(slug) / "variants.md").read_text())
+        support = self.load_support(slug)
         cited: dict[str, Evidence] = {}
 
         units: list[Unit] = []
@@ -329,9 +385,11 @@ class FsWorkspaceRepository:
             for pv in punit.variants:
                 items = resolve_citation(pv.citation, pool)
                 cited.update((item.id, item) for item in items)
-                variants.append(
-                    Variant(id=f"{punit.unit_id}#{pv.n}", text=pv.text, evidence_items=items)
-                )
+                variant = Variant(id=f"{punit.unit_id}#{pv.n}", text=pv.text, evidence_items=items)
+                verdict = support.get(variant.id)
+                if verdict is not None and verdict.fingerprint == claim_fingerprint(variant, pool):
+                    variant = replace(variant, support=verdict)
+                variants.append(variant)
             units.append(
                 Unit(
                     id=punit.unit_id,

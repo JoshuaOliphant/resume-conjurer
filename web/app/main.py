@@ -14,7 +14,13 @@ from fastapi.templating import Jinja2Templates
 
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import lint_results
-from app.deps import build_composition, build_generation, build_repository, is_live
+from app.deps import (
+    build_composition,
+    build_generation,
+    build_repository,
+    build_verification,
+    is_live,
+)
 from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
 from app.rail import template_context
 from app.runs import RunManager
@@ -243,5 +249,5 @@ def create_app(
 _repo = build_repository()
 _gen = build_generation()
 _comp = build_composition()
-_run_manager = RunManager(repo=_repo, gen=_gen)
+_run_manager = RunManager(repo=_repo, gen=_gen, verifier=build_verification())
 app = create_app(repo=_repo, gen=_gen, run_manager=_run_manager, live=is_live(), comp=_comp)

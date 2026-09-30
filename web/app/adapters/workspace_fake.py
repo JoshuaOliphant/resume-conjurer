@@ -9,7 +9,7 @@ shipped editorial UI exactly: ``load_application`` returns the same rich, eviden
 in a process-local dict instead of on disk.
 
 The generation-persistence methods (``load_inputs`` / ``save_outline`` / ``load_outline`` /
-``save_variants``) belong to the live filesystem flow only; here they raise
+``save_variants`` / ``save_support``) belong to the live filesystem flow only; here they raise
 ``NotImplementedError`` (a line the coverage config excludes). The fake still satisfies the
 ``WorkspaceRepository`` Protocol because every method name is present.
 """
@@ -17,7 +17,7 @@ The generation-persistence methods (``load_inputs`` / ``save_outline`` / ``load_
 from __future__ import annotations
 
 from app.data import get_application
-from app.domain import Application, Outline, Unit, WorkspaceInputs, validate_slug
+from app.domain import Application, Outline, Support, Unit, WorkspaceInputs, validate_slug
 from app.metrics import RunMetrics
 
 
@@ -50,6 +50,20 @@ class FakeWorkspaceRepository:
 
     def load_metrics(self, slug: str) -> RunMetrics | None:
         raise NotImplementedError
+
+    def save_support(self, slug: str, support: dict[str, Support]) -> None:
+        raise NotImplementedError
+
+    # --- support -----------------------------------------------------------
+
+    def load_support(self, slug: str) -> dict[str, Support]:
+        validate_slug(slug)
+        return {
+            variant.id: variant.support
+            for unit in get_application().units
+            for variant in unit.variants
+            if variant.support is not None
+        }
 
     # --- picks -------------------------------------------------------------
 
