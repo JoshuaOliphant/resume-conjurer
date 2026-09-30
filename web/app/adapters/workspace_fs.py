@@ -9,9 +9,9 @@ generated ``outline.json`` / ``variants.md``. This adapter is the only place tha
 knows that layout; the workspace root is injected so a future multi-user resolver
 can scope a slug to a different root without touching these methods.
 
-``variants.md`` is the canonical store for variants AND picks. Unlike
-``stitch.py``'s parser, the parser here keeps the ``### Variant N: <citation>``
-citation so we can resolve each variant's evidence trace back into the domain.
+``variants.md`` is the canonical store for variants AND picks. The parser here
+keeps each variant's ``### Variant N: <citation>`` number and citation so we can
+resolve its evidence trace back into the domain.
 """
 
 from __future__ import annotations
@@ -45,8 +45,7 @@ import citations  # noqa: E402
 import verify  # noqa: E402
 
 # variants.md grammar. The unit marker and pick line mirror stitch.py exactly so
-# the two stay in lockstep; the variant header adds capturing groups for the
-# variant number and its citation (which stitch.py discards).
+# the two stay in lockstep.
 UNIT_MARKER_RE = re.compile(r"<!--\s*conjurer:unit\s+id=([\w.\-]+)\s*-->")
 VARIANT_HEADER_RE = re.compile(r"^###\s+Variant\s+(\d+):\s*(.*?)\s*$")
 PICK_LINE_RE = re.compile(r"^-\s+\[(\s|x|X)\]\s+Pick\s*$")

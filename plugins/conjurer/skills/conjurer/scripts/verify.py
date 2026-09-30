@@ -17,6 +17,7 @@ import re
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from http.client import HTTPException
 from pathlib import Path
 
 import citations
@@ -172,7 +173,7 @@ def check_variant(claim: str, cited: list[str], pool: list[str], api_key: str, u
     """One support.json row for a variant; `unchecked` when any request fails."""
     try:
         reading = _read(claim, cited, pool, api_key, url)
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, HTTPException, ValueError, KeyError, TypeError) as error:
         logger.warning("Claim check failed for %r: %s", claim, error)
         reading = Reading(relation=None, relation_confidence=None, unstated=None)
     return {
