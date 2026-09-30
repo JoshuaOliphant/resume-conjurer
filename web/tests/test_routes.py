@@ -245,6 +245,7 @@ def test_review_names_each_flagged_pick_with_its_note(client):
     row = _support_row(html)
     assert row is not None and row.startswith(' lint__row--fail"')
     assert f"Opening paragraph: {note}. Kubernetes bullet: {note}." in row
+    assert "Every sentence still traces to your evidence" not in html
     assert EXPORT_LINK in html
 
 
