@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -82,6 +82,11 @@ def resolve_citation(citation: str, pool: Mapping[str, Evidence]) -> tuple[Evide
     )
 
 
+def cited_lines(items: Iterable[Evidence], pool: Mapping[str, Evidence]) -> list[str]:
+    """The text of every pooled line a variant's evidence items cite."""
+    return [line.text for item in items for line in resolve_citation(item.id, pool) if line.grounded]
+
+
 def _claim_fingerprint(text: str, items: tuple[Evidence, ...]) -> str:
     """The support.json fingerprint of a variant: its text and the pooled lines it cites."""
     return verify.fingerprint(text, [item.text for item in items if item.grounded])
@@ -103,7 +108,8 @@ def _support_row(support: Support, fingerprint: str) -> dict:
     }
 
 
-def _support_from_row(row: dict) -> Support:
+def support_from_row(row: dict) -> Support:
+    """A support.json row as the domain's ``Support``, its note derived from the verdict."""
     note = verify.note_for(row["verdict"], row["unsourced_numbers"])
     return Support(
         verdict=row["verdict"],
@@ -374,7 +380,7 @@ class FsWorkspaceRepository:
         if not path.exists():
             return {}
         rows = json.loads(path.read_text())["variants"]
-        return {variant_id: _support_from_row(row) for variant_id, row in rows.items()}
+        return {variant_id: support_from_row(row) for variant_id, row in rows.items()}
 
     # --- hydration ---------------------------------------------------------
 

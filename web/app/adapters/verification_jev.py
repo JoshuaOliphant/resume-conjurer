@@ -7,7 +7,7 @@ import asyncio
 from collections.abc import Callable, Mapping
 
 from app.adapters.scripts_path import ensure_scripts_on_path
-from app.adapters.workspace_fs import resolve_citation
+from app.adapters.workspace_fs import cited_lines, support_from_row
 from app.domain import Evidence, Support, Unit, Variant
 
 ensure_scripts_on_path()
@@ -15,29 +15,6 @@ ensure_scripts_on_path()
 import verify  # noqa: E402
 
 CheckVariant = Callable[[str, list[str], list[str], str], dict]
-
-
-def support_from_row(row: dict) -> Support:
-    """A support.json row from ``verify.check_variant`` as the domain's ``Support``."""
-    note = verify.note_for(row["verdict"], row["unsourced_numbers"])
-    return Support(
-        verdict=row["verdict"],
-        note=note or None,
-        unsourced_numbers=tuple(row["unsourced_numbers"]),
-        relation=row["relation"],
-        relation_confidence=row["relation_confidence"],
-        unstated=row["unstated"],
-        fingerprint=row["fingerprint"],
-    )
-
-
-def _cited_lines(variant: Variant, pool: Mapping[str, Evidence]) -> list[str]:
-    return [
-        line.text
-        for item in variant.evidence_items
-        for line in resolve_citation(item.id, pool)
-        if line.grounded
-    ]
 
 
 class JevVerificationPort:
@@ -56,7 +33,7 @@ class JevVerificationPort:
     async def _verify_variant(
         self, variant: Variant, pool: Mapping[str, Evidence], pool_lines: list[str]
     ) -> Support:
-        cited = _cited_lines(variant, pool)
+        cited = cited_lines(variant.evidence_items, pool)
         async with self._semaphore:
             row = await asyncio.to_thread(
                 self._check, variant.text, cited, pool_lines, self._api_key

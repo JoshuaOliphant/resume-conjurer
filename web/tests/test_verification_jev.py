@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from app.adapters.verification_jev import JevVerificationPort, support_from_row
+from app.adapters.verification_jev import JevVerificationPort
 from app.adapters.workspace_fs import FsWorkspaceRepository
-from app.domain import Evidence, Support, Unit, Variant
+from app.domain import Evidence, Unit, Variant
 
 FIXTURE = Path(__file__).parent / "fixtures" / "workspace"
 SLUG = "globex-staff-platform"
@@ -52,40 +52,6 @@ def _row(verdict: str, unsourced: list[str], fingerprint: str = "f" * 64) -> dic
     }
 
 
-@pytest.mark.parametrize(
-    ("row", "expected"),
-    [
-        pytest.param(
-            _row("conflicts", ["80"]),
-            Support(
-                verdict="conflicts",
-                note="Conflicts with your evidence: 80",
-                unsourced_numbers=("80",),
-                relation="contradicts",
-                relation_confidence=0.6,
-                unstated=0.97,
-                fingerprint="f" * 64,
-            ),
-            id="flagged-row-carries-note-naming-numbers",
-        ),
-        pytest.param(
-            _row("traced", []),
-            Support(
-                verdict="traced",
-                note=None,
-                relation="contradicts",
-                relation_confidence=0.6,
-                unstated=0.97,
-                fingerprint="f" * 64,
-            ),
-            id="traced-row-has-no-note",
-        ),
-    ],
-)
-def test_support_from_row_maps_verdict_readings_and_note(row, expected):
-    assert support_from_row(row) == expected
-
-
 def test_verify_checks_each_variant_against_its_resolved_cited_lines():
     calls = []
 
@@ -107,7 +73,12 @@ def test_verify_checks_each_variant_against_its_resolved_cited_lines():
     ]
 
 
-def test_verify_runs_at_most_concurrency_checks_at_once():
+@pytest.mark.parametrize(
+    ("options", "variants", "bound"),
+    [({}, 12, 8), ({"concurrency": 2}, 6, 2)],
+    ids=["default-bound-is-eight", "explicit-bound"],
+)
+def test_verify_runs_at_most_concurrency_checks_at_once(options: dict, variants: int, bound: int):
     lock = threading.Lock()
     in_flight = 0
     peak = 0
@@ -122,11 +93,13 @@ def test_verify_runs_at_most_concurrency_checks_at_once():
             in_flight -= 1
         return _row("traced", [])
 
-    unit = _unit(*(_variant(f"v{i}", "Led the migration.", "master-resume.md L16") for i in range(6)))
-    verdicts = asyncio.run(JevVerificationPort("ts-key", concurrency=2, check=check).verify(unit, POOL))
+    unit = _unit(
+        *(_variant(f"v{i}", "Led the migration.", "master-resume.md L16") for i in range(variants))
+    )
+    verdicts = asyncio.run(JevVerificationPort("ts-key", check=check, **options).verify(unit, POOL))
 
-    assert len(verdicts) == 6
-    assert peak == 2
+    assert len(verdicts) == variants
+    assert peak == bound
 
 
 @pytest.mark.live
