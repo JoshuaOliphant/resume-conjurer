@@ -8,9 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import sys
-
-from app.adapters.composition import ScriptCompositionPort, _ensure_scripts_on_path
+from app.adapters.composition import ScriptCompositionPort
 from app.adapters.workspace_fs import FsWorkspaceRepository
 from app.domain import LintCheck, Unit, Variant
 
@@ -65,16 +63,6 @@ def _prepare_picks(repo: FsWorkspaceRepository, slug: str) -> None:
     repo.save_variants(slug, _units_with_lint_trip())
     repo.set_pick(slug, "cover_letter.opening", "cover_letter.opening#1")
     repo.set_pick(slug, "resume.northwind.billing.bullet_1", "resume.northwind.billing.bullet_1#1")
-
-
-def test_ensure_scripts_on_path_adds_once(tmp_path: Path) -> None:
-    fresh = tmp_path / "scripts"
-    assert str(fresh) not in sys.path
-    _ensure_scripts_on_path(fresh)  # absent -> appended
-    assert sys.path.count(str(fresh)) == 1
-    _ensure_scripts_on_path(fresh)  # present -> no duplicate
-    assert sys.path.count(str(fresh)) == 1
-    sys.path.remove(str(fresh))
 
 
 def test_stitch_writes_cover_and_resume_with_picked_content(

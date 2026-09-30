@@ -13,6 +13,8 @@ from app.adapters.workspace_fs import FsWorkspaceRepository, resolve_citation
 from app.domain import Outline, OutlineUnit, Unit, Variant, Evidence
 from app.metrics import CallMetrics, RunMetrics, StepMetrics
 
+import citations  # on sys.path once app.adapters.workspace_fs is imported
+
 SLUG = "globex-staff-platform"
 FIXTURE_WORKSPACE = Path(__file__).parent / "fixtures" / "workspace"
 
@@ -92,59 +94,37 @@ def test_load_inputs_indexes_evidence_md_lines(repo: FsWorkspaceRepository) -> N
 
 
 # --- resolve_citation ------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("citation", "expected_ids"),
-    [
-        ("master-resume.md L16", ["master-resume.md L16"]),
-        ("master-resume.md L16; master-resume.md L17", ["master-resume.md L16", "master-resume.md L17"]),
-        ("master-resume.md L16, L17", ["master-resume.md L16", "master-resume.md L17"]),
-        ("master-resume.md L16-L17", ["master-resume.md L16", "master-resume.md L17"]),
-        ("master-resume.md L14-16", ["master-resume.md L15", "master-resume.md L16"]),
-        ("evidence.md L13", ["evidence.md L13"]),
-        ("evidence.md - billing migration", ["evidence.md L11"]),
-        ("evidence.md - On-call", ["evidence.md L13"]),
-        ("evidence.md - Project receipts", [f"evidence.md L{n}" for n in range(11, 17)]),
-        ("master-resume.md L16; evidence.md - cost", ["master-resume.md L16", "evidence.md L15"]),
-        ("master-resume.md L16, evidence.md - cost", ["master-resume.md L16", "evidence.md L15"]),
-    ],
-    ids=[
-        "single-line",
-        "semicolon-list",
-        "shorthand-line-list",
-        "range-with-L",
-        "range-skips-blank-line",
-        "evidence-line",
-        "evidence-bullet-label",
-        "evidence-label-case-insensitive",
-        "evidence-heading-expands-to-bullets",
-        "mixed-files",
-        "comma-before-file",
-    ],
-)
-def test_resolve_citation_grounds_every_pooled_line(
-    repo: FsWorkspaceRepository, citation: str, expected_ids: list[str]
-) -> None:
-    pool = repo.load_inputs(SLUG).evidence_pool
-    items = resolve_citation(citation, pool)
-    assert [e.id for e in items] == expected_ids
-    assert all(e.grounded and pool[e.id] is e for e in items)
+# The grammar itself is tested in the plugin's tests/test_citations.py; here, the web
+# repository's contract: the same lines as the plugin, wrapped as pooled or ungrounded Evidence.
 
 
 @pytest.mark.parametrize(
     "citation",
-    ["master-resume.md", "master-resume.md L999", "master-resume.md L18-16", "evidence.md - hobbies", "notes.md L3", ""],
-    ids=["no-line", "missing-line", "reversed-range", "unknown-label", "unknown-file", "empty"],
+    [
+        "master-resume.md L16; evidence.md - on-call",
+        "master-resume.md L14-16, L17",
+        "evidence.md - Project receipts",
+        "master-resume.md L16; notes.md",
+        "master-resume.md L999",
+    ],
+    ids=["mixed-files", "range-then-bare-line", "evidence-heading", "partial-list", "missing-line"],
 )
-def test_resolve_citation_keeps_unresolvable_citation_ungrounded(repo: FsWorkspaceRepository, citation: str) -> None:
+def test_resolve_citation_cites_the_same_lines_as_the_plugin_grammar(
+    repo: FsWorkspaceRepository, workspace: Path, citation: str
+) -> None:
+    app_dir = workspace / "applications" / SLUG
+    lines = citations.pool_lines(
+        (workspace / "master-resume.md").read_text(), (app_dir / "evidence.md").read_text()
+    )
     items = resolve_citation(citation, repo.load_inputs(SLUG).evidence_pool)
-    assert items == (Evidence(id=citation, text=citation, source=citation, grounded=False),)
+    assert [(e.id, e.grounded) for e in items] == list(citations.resolve_citation(citation, lines))
 
 
-def test_resolve_citation_grounds_what_it_can_in_a_partial_list(repo: FsWorkspaceRepository) -> None:
-    items = resolve_citation("master-resume.md L16; notes.md", repo.load_inputs(SLUG).evidence_pool)
-    assert [(e.id, e.grounded) for e in items] == [("master-resume.md L16", True), ("notes.md", False)]
+def test_resolve_citation_wraps_pooled_and_unresolved_references(repo: FsWorkspaceRepository) -> None:
+    pool = repo.load_inputs(SLUG).evidence_pool
+    pooled, unresolved = resolve_citation("master-resume.md L16; notes.md", pool)
+    assert pooled is pool["master-resume.md L16"]
+    assert unresolved == Evidence(id="notes.md", text="notes.md", source="notes.md", grounded=False)
 
 
 # --- outline round-trip ----------------------------------------------------

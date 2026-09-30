@@ -14,31 +14,12 @@ to the pure functions there: ``stitch_app_dir``, ``lint_app_dir``, ``export_app_
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+from app.adapters.scripts_path import ensure_scripts_on_path
 from app.domain import LintCheck
 
-# The conjurer scripts directory, relative to the repo root (three levels up from
-# this file: app/adapters/ -> app/ -> web/ -> repo root).
-_SCRIPTS_DIR = (
-    Path(__file__).resolve().parents[3]
-    / "plugins"
-    / "conjurer"
-    / "skills"
-    / "conjurer"
-    / "scripts"
-)
-
-
-def _ensure_scripts_on_path(scripts_dir: Path = _SCRIPTS_DIR) -> None:
-    """Add the conjurer scripts dir to sys.path once so its bare-name imports resolve."""
-    entry = str(scripts_dir)
-    if entry not in sys.path:
-        sys.path.append(entry)
-
-
-_ensure_scripts_on_path()
+ensure_scripts_on_path()
 
 from stitch import stitch_app_dir  # noqa: E402
 from lint import lint_app_dir  # noqa: E402
