@@ -23,15 +23,9 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from app.adapters.scripts_path import ensure_scripts_on_path
-from app.adapters.workspace_fs import claim_fingerprint
 from app.domain import Evidence, Support, Unit, label_for_unit_id
 from app.metrics import CallMetrics, RunMetrics, StepMetrics
 from app.ports import GenerationPort, VerificationPort, WorkspaceRepository
-
-ensure_scripts_on_path()
-
-import verify  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -115,14 +109,7 @@ class RunManager:
             logger.warning(
                 "claim check failed for slug=%s unit=%s: %r", slug, unit.id, exc
             )
-            return {
-                variant.id: Support(
-                    verdict="unchecked",
-                    note=verify.NOTES["unchecked"],
-                    fingerprint=claim_fingerprint(variant, pool),
-                )
-                for variant in unit.variants
-            }
+            return {variant.id: Support(verdict="unchecked") for variant in unit.variants}
 
     async def _run(self, slug: str) -> None:
         run_metrics = RunMetrics(slug=slug, steps=[])

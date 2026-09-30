@@ -81,25 +81,19 @@ def resolve_citation(citation: str, pool: Mapping[str, Evidence]) -> tuple[Evide
     )
 
 
-def claim_fingerprint(variant: Variant, pool: Mapping[str, Evidence]) -> str:
+def _claim_fingerprint(text: str, items: tuple[Evidence, ...]) -> str:
     """The support.json fingerprint of a variant: its text and the pooled lines it cites."""
-    cited = [
-        line.text
-        for item in variant.evidence_items
-        for line in resolve_citation(item.id, pool)
-        if line.grounded
-    ]
-    return verify.fingerprint(variant.text, cited)
+    return verify.fingerprint(text, [item.text for item in items if item.grounded])
 
 
-def _support_row(support: Support) -> dict:
+def _support_row(support: Support, fingerprint: str) -> dict:
     return {
         "verdict": support.verdict,
         "relation": support.relation,
         "relation_confidence": support.relation_confidence,
         "unstated": support.unstated,
         "unsourced_numbers": list(support.unsourced_numbers),
-        "fingerprint": support.fingerprint,
+        "fingerprint": fingerprint,
     }
 
 
@@ -347,9 +341,24 @@ class FsWorkspaceRepository:
     # --- support -----------------------------------------------------------
 
     def save_support(self, slug: str, support: dict[str, Support]) -> None:
+        """Write support.json, fingerprinting each verdict against the variant in variants.md.
+
+        A verdict for a variant that variants.md does not hold gets an empty fingerprint, so it
+        never attaches on load.
+        """
+        pool = self.load_inputs(slug).evidence_pool
+        parsed = _parse_variants_md((self._app_dir(slug) / "variants.md").read_text())
+        fingerprints = {
+            f"{punit.unit_id}#{pv.n}": _claim_fingerprint(pv.text, resolve_citation(pv.citation, pool))
+            for punit in parsed
+            for pv in punit.variants
+        }
         document = {
             "model": verify.JEV_MODEL,
-            "variants": {variant_id: _support_row(s) for variant_id, s in support.items()},
+            "variants": {
+                variant_id: _support_row(s, fingerprints.get(variant_id, ""))
+                for variant_id, s in support.items()
+            },
         }
         path = self._app_dir(slug) / "support.json"
         path.write_text(json.dumps(document, indent=2) + "\n")
@@ -386,7 +395,7 @@ class FsWorkspaceRepository:
                 cited.update((item.id, item) for item in items)
                 variant = Variant(id=f"{punit.unit_id}#{pv.n}", text=pv.text, evidence_items=items)
                 verdict = support.get(variant.id)
-                if verdict is not None and verdict.fingerprint == claim_fingerprint(variant, pool):
+                if verdict is not None and verdict.fingerprint == _claim_fingerprint(pv.text, items):
                     variant = replace(variant, support=verdict)
                 variants.append(variant)
             units.append(
