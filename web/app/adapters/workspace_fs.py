@@ -17,6 +17,7 @@ resolve its evidence trace back into the domain.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
@@ -44,6 +45,8 @@ ensure_scripts_on_path()
 
 import citations  # noqa: E402
 import verify  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 # variants.md grammar. The unit marker and pick line mirror stitch.py exactly so
 # the two stay in lockstep.
@@ -379,8 +382,13 @@ class FsWorkspaceRepository:
         path = self._app_dir(slug) / "support.json"
         if not path.exists():
             return {}
-        rows = json.loads(path.read_text())["variants"]
-        return {variant_id: support_from_row(row) for variant_id, row in rows.items()}
+        try:
+            rows = json.loads(path.read_text())["variants"]
+            return {variant_id: support_from_row(row) for variant_id, row in rows.items()}
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            # Verdicts are advisory: a damaged support.json must not block curation.
+            logger.warning("unreadable support.json for slug=%s: %r", slug, exc)
+            return {}
 
     # --- hydration ---------------------------------------------------------
 

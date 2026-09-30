@@ -616,6 +616,29 @@ def test_load_application_without_support_json_attaches_no_verdicts(repo: FsWork
     assert [v.support for unit in app.units for v in unit.variants] == [None, None, None]
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{truncated",
+        '{"model": "jev-1.13.0"}',
+        '{"model": "jev-1.13.0", "variants": {"cover_letter.opening#1": "x"}}',
+        '{"model": "jev-1.13.0", "variants": []}',
+    ],
+    ids=["truncated-json", "no-variants-key", "row-not-an-object", "variants-not-an-object"],
+)
+def test_unreadable_support_json_loads_as_no_verdicts_and_says_so(
+    repo: FsWorkspaceRepository, workspace: Path, caplog: pytest.LogCaptureFixture, content: str
+) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
+    (workspace / "applications" / SLUG / "support.json").write_text(content)
+
+    app = repo.load_application(SLUG)
+
+    assert [v.support for unit in app.units for v in unit.variants] == [None, None, None]
+    assert f"unreadable support.json for slug={SLUG}" in caplog.text
+
+
 def test_save_support_fingerprints_a_saved_transient_citation_like_the_cli(
     repo: FsWorkspaceRepository, workspace: Path
 ) -> None:
