@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
-from app.domain import Application, Evidence, Frame, FRAMES, LintCheck, Unit, Variant
+from app.domain import Application, Evidence, Frame, FRAMES, LintCheck, Support, Unit, Variant
 
 
 # --- Evidence pool ---------------------------------------------------------
@@ -66,7 +66,7 @@ EVIDENCE: dict[str, Evidence] = {
 }
 
 
-def _v(id: str, text: str, *evidence_ids: str) -> Variant:
+def _v(id: str, text: str, *evidence_ids: str, support: Support | None = None) -> Variant:
     """Build a Variant with its evidence resolved from the fixture pool.
 
     Resolving here (rather than in the type) is the fake adapter's job; the live repository
@@ -75,7 +75,21 @@ def _v(id: str, text: str, *evidence_ids: str) -> Variant:
     missing = [e for e in evidence_ids if e not in EVIDENCE]
     if missing:
         raise ValueError(f"Variant {id!r} cites unknown evidence: {missing}")
-    return Variant(id=id, text=text, evidence_items=tuple(EVIDENCE[e] for e in evidence_ids))
+    return Variant(
+        id=id,
+        text=text,
+        evidence_items=tuple(EVIDENCE[e] for e in evidence_ids),
+        support=support,
+    )
+
+
+# The two fixture variants that claim more than their cited lines state: "the last three
+# years" (no line dates the migration) and "on Kubernetes" (the platform line never says so).
+ADDS_DETAIL = Support(
+    verdict="adds_detail",
+    note="Adds detail your evidence doesn't state",
+    relation="partly_supports",
+)
 
 
 def _units() -> list[Unit]:
@@ -94,6 +108,7 @@ def _units() -> list[Unit]:
                     "generation from forty seconds to under two, across three regions. "
                     "Globex is solving that problem one size up, and I'd like to help.",
                     "billing-migration", "regional-rollout",
+                    support=ADDS_DETAIL,
                 ),
                 _v(
                     "cover-open-2",
@@ -239,6 +254,7 @@ def _units() -> list[Unit]:
                     "Standardized service deployment on Kubernetes as part of the shared "
                     "CI pipeline adopted by 9 teams.",
                     "internal-platform",
+                    support=ADDS_DETAIL,
                 ),
                 _v(
                     "bullet-kubernetes-2",

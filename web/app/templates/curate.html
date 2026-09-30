@@ -33,7 +33,11 @@
       <span class="variant__check" aria-hidden="true">{{ i.icon("check") }}</span>
       <div class="variant__foot">
         {% set traces = v.evidence() %}
-        <details class="trace">
+        {% set flagged = v.support is not none and v.support.flagged %}
+        {% if flagged %}
+        <p class="variant__note">{{ v.support.note }}</p>
+        {% endif %}
+        <details class="trace"{% if flagged %} open{% endif %}>
           <summary>{{ i.icon("chevron", "chev") }} Evidence
             ({{ traces|length }} {{ "trace" if traces|length == 1 else "traces" }})</summary>
           <ul class="trace__items">

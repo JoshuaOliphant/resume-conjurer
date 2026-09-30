@@ -6,14 +6,18 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import get_args
 
+import jsonschema
 import pytest
 
-from app.adapters.workspace_fs import FsWorkspaceRepository, resolve_citation
-from app.domain import Outline, OutlineUnit, Unit, Variant, Evidence
+from app.adapters.workspace_fs import FsWorkspaceRepository, claim_fingerprint, resolve_citation
+from app.domain import Outline, OutlineUnit, Support, SupportVerdict, Unit, Variant, Evidence
 from app.metrics import CallMetrics, RunMetrics, StepMetrics
+from app.schemas import SUPPORT_SCHEMA
 
 import citations  # on sys.path once app.adapters.workspace_fs is imported
+import verify
 
 SLUG = "globex-staff-platform"
 FIXTURE_WORKSPACE = Path(__file__).parent / "fixtures" / "workspace"
@@ -474,3 +478,141 @@ def test_save_jd_creates_app_dir_and_normalizes_newline(tmp_path: Path) -> None:
 
     repo.save_jd(SLUG, "Already newline-terminated\n")  # trailing newline preserved, not doubled
     assert jd_path.read_text() == "Already newline-terminated\n"
+
+
+# --- support.json ------------------------------------------------------------
+
+PIPELINE_MD = (
+    Path(__file__).resolve().parents[2]
+    / "plugins" / "conjurer" / "skills" / "conjurer" / "references" / "pipeline.md"
+)
+
+
+def _cli_rows(workspace: Path, verdicts: dict[str, tuple[str, list[str]]]) -> dict[str, dict]:
+    """support.json rows fingerprinted the way the CLI claim check does, from variants.md on disk."""
+    app_dir = workspace / "applications" / SLUG
+    lines = citations.pool_lines(
+        (workspace / "master-resume.md").read_text(), (app_dir / "evidence.md").read_text()
+    )
+    rows = {}
+    for variant_id, variant in verify.variant_targets((app_dir / "variants.md").read_text()):
+        if variant_id not in verdicts:
+            continue
+        verdict, numbers = verdicts[variant_id]
+        cited = [
+            lines[line.id]
+            for line in citations.resolve_citation(variant.citation, lines)
+            if line.grounded
+        ]
+        rows[variant_id] = {
+            "verdict": verdict,
+            "relation": "partly_supports",
+            "relation_confidence": 1.0,
+            "unstated": 0.94,
+            "unsourced_numbers": numbers,
+            "fingerprint": verify.fingerprint(variant.content, cited),
+        }
+    return rows
+
+
+def _write_support(workspace: Path, rows: dict[str, dict]) -> None:
+    document = {"model": verify.JEV_MODEL, "variants": rows}
+    (workspace / "applications" / SLUG / "support.json").write_text(json.dumps(document))
+
+
+def test_load_support_is_empty_without_support_json(repo: FsWorkspaceRepository) -> None:
+    assert repo.load_support(SLUG) == {}
+
+
+def test_support_round_trips_through_support_json(repo: FsWorkspaceRepository) -> None:
+    support = {
+        "cover_letter.opening#1": Support(
+            verdict="adds_detail",
+            note=verify.note_for("adds_detail", ["12"]),
+            unsourced_numbers=("12",),
+            relation="partly_supports",
+            relation_confidence=1.0,
+            unstated=0.94,
+            fingerprint="a" * 64,
+        ),
+        "cover_letter.opening#2": Support(verdict="traced", fingerprint="b" * 64),
+    }
+    repo.save_support(SLUG, support)
+    assert repo.load_support(SLUG) == support
+
+
+def test_save_support_writes_the_documented_support_json(
+    repo: FsWorkspaceRepository, workspace: Path
+) -> None:
+    repo.save_support(SLUG, {"cover_letter.opening#1": Support(verdict="unchecked", fingerprint="c" * 64)})
+    document = json.loads((workspace / "applications" / SLUG / "support.json").read_text())
+    jsonschema.validate(document, SUPPORT_SCHEMA)
+    assert document["model"] == verify.JEV_MODEL
+    assert document["variants"]["cover_letter.opening#1"]["verdict"] == "unchecked"
+
+
+def test_support_schema_validates_the_documented_example() -> None:
+    section = PIPELINE_MD.read_text().split("### support.json", 1)[1]
+    example = json.loads(section.split("```json", 1)[1].split("```", 1)[0])
+    jsonschema.validate(example, SUPPORT_SCHEMA)
+    row_schema = SUPPORT_SCHEMA["properties"]["variants"]["additionalProperties"]
+    assert set(row_schema["properties"]["verdict"]["enum"]) == set(verify.VERDICTS)
+    assert set(get_args(SupportVerdict)) == set(verify.VERDICTS)
+
+
+def test_load_application_attaches_only_verdicts_whose_fingerprint_matches(
+    repo: FsWorkspaceRepository, workspace: Path
+) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
+    rows = _cli_rows(
+        workspace,
+        {
+            "cover_letter.opening#1": ("adds_detail", ["12"]),
+            "cover_letter.opening#2": ("conflicts", []),
+            "resume.northwind.billing.bullet_1#1": ("traced", []),
+        },
+    )
+    rows["cover_letter.opening#2"]["fingerprint"] = verify.fingerprint("an edited claim", [])
+    _write_support(workspace, rows)
+
+    variants = {v.id: v for unit in repo.load_application(SLUG).units for v in unit.variants}
+
+    assert variants["cover_letter.opening#1"].support == Support(
+        verdict="adds_detail",
+        note="Adds detail your evidence doesn't state: 12",
+        unsourced_numbers=("12",),
+        relation="partly_supports",
+        relation_confidence=1.0,
+        unstated=0.94,
+        fingerprint=rows["cover_letter.opening#1"]["fingerprint"],
+    )
+    assert variants["cover_letter.opening#2"].support is None
+    traced = variants["resume.northwind.billing.bullet_1#1"].support
+    assert traced is not None and traced.verdict == "traced" and traced.note is None
+
+
+def test_load_application_without_support_json_attaches_no_verdicts(repo: FsWorkspaceRepository) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
+    app = repo.load_application(SLUG)
+    assert [v.support for unit in app.units for v in unit.variants] == [None, None, None]
+
+
+def test_claim_fingerprint_resolves_a_transient_citation_like_the_cli(
+    repo: FsWorkspaceRepository, workspace: Path
+) -> None:
+    # Generation hands back each variant's citation unresolved; its fingerprint must still be
+    # the one the CLI computes from variants.md once the variant is saved.
+    pool = repo.load_inputs(SLUG).evidence_pool
+    citation = "master-resume.md L16; evidence.md L13; notes.md - side project"
+    variant = Variant(
+        id="cover_letter.opening#1",
+        text="I led the migration and cut paging 60%.",
+        evidence_items=(Evidence(id=citation, text=citation, source=citation, grounded=False),),
+    )
+    repo.save_outline(SLUG, _sample_outline())
+    unit = Unit(id="cover_letter.opening", kind="cover_paragraph", label="Opening", context="c", variants=[variant])
+    repo.save_variants(SLUG, [unit])
+    expected = _cli_rows(workspace, {variant.id: ("traced", [])})[variant.id]["fingerprint"]
+    assert claim_fingerprint(variant, pool) == expected

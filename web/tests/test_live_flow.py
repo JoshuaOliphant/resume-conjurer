@@ -9,10 +9,11 @@ from fastapi.testclient import TestClient
 
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.generation_sdk import SdkGenerationPort
+from app.adapters.verification_fake import FakeVerificationPort, NoVerificationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.adapters.workspace_fs import FsWorkspaceRepository
 from app.adapters.composition import ScriptCompositionPort
-from app.deps import build_composition, build_generation, build_repository
+from app.deps import build_composition, build_generation, build_repository, build_verification
 from app.main import create_app
 from app.runs import RunManager, RunStatus
 
@@ -61,7 +62,7 @@ def workspace(tmp_path):
 def live_client(workspace):
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
-    manager = RunManager(repo=repo, gen=gen)
+    manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
     with TestClient(app) as c:
         yield c, manager
@@ -117,7 +118,7 @@ def test_live_outline_renders_from_persisted_workspace(workspace):
 
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
-    manager = RunManager(repo=repo, gen=gen)
+    manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -143,7 +144,7 @@ def _ran_live_app(workspace):
 
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
-    manager = RunManager(repo=repo, gen=gen)
+    manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -193,7 +194,7 @@ def test_review_omits_the_summary_when_no_run(live_client):
 
     repo = FakeWorkspaceRepository()
     gen = FakeGenerationPort()
-    app = _create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=False)
+    app = _create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=False)
     with TestClient(app) as c:
         r = c.get("/review")
     assert r.status_code == 200
@@ -223,6 +224,17 @@ def test_build_generation_live_is_sdk(monkeypatch, workspace):
     monkeypatch.setenv("CONJURER_BACKEND", "live")
     monkeypatch.setenv("CONJURER_WORKSPACE", str(workspace))
     assert isinstance(build_generation(), SdkGenerationPort)
+
+
+def test_build_verification_defaults_to_fake(monkeypatch):
+    monkeypatch.delenv("CONJURER_BACKEND", raising=False)
+    assert isinstance(build_verification(), FakeVerificationPort)
+
+
+def test_build_verification_live_is_a_no_op_until_jev_lands(monkeypatch):
+    monkeypatch.setenv("CONJURER_BACKEND", "live")
+    monkeypatch.delenv("CONJURER_WORKSPACE", raising=False)
+    assert isinstance(build_verification(), NoVerificationPort)
 
 
 def test_live_repository_requires_workspace_env(monkeypatch):
@@ -299,7 +311,7 @@ def test_live_curate_renders_unverified_note_for_ungrounded_citation(workspace):
         ],
     )
     gen = FakeGenerationPort()
-    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=True)
+    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=True)
     with TestClient(app) as c:
         r = c.get("/curate/0")
     assert r.status_code == 200
@@ -354,7 +366,7 @@ def _prepare_picked_live_workspace(workspace):
     gen = FakeGenerationPort()
     comp = ScriptCompositionPort(workspace)
     app = create_app(
-        repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=True, comp=comp
+        repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=True, comp=comp
     )
     return app
 
@@ -413,7 +425,7 @@ def test_live_review_with_incomplete_picks_does_not_stitch_or_500(workspace):
     gen = FakeGenerationPort()
     comp = ScriptCompositionPort(workspace)
     app = create_app(
-        repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=True, comp=comp
+        repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=True, comp=comp
     )
     with TestClient(app) as c:
         r = c.get("/review")
@@ -473,7 +485,7 @@ def test_live_landing_states_honest_master_resume_source(live_client):
 def test_live_start_writes_the_pasted_jd_to_the_workspace(workspace):
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
-    manager = RunManager(repo=repo, gen=gen)
+    manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
     with TestClient(app) as c:
         r = c.post("/start", data={"jd": "Widget Wrangler at Globex. Unique-JD-Marker-42."})
@@ -487,7 +499,7 @@ def test_live_start_with_blank_jd_keeps_the_existing_jd(workspace):
     original = jd_path.read_text()
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
-    manager = RunManager(repo=repo, gen=gen)
+    manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
     with TestClient(app) as c:
         r = c.post("/start", data={"jd": "   "})  # whitespace-only -> not written

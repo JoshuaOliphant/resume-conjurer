@@ -450,6 +450,14 @@ kbd {
   border-top: 1px solid var(--line);
   padding: var(--space-3) var(--space-5) var(--space-4) calc(2rem + var(--space-4) + var(--space-5));
 }
+.variant__note {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--warn);
+  font-size: var(--text-sm);
+  line-height: var(--lh-snug);
+  color: var(--ink);
+}
 .trace { border: 0; padding: 0; }
 .trace > summary {
   list-style: none;

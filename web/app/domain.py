@@ -59,6 +59,28 @@ class Evidence:
     grounded: bool = True
 
 
+SupportVerdict = Literal[
+    "traced", "untraced", "adds_detail", "conflicts", "wrong_trace", "not_covered", "unchecked"
+]
+
+
+@dataclass(frozen=True)
+class Support:
+    """The claim check's verdict on one variant: how its cited evidence bears on its claim."""
+
+    verdict: SupportVerdict
+    note: str | None = None
+    unsourced_numbers: tuple[str, ...] = ()
+    relation: str | None = None
+    relation_confidence: float | None = None
+    unstated: float | None = None
+    fingerprint: str = ""
+
+    @property
+    def flagged(self) -> bool:
+        return self.note is not None
+
+
 @dataclass(frozen=True)
 class Variant:
     """One generated phrasing of a unit, carrying its already-resolved evidence trace."""
@@ -66,6 +88,7 @@ class Variant:
     id: str
     text: str
     evidence_items: tuple[Evidence, ...] = ()
+    support: Support | None = None
 
     def evidence(self) -> list[Evidence]:
         # Method (not the raw field) so templates keep calling ``v.evidence()``.
