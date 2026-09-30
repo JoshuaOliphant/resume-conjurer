@@ -9,7 +9,7 @@ from pathlib import Path
 from app.adapters.scripts_path import ensure_scripts_on_path
 
 
-def testensure_scripts_on_path_adds_once(tmp_path: Path) -> None:
+def test_ensure_scripts_on_path_adds_once(tmp_path: Path) -> None:
     fresh = tmp_path / "scripts"
     assert str(fresh) not in sys.path
     ensure_scripts_on_path(fresh)  # absent -> appended

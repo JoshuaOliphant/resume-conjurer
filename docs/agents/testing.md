@@ -23,9 +23,9 @@ its own suite.
 
 | Gate | Command | Status |
 |---|---|---|
-| Plugin suite | `uv run pytest -q` | passing (42 tests) |
+| Plugin suite | `uv run pytest -q` | passing |
 | Plugin coverage | `uv run pytest -q --cov=plugins --cov-branch --cov-report=term-missing --cov-fail-under=100` | broken: `FAIL Required test coverage of 100% not reached. Total coverage: 86.61%` |
-| Web suite and coverage | `cd web && uv run pytest -q` | passing (154 tests, 100% line and branch, enforced by `fail_under` in `web/pyproject.toml`) |
+| Web suite and coverage | `cd web && uv run pytest -q` | passing (100% line and branch, enforced by `fail_under` in `web/pyproject.toml`) |
 | Lint | `uvx ruff check .` | passing |
 | Types | `cd web && uvx ty check` | passing |
 

@@ -34,7 +34,7 @@ Web app (`cd web` first):
 
 ```
 uv sync
-uv run pytest                                   # the gate: 154 tests, 100% line+branch, deselects `live`
+uv run pytest                                   # the gate: 100% line+branch, deselects `live`
 uv run pytest tests/test_domain.py -q --no-cov  # single file — see below
 uv run pytest -m live                           # real API calls; needs auth
 uv run uvicorn app.main:app --reload --port 8400
