@@ -87,9 +87,9 @@ def cited_lines(items: Iterable[Evidence], pool: Mapping[str, Evidence]) -> list
     return [line.text for item in items for line in resolve_citation(item.id, pool) if line.grounded]
 
 
-def _claim_fingerprint(text: str, items: tuple[Evidence, ...]) -> str:
+def _claim_fingerprint(text: str, items: Iterable[Evidence], pool: Mapping[str, Evidence]) -> str:
     """The support.json fingerprint of a variant: its text and the pooled lines it cites."""
-    return verify.fingerprint(text, [item.text for item in items if item.grounded])
+    return verify.fingerprint(text, cited_lines(items, pool))
 
 
 def _all_flagged(variants: list[Variant]) -> bool:
@@ -361,7 +361,7 @@ class FsWorkspaceRepository:
         pool = self.load_inputs(slug).evidence_pool
         parsed = _parse_variants_md((self._app_dir(slug) / "variants.md").read_text())
         fingerprints = {
-            f"{punit.unit_id}#{pv.n}": _claim_fingerprint(pv.text, resolve_citation(pv.citation, pool))
+            f"{punit.unit_id}#{pv.n}": _claim_fingerprint(pv.text, resolve_citation(pv.citation, pool), pool)
             for punit in parsed
             for pv in punit.variants
         }
@@ -407,7 +407,7 @@ class FsWorkspaceRepository:
                 cited.update((item.id, item) for item in items)
                 variant = Variant(id=f"{punit.unit_id}#{pv.n}", text=pv.text, evidence_items=items)
                 verdict = support.get(variant.id)
-                if verdict is not None and verdict.fingerprint == _claim_fingerprint(pv.text, items):
+                if verdict is not None and verdict.fingerprint == _claim_fingerprint(pv.text, items, pool):
                     variant = replace(variant, support=verdict)
                 variants.append(variant)
             units.append(

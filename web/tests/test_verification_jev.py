@@ -1,4 +1,4 @@
-# ABOUTME: Tests for the Jev VerificationPort: row mapping, citation resolution, and the concurrency bound.
+# ABOUTME: Tests for the Jev VerificationPort: resolving each variant's cited lines, and the concurrency bound.
 # ABOUTME: Offline tests inject a fake check callable; the `live` test asks the real Jev API.
 
 import asyncio
