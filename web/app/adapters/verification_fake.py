@@ -1,5 +1,5 @@
 # ABOUTME: Offline VerificationPort adapters: a fake that answers from a script, and a no-op.
-# ABOUTME: The no-op backs the live config until the Jev claim check is wired into the web app.
+# ABOUTME: The fake backs tests and fake mode; the no-op returns no verdicts for any unit.
 
 from __future__ import annotations
 

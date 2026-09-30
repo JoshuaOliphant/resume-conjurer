@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 from typing import get_args
 
 import jsonschema
 import pytest
 
-from app.adapters.workspace_fs import FsWorkspaceRepository, claim_fingerprint, resolve_citation
+from app.adapters.workspace_fs import FsWorkspaceRepository, resolve_citation
 from app.domain import Outline, OutlineUnit, Support, SupportVerdict, Unit, Variant, Evidence
 from app.metrics import CallMetrics, RunMetrics, StepMetrics
 from app.schemas import SUPPORT_SCHEMA
@@ -524,7 +525,11 @@ def test_load_support_is_empty_without_support_json(repo: FsWorkspaceRepository)
     assert repo.load_support(SLUG) == {}
 
 
-def test_support_round_trips_through_support_json(repo: FsWorkspaceRepository) -> None:
+def test_save_support_stamps_fingerprints_that_load_application_matches(
+    repo: FsWorkspaceRepository, workspace: Path
+) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
     support = {
         "cover_letter.opening#1": Support(
             verdict="adds_detail",
@@ -533,18 +538,31 @@ def test_support_round_trips_through_support_json(repo: FsWorkspaceRepository) -
             relation="partly_supports",
             relation_confidence=1.0,
             unstated=0.94,
-            fingerprint="a" * 64,
         ),
-        "cover_letter.opening#2": Support(verdict="traced", fingerprint="b" * 64),
+        "cover_letter.opening#2": Support(verdict="unchecked", note=verify.NOTES["unchecked"]),
+        "resume.northwind.billing.bullet_1#9": Support(verdict="traced"),
     }
     repo.save_support(SLUG, support)
-    assert repo.load_support(SLUG) == support
+
+    cli = _cli_rows(workspace, {"cover_letter.opening#1": ("", []), "cover_letter.opening#2": ("", [])})
+    stamped = {
+        variant_id: replace(support[variant_id], fingerprint=row["fingerprint"])
+        for variant_id, row in cli.items()
+    }
+    # A verdict for a variant variants.md does not hold gets no fingerprint, so it never shows.
+    stamped["resume.northwind.billing.bullet_1#9"] = Support(verdict="traced", fingerprint="")
+    assert repo.load_support(SLUG) == stamped
+    variants = {v.id: v for unit in repo.load_application(SLUG).units for v in unit.variants}
+    assert variants["cover_letter.opening#1"].support == stamped["cover_letter.opening#1"]
+    assert variants["cover_letter.opening#2"].support == stamped["cover_letter.opening#2"]
 
 
 def test_save_support_writes_the_documented_support_json(
     repo: FsWorkspaceRepository, workspace: Path
 ) -> None:
-    repo.save_support(SLUG, {"cover_letter.opening#1": Support(verdict="unchecked", fingerprint="c" * 64)})
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
+    repo.save_support(SLUG, {"cover_letter.opening#1": Support(verdict="unchecked")})
     document = json.loads((workspace / "applications" / SLUG / "support.json").read_text())
     jsonschema.validate(document, SUPPORT_SCHEMA)
     assert document["model"] == verify.JEV_MODEL
@@ -599,12 +617,11 @@ def test_load_application_without_support_json_attaches_no_verdicts(repo: FsWork
     assert [v.support for unit in app.units for v in unit.variants] == [None, None, None]
 
 
-def test_claim_fingerprint_resolves_a_transient_citation_like_the_cli(
+def test_save_support_fingerprints_a_saved_transient_citation_like_the_cli(
     repo: FsWorkspaceRepository, workspace: Path
 ) -> None:
     # Generation hands back each variant's citation unresolved; its fingerprint must still be
     # the one the CLI computes from variants.md once the variant is saved.
-    pool = repo.load_inputs(SLUG).evidence_pool
     citation = "master-resume.md L16; evidence.md L13; notes.md - side project"
     variant = Variant(
         id="cover_letter.opening#1",
@@ -614,5 +631,6 @@ def test_claim_fingerprint_resolves_a_transient_citation_like_the_cli(
     repo.save_outline(SLUG, _sample_outline())
     unit = Unit(id="cover_letter.opening", kind="cover_paragraph", label="Opening", context="c", variants=[variant])
     repo.save_variants(SLUG, [unit])
+    repo.save_support(SLUG, {variant.id: Support(verdict="traced")})
     expected = _cli_rows(workspace, {variant.id: ("traced", [])})[variant.id]["fingerprint"]
-    assert claim_fingerprint(variant, pool) == expected
+    assert repo.load_support(SLUG)[variant.id].fingerprint == expected

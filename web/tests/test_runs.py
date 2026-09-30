@@ -280,6 +280,16 @@ FLAGGED = Support(
 TRACED = Support(verdict="traced")
 
 
+class RecordingRepo(FsWorkspaceRepository):
+    """Keeps the verdicts the run hands to save_support, before the repository stamps them."""
+
+    saved_support: dict[str, Support] | None = None
+
+    def save_support(self, slug, support):
+        self.saved_support = support
+        super().save_support(slug, support)
+
+
 def test_run_verifies_each_unit_after_its_variants_and_saves_support_after_variants(workspace):
     events: list[tuple[str, str]] = []
     pools: list[set[str]] = []
@@ -295,7 +305,7 @@ def test_run_verifies_each_unit_after_its_variants_and_saves_support_after_varia
             pools.append(set(pool))
             return await super().verify(unit, pool)
 
-    class LoggingRepo(FsWorkspaceRepository):
+    class LoggingRepo(RecordingRepo):
         def save_variants(self, slug, units):
             events.append(("save_variants", slug))
             super().save_variants(slug, units)
@@ -319,7 +329,7 @@ def test_run_verifies_each_unit_after_its_variants_and_saves_support_after_varia
     per_unit = [event for unit_id in unit_ids for event in (("variants", unit_id), ("verify", unit_id))]
     assert events == per_unit + [("save_variants", SLUG), ("save_support", SLUG)]
     assert pools == [set(repo.load_inputs(SLUG).evidence_pool)] * len(unit_ids)
-    assert repo.load_support(SLUG) == scripted
+    assert repo.saved_support == scripted
 
 
 def test_failing_verifier_marks_its_unit_unchecked_and_the_run_still_finishes(workspace, caplog):
@@ -329,7 +339,7 @@ def test_failing_verifier_marks_its_unit_unchecked_and_the_run_still_finishes(wo
                 raise TimeoutError("jev timed out")
             return await super().verify(unit, pool)
 
-    repo = FsWorkspaceRepository(workspace)
+    repo = RecordingRepo(workspace)
     verifier = FailsOnOpening({"resume.fixture.bullet_1#1": TRACED})
     manager = RunManager(repo=repo, gen=FakeGenerationPort(), verifier=verifier)
 
@@ -346,14 +356,14 @@ def test_failing_verifier_marks_its_unit_unchecked_and_the_run_still_finishes(wo
     assert "cover_letter.opening" in failure.getMessage()
     assert "jev timed out" in failure.getMessage()
 
+    assert repo.saved_support == {
+        **{f"cover_letter.opening#{n}": Support(verdict="unchecked") for n in range(1, 5)},
+        "resume.fixture.bullet_1#1": TRACED,
+    }
     units = {unit.id: unit for unit in repo.load_application(SLUG).units}
-    opening = units["cover_letter.opening"].variants
-    assert len(opening) == 4
-    for variant in opening:
-        # Attached on load, so its fingerprint matches the variant as saved to variants.md.
+    for variant in units["cover_letter.opening"].variants:
         assert variant.support is not None
         assert (variant.support.verdict, variant.support.note) == ("unchecked", verify.NOTES["unchecked"])
-    assert repo.load_support(SLUG)["resume.fixture.bullet_1#1"] == TRACED
 
 
 def test_log_task_exception_logs_a_real_uncaught_exception(workspace, caplog):
