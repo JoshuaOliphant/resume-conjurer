@@ -104,17 +104,27 @@ def test_verify_runs_at_most_concurrency_checks_at_once(options: dict, variants:
 
 @pytest.mark.live
 @pytest.mark.skipif(not os.environ.get("TYPESAFE_API_KEY"), reason="no TYPESAFE_API_KEY")
-def test_live_jev_flags_a_planted_fabricated_number():
+def test_live_jev_classifies_supported_and_unsupported_claims():
     unit = _unit(
+        _variant("supported-60", PAGING_LINE, "master-resume.md L18"),
         _variant(
             "planted-80",
             "Owned the billing on-call rotation; cut paging volume 80% by adding idempotency keys"
             " and a dead-letter replay tool.",
             "master-resume.md L18",
-        )
+        ),
+        _variant("team-25", "Led a team of 25 engineers who cut paging volume 60%.", "master-resume.md L18"),
+        _variant("increased-60", "Increased paging volume 60%.", "master-resume.md L18"),
+        _variant("missing-trace", PAGING_LINE, "master-resume.md L999"),
     )
     port = JevVerificationPort(os.environ["TYPESAFE_API_KEY"])
     verdicts = asyncio.run(port.verify(unit, POOL))
     planted = verdicts["planted-80"]
     assert planted.verdict in {"conflicts", "adds_detail"}, planted
     assert planted.unsourced_numbers == ("80",)
+    assert verdicts["supported-60"].verdict == "traced", verdicts["supported-60"]
+    assert verdicts["supported-60"].unsourced_numbers == ()
+    assert verdicts["team-25"].verdict == "adds_detail", verdicts["team-25"]
+    assert verdicts["team-25"].unsourced_numbers == ("25",)
+    assert verdicts["increased-60"].verdict == "conflicts", verdicts["increased-60"]
+    assert verdicts["missing-trace"].verdict == "untraced", verdicts["missing-trace"]

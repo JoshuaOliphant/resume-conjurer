@@ -1,6 +1,8 @@
 # ABOUTME: Route tests for the live generation flow, wired with a FakeGenerationPort + temp FsRepo.
 # ABOUTME: Exercises POST /start (live), the status partial's render branches, and the env composition.
 
+import asyncio
+import os
 import shutil
 from pathlib import Path
 
@@ -15,6 +17,7 @@ from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.adapters.workspace_fs import FsWorkspaceRepository
 from app.adapters.composition import ScriptCompositionPort
 from app.deps import build_composition, build_generation, build_repository, build_verification
+from app.domain import Evidence, Variant
 from app.main import create_app
 from app.runs import RunManager, RunStatus
 
@@ -413,6 +416,44 @@ def test_live_review_stitches_and_lints_the_real_docs(workspace):
     assert (app_dir / "resume.md").exists()
     # The picked content is in the stitched cover letter.
     assert "billing migration end to end" in (app_dir / "cover_letter.md").read_text()
+
+
+@pytest.mark.live
+@pytest.mark.skipif(not os.environ.get("TYPESAFE_API_KEY"), reason="no TYPESAFE_API_KEY")
+def test_real_jev_verdict_persists_and_reaches_live_curate_and_review(workspace):
+    app = _prepare_picked_live_workspace(workspace)
+    repo = FsWorkspaceRepository(workspace)
+    units = repo.load_application(SLUG).units
+    unit = units[1]
+    citation = "master-resume.md L18"
+    variant = Variant(
+        id=f"{unit.id}#1",
+        text="- Led a team of 25 engineers who cut paging volume 60%.",
+        evidence_items=(Evidence(id=citation, text=citation, source=citation, grounded=False),),
+    )
+    unit.variants = [variant]
+    repo.save_variants(SLUG, units)
+    for chosen_unit in units:
+        repo.set_pick(SLUG, chosen_unit.id, chosen_unit.variants[0].id)
+    pool = repo.load_inputs(SLUG).evidence_pool
+    verifier = JevVerificationPort(os.environ["TYPESAFE_API_KEY"])
+    verdicts = asyncio.run(verifier.verify(unit, pool))
+    assert verdicts[variant.id].verdict == "adds_detail", verdicts[variant.id]
+    assert verdicts[variant.id].unsourced_numbers == ("25",)
+
+    repo.save_support(SLUG, verdicts, units, pool)
+    assert FsWorkspaceRepository(workspace).load_support(SLUG) == verdicts
+    hydrated = repo.load_application(SLUG).units[1].variants[0]
+    assert hydrated.support == verdicts[variant.id]
+
+    with TestClient(app) as client:
+        curate = client.get("/curate/1")
+        review = client.get("/review")
+    for response in (curate, review):
+        assert response.status_code == 200
+        assert "Led a team of 25 engineers" in response.text
+        assert "Adds detail your evidence doesn" in response.text
+        assert "25" in response.text
 
 
 @pytest.mark.parametrize("route", ["/curate/0", "/review"])
