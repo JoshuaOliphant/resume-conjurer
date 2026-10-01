@@ -5,7 +5,7 @@
 <form class="page" method="post" action="/start">
   <p class="page__eyebrow">New application</p>
   <h1 class="page__title">Tailor your resume for one role.</h1>
-  <p class="page__lede">Bring your evidence and the job description. Conjurer generates grounded
+  <p class="page__lede">Bring your evidence and the job description. Conjurer generates candidate
     variants for each line, you choose the ones that sound like you, and it stitches the rest.</p>
 
   <fieldset class="field" style="border:0;padding:0;margin-top:var(--space-7);">
@@ -14,7 +14,7 @@
       <div class="choice choice--on">
         <span>
           <span class="choice__title">{{ master_resume_note }}</span>
-          <span class="choice__sub">Conjurer re-frames your evidence for this role. It never invents.</span>
+          <span class="choice__sub">Conjurer uses your evidence to draft options for this role. Review each claim before using it.</span>
         </span>
       </div>
     </div>
@@ -28,7 +28,7 @@
 
   <div class="actions">
     <button class="btn btn--primary" type="submit">Read the job {{ i.icon("arrow-right") }}</button>
-    <span class="field__hint">Nothing is sent anywhere. Generation runs in your Claude Code session.</span>
+    <span class="field__hint">Live generation sends your source text to Claude. Optional claim checks send claims and evidence to TypeSafe.</span>
   </div>
 </form>
 {% endblock %}

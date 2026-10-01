@@ -242,12 +242,10 @@ def _units() -> list[Unit]:
             kind="resume_bullet",
             label="Kubernetes bullet",
             context="The JD lists 'deep Kubernetes operations at scale' as a requirement. "
-            "The master resume only mentions it in passing.",
-            grounding_note="Your master resume mentions Kubernetes only "
-            "in the context of the service template, not as deep operational ownership. "
-            "These variants stay within what your evidence actually supports; they don't "
-            "claim scale you haven't documented. Add a stronger line to your master resume "
-            "if you have one.",
+            "The cited service-template line does not mention Kubernetes.",
+            grounding_note="The cited evidence does not state Kubernetes experience or "
+            "operational ownership. Check each variant against your experience before "
+            "choosing it. Add a supporting line to your master resume if you have one.",
             variants=[
                 _v(
                     "bullet-kubernetes-1",

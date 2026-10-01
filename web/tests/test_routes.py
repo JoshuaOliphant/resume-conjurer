@@ -72,6 +72,22 @@ def test_curate_shows_limited_evidence_note(client):
     idx = next(i for i, u in enumerate(units) if u.grounding_note)
     r = client.get(f"/curate/{idx}")
     assert "Limited evidence" in r.text
+    assert "The cited evidence does not state Kubernetes experience" in r.text
+    assert "These variants stay within" not in r.text
+
+
+@pytest.mark.parametrize("pick", [None, "cover-open-2"])
+def test_curate_requires_a_line_choice_with_native_validation(client, pick):
+    if pick:
+        client.post("/curate/0", data={"variant_id": pick}, follow_redirects=False)
+    html = client.get("/curate/0").text
+    cards = _cards(html)
+    assert 'aria-describedby="variant-choice-hint"' in html
+    assert "Choose a line before continuing." in html
+    for variant_id, card in cards.items():
+        input_tag = card.split("<input", 1)[1].split(">", 1)[0]
+        assert " required" in input_tag
+        assert ("checked" in input_tag) == (variant_id == pick)
 
 
 def _cards(html: str) -> dict[str, str]:
@@ -369,6 +385,8 @@ def test_curate_renders_zero_variant_unit_without_500(repo):
         r = c.get("/curate/0")
     assert r.status_code == 200
     assert "Empty bullet" in r.text
+    assert "data-continue disabled" in r.text
+    assert "No variants are available for this line." in r.text
 
 
 def test_export_renders(client):
@@ -393,3 +411,10 @@ def test_entry_is_honest_and_has_no_dead_upload(client):
     assert "2 days ago" not in r.text
     assert "7 evidence entries" not in r.text
     assert "Upload a different one" not in r.text
+    assert "Live generation sends your source text to Claude." in r.text
+    assert "Optional claim checks send claims and evidence to TypeSafe." in r.text
+    assert "Review each claim before using it." in r.text
+    assert "Compare each line with its cited evidence." in r.text
+    assert "Nothing is sent anywhere" not in r.text
+    assert "never invents" not in r.text
+    assert "Every claim traces back" not in r.text

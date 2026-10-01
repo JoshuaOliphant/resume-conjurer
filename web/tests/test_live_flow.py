@@ -77,6 +77,8 @@ def test_live_start_renders_the_progress_page(live_client):
     r = client.post("/start", data={"source": "reuse", "jd": "x"})
     assert r.status_code == 200
     assert "Summoning" in r.text
+    assert "drafting options from your evidence" in r.text
+    assert "Nothing is invented" not in r.text
 
 
 def test_status_partial_running_keeps_polling(live_client):
