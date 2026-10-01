@@ -393,6 +393,14 @@ def test_export_renders(client):
     r = client.get("/export")
     assert r.status_code == 200
     assert "pandoc" in r.text
+    assert "The bundled sample does not create downloadable files." in r.text
+    assert 'href="#"' not in r.text
+    assert "/export/download/" not in r.text
+
+
+def test_fixture_download_returns_not_found(client):
+    response = client.get("/export/download/resume.md")
+    assert response.status_code == 404
 
 
 def test_reset_clears_selections(client, repo):

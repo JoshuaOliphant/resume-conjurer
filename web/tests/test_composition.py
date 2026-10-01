@@ -116,3 +116,28 @@ def test_export_returns_dict_and_handles_pandoc_presence(
             assert status == "written"
         else:
             assert status.startswith("skipped")
+
+
+@pytest.mark.parametrize("filename", ["cover_letter.md", "resume.md", "cover_letter.pdf", "resume.docx"])
+def test_download_returns_the_actual_export_file(port, workspace, filename):
+    artifact = workspace / "applications" / SLUG / filename
+    artifact.write_bytes(b"export artifact")
+    assert port.download(SLUG, filename) == artifact.resolve()
+
+
+@pytest.mark.parametrize("filename", ["../master-resume.md", "evidence.md", "metrics.json", "resume.html"])
+def test_download_rejects_non_export_filenames(port, filename):
+    assert port.download(SLUG, filename) is None
+
+
+def test_download_rejects_missing_files_and_directories(port, workspace):
+    artifact = workspace / "applications" / SLUG / "resume.pdf"
+    assert port.download(SLUG, artifact.name) is None
+    artifact.mkdir()
+    assert port.download(SLUG, artifact.name) is None
+
+
+def test_download_rejects_symlinks_outside_the_application(port, workspace):
+    artifact = workspace / "applications" / SLUG / "resume.md"
+    artifact.symlink_to(workspace / "master-resume.md")
+    assert port.download(SLUG, artifact.name) is None

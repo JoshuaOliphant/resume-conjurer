@@ -495,6 +495,57 @@ def test_live_export_reports_the_written_or_skipped_map(workspace):
         assert "skipped" in r.text
 
 
+def test_live_export_downloads_the_stitched_markdown(workspace):
+    app = _prepare_picked_live_workspace(workspace)
+    with TestClient(app) as client:
+        client.get("/review")
+        page = client.get("/export")
+        assert 'href="#"' not in page.text
+        for filename in ("cover_letter.md", "resume.md"):
+            assert f'href="/export/download/{filename}" hx-boost="false" download' in page.text
+            response = client.get(f"/export/download/{filename}")
+            assert response.status_code == 200
+            assert response.content == (workspace / "applications" / SLUG / filename).read_bytes()
+            assert response.headers["content-disposition"] == f'attachment; filename="{filename}"'
+
+
+def test_live_export_without_documents_has_no_download_links(workspace):
+    app = _prepare_picked_live_workspace(workspace)
+    with TestClient(app) as client:
+        page = client.get("/export")
+        assert "/export/download/" not in page.text
+        assert "No Markdown files available." in page.text
+        assert client.get("/export/download/resume.md").status_code == 404
+
+
+def test_live_export_downloads_written_formats_and_hides_skipped_artifacts(workspace, monkeypatch):
+    app = _prepare_picked_live_workspace(workspace)
+    app_dir = workspace / "applications" / SLUG
+
+    def export_artifacts(directory, formats):
+        (directory / "resume.pdf").write_bytes(b"real-pdf-artifact")
+        (directory / "resume.docx").write_bytes(b"older-artifact")
+        return {"resume.pdf": "written", "resume.docx": "skipped: no exporter", "cover_letter.pdf": "written"}
+
+    monkeypatch.setattr("app.adapters.composition.export_app_dir", export_artifacts)
+    with TestClient(app) as client:
+        client.get("/review")
+        page = client.get("/export")
+        assert 'href="/export/download/resume.pdf"' in page.text
+        assert 'href="/export/download/resume.docx"' not in page.text
+        assert 'href="/export/download/cover_letter.pdf"' not in page.text
+        response = client.get("/export/download/resume.pdf")
+        assert response.content == (app_dir / "resume.pdf").read_bytes()
+        assert response.headers["content-type"] == "application/pdf"
+
+
+@pytest.mark.parametrize("filename", ["evidence.md", "metrics.json", "resume.html"])
+def test_live_download_rejects_workspace_sources(workspace, filename):
+    app = _prepare_picked_live_workspace(workspace)
+    with TestClient(app) as client:
+        assert client.get(f"/export/download/{filename}").status_code == 404
+
+
 def test_build_composition_is_none_offline(monkeypatch):
     monkeypatch.delenv("CONJURER_BACKEND", raising=False)
     assert build_composition() is None

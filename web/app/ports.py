@@ -22,6 +22,7 @@ typed contract.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from app.domain import (
@@ -98,6 +99,10 @@ class CompositionPort(Protocol):
 
     def export(self, slug: str, formats: tuple[str, ...] = ("pdf", "docx")) -> dict[str, str]:
         """Export the stitched documents; map each target to 'written' or 'skipped: ...'."""
+        ...
+
+    def download(self, slug: str, filename: str) -> Path | None:
+        """An existing export artifact within the application directory, or None."""
         ...
 
 

@@ -25,6 +25,12 @@ from stitch import stitch_app_dir  # noqa: E402
 from lint import lint_app_dir  # noqa: E402
 from export_docs import export_app_dir  # noqa: E402
 
+EXPORT_FILENAMES = {
+    f"{document}.{extension}"
+    for document in ("cover_letter", "resume")
+    for extension in ("md", "pdf", "docx")
+}
+
 
 class ScriptCompositionPort:
     """Runs stitch/lint/export against one application directory in the workspace."""
@@ -55,3 +61,12 @@ class ScriptCompositionPort:
 
     def export(self, slug: str, formats: tuple[str, ...] = ("pdf", "docx")) -> dict[str, str]:
         return export_app_dir(self._app_dir(slug), formats)
+
+    def download(self, slug: str, filename: str) -> Path | None:
+        if filename not in EXPORT_FILENAMES:
+            return None
+        app_dir = self._app_dir(slug).resolve()
+        artifact = (app_dir / filename).resolve()
+        if artifact.parent != app_dir or not artifact.is_file():
+            return None
+        return artifact

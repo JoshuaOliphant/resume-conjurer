@@ -4,26 +4,28 @@
 {% block main %}
 <div class="page">
   <p class="page__eyebrow">Export · <b>{{ app_data.company }} · {{ app_data.role }}</b></p>
-  <h1 class="page__title">Ready to submit.</h1>
-  <p class="page__lede">Take the cover letter and resume in whatever format the application wants.</p>
+  <h1 class="page__title">{% if exported is not none %}Download your documents.{% else %}Export preview.{% endif %}</h1>
+  <p class="page__lede">{% if exported is not none %}Take the cover letter and resume in whatever format the application wants.{% else %}The bundled sample does not create downloadable files. Use a workspace to generate and export your documents.{% endif %}</p>
 
+  {% if exported is not none %}
   <div class="export-grid">
+    {% for extension, label, description in [
+      ("pdf", "PDF", "Formatted, print-ready. Best for most portals."),
+      ("docx", "Word (.docx)", "Editable. For portals that demand Word."),
+      ("md", "Markdown", "Plain text from the stitched documents.")
+    ] %}
     <div class="export-card">
-      <span class="export-card__fmt">{{ i.icon("download") }} PDF</span>
-      <span class="export-card__sub">Formatted, print-ready. Best for most portals.</span>
-      <a class="btn btn--ghost" href="#" style="margin-top:var(--space-3);">Download PDF</a>
+      <span class="export-card__fmt">{{ i.icon("download") }} {{ label }}</span>
+      <span class="export-card__sub">{{ description }}</span>
+      {% for filename, document in downloads[extension] %}
+      <a class="btn btn--ghost" href="/export/download/{{ filename }}" hx-boost="false" download style="margin-top:var(--space-3);">{{ document }} .{{ extension }}</a>
+      {% else %}
+      <span class="field__hint" style="margin-top:var(--space-3);">No {{ label }} files available.</span>
+      {% endfor %}
     </div>
-    <div class="export-card">
-      <span class="export-card__fmt">{{ i.icon("download") }} Word (.docx)</span>
-      <span class="export-card__sub">Editable. For portals that demand Word.</span>
-      <a class="btn btn--ghost" href="#" style="margin-top:var(--space-3);">Download .docx</a>
-    </div>
-    <div class="export-card">
-      <span class="export-card__fmt">{{ i.icon("file") }} Markdown</span>
-      <span class="export-card__sub">Plain text. Always available.</span>
-      <a class="btn btn--ghost" href="#" style="margin-top:var(--space-3);">Download .md</a>
-    </div>
+    {% endfor %}
   </div>
+  {% endif %}
 
   {% if exported %}
   <section class="lint panel">
