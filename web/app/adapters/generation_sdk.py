@@ -4,8 +4,8 @@
 
 Verified against the SDK live (see web/IMPLEMENTATION_PLAN.md "Spike results"):
 
-- Outline uses a client with ``output_format`` = OUTLINE_SCHEMA and reads
-  ``ResultMessage.structured_output``.
+- Outline constrains ``output_format`` to the master resume's composable bullet slots
+  and reads ``ResultMessage.structured_output``.
 - Variants use a SEPARATE persistent client (no output_format) that dispatches the
   plugin's ``conjurer:variant-generator`` subagent and relays its native ``## Unit:``
   block; we extract the variants from that block.
@@ -24,9 +24,14 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.adapters.scripts_path import ensure_scripts_on_path
 from app.domain import Evidence, Outline, OutlineUnit, UnitKind, Variant
 from app.metrics import CallMetrics
-from app.schemas import OUTLINE_SCHEMA
+from app.schemas import outline_schema_for_resume_units
+
+ensure_scripts_on_path()
+
+import composer  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_PLUGIN_DIR = REPO_ROOT / "plugins" / "conjurer"
@@ -37,9 +42,8 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 # any mcp__* tool, future tools) is denied. The variant client reads the JD and evidence,
 # which may be attacker-influenced (a pasted job post), so a prompt injection must never be
 # able to reach code execution or exfiltration. The variant client cannot use a `tools`
-# allowlist (that breaks plugin subagent dispatch), so this allowlist is enforced two ways:
-# via `allowed_tools` (auto-approval) AND via the can_use_tool callback below, with
-# permission_mode left off bypass so the callback is actually consulted.
+# allowlist (that breaks plugin subagent dispatch). The permission callback handles tools
+# that would otherwise prompt; bypass and whole-tool auto-approval would skip that callback.
 ALLOWED_VARIANT_TOOLS = frozenset({"Read", "Glob", "Grep", "Agent", "Task"})
 
 # A relayed variant block: "### Variant 1: <citation>" then body, ending before the
@@ -47,7 +51,7 @@ ALLOWED_VARIANT_TOOLS = frozenset({"Read", "Glob", "Grep", "Agent", "Task"})
 # Inline whitespace around the citation is [ \t] (not \s) so an empty citation does not
 # let the matcher swallow the newlines into the next line; the body is DOTALL.
 _VARIANT_RE = re.compile(
-    r"^###[ \t]+Variant[ \t]+(\d+)[ \t]*:[ \t]*(?P<citation>.*?)[ \t]*$\n(?P<body>.*?)"
+    r"^###[ \t]+Variant[ \t]+\d+[ \t]*:[ \t]*(?P<citation>.*?)[ \t]*$\n(?P<body>.*?)"
     r"(?=^###[ \t]+Variant[ \t]+\d+[ \t]*:|^\*Axis:|^-[ \t]*\[[ xX]\][ \t]*Pick|\Z)",
     re.MULTILINE | re.DOTALL,
 )
@@ -56,8 +60,9 @@ _VARIANT_RE = re.compile(
 # --- Pure helpers (offline-tested) -----------------------------------------
 
 
-def build_outline_prompt(slug: str) -> str:
+def build_outline_prompt(slug: str, resume_unit_ids: tuple[str, ...]) -> str:
     """Prompt for the discrete outline step, grounded in the workspace files for slug."""
+    slots = "\n".join(f"- {unit_id}" for unit_id in resume_unit_ids)
     return (
         "Read these files in the current working directory and design a tailored application "
         "outline:\n"
@@ -67,20 +72,25 @@ def build_outline_prompt(slug: str) -> str:
         f"- applications/{slug}/evidence.md (extra evidence)\n\n"
         "Choose exactly ONE strategic frame: scale, friction, conviction, or multiplier. Then "
         "design the unit skeleton, in document order: the cover-letter paragraphs and the resume "
-        "bullets worth tailoring. Resume unit_ids encode the role: "
-        "resume.<company>.<subrole?>.bullet_<n>; cover-letter unit_ids start with cover_letter. "
+        "bullets worth tailoring. Resume unit_ids must use only these existing bullet slots, "
+        "in the listed document order, with each slot included at most once:\n"
+        f"{slots}\nLeave slots that do not need tailoring out of the outline. "
+        "Cover-letter unit_ids start with cover_letter. "
         "Do only the outline. Do not generate variants, initialize anything, or write files."
     )
 
 
-def build_variant_prompt(unit: OutlineUnit, n: int = 4) -> str:
+def build_variant_prompt(slug: str, unit: OutlineUnit, n: int = 4) -> str:
     """Prompt that dispatches the conjurer:variant-generator subagent for one unit."""
     return (
         f"Use the conjurer:variant-generator subagent to generate {n} grounded variants for this "
-        "single unit, citing evidence from master-resume.md (cite as 'master-resume.md L<line>'). "
-        f"Read grimoire.md and master-resume.md for grounding.\nUnit: {unit.unit_id} - "
-        f"{unit.description}\nReturn the variant-generator's '## Unit:' block verbatim as your "
-        "final message."
+        "single unit. Read grimoire.md for voice, and master-resume.md and "
+        f"applications/{slug}/evidence.md for grounding. Cite every line a variant draws on, as "
+        "`master-resume.md L<n>` or `evidence.md L<n>` references (line ranges allowed) "
+        "separated by `; `, for example `master-resume.md L16` or "
+        "`master-resume.md L16-18; evidence.md L11`.\n"
+        f"Unit: {unit.unit_id} - {unit.description}\n"
+        "Return the variant-generator's '## Unit:' block verbatim as your final message."
     )
 
 
@@ -115,14 +125,13 @@ def variants_from_block(text: str, unit: OutlineUnit) -> list[Variant]:
     """
     variants: list[Variant] = []
     for match in _VARIANT_RE.finditer(text):
-        n = int(match.group(1))
         citation = match.group("citation").strip() or "master-resume.md"
         body = match.group("body").strip()
         if not body:
             continue
         variants.append(
             Variant(
-                id=f"{unit.unit_id}#{n}",
+                id=f"{unit.unit_id}#{len(variants) + 1}",
                 text=body,
                 evidence_items=(
                     Evidence(id=citation, text=citation, source=citation, grounded=False),
@@ -135,7 +144,7 @@ def variants_from_block(text: str, unit: OutlineUnit) -> list[Variant]:
 async def guard_variant_tool(tool_name: str, input_data: dict[str, Any], context: Any) -> Any:
     """can_use_tool guard for the variant client: deny by default, allow only the allowlist.
 
-    Consulted for tools not auto-approved via ``allowed_tools``. Only the read/search and
+    Consulted for tool calls that would otherwise prompt. Only the read/search and
     subagent-dispatch tools in :data:`ALLOWED_VARIANT_TOOLS` are permitted; everything else —
     code execution, file writes, network, unknown built-ins, any ``mcp__*`` tool — is denied.
     This is the defense against a prompt injection in the (user-pasted, possibly hostile) job
@@ -184,6 +193,7 @@ class SdkGenerationPort:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
         from claude_agent_sdk.types import ResultMessage
 
+        resume_unit_ids = composer.resume_unit_ids((self.workspace / "master-resume.md").read_text())
         options = ClaudeAgentOptions(
             # `tools` restricts the AVAILABLE toolset (least privilege); `allowed_tools`
             # only auto-approves. The outline step needs no subagent, so restricting `tools`
@@ -191,12 +201,15 @@ class SdkGenerationPort:
             tools=["Read", "Glob", "Grep"],
             allowed_tools=["Read", "Glob", "Grep"],
             permission_mode="bypassPermissions",
-            output_format={"type": "json_schema", "schema": OUTLINE_SCHEMA},
+            output_format={
+                "type": "json_schema",
+                "schema": outline_schema_for_resume_units(resume_unit_ids),
+            },
             **self._base_options(),
         )
         structured: Any = None
         async with ClaudeSDKClient(options=options) as client:
-            await client.query(build_outline_prompt(slug))
+            await client.query(build_outline_prompt(slug, resume_unit_ids))
             async for msg in client.receive_response():
                 if isinstance(msg, ResultMessage):
                     structured = msg.structured_output
@@ -214,11 +227,8 @@ class SdkGenerationPort:
             # allowlist breaks (verified live: variants come back empty). So we keep the
             # default toolset but DROP bypassPermissions and supply a can_use_tool guard,
             # so a prompt injection in the JD/evidence cannot reach Bash/Write/Edit/network.
-            # allowed_tools auto-approves the safe set; guard_variant_tool denies everything
-            # else by default. Verified live: subagent dispatch still works under this
-            # allowlist — `Agent`/`Task` are allowed so the variant-generator runs.
+            # Whole-tool allowed_tools entries would bypass the permission callback.
             options = ClaudeAgentOptions(
-                allowed_tools=["Read", "Glob", "Grep", "Agent"],
                 can_use_tool=guard_variant_tool,
                 **self._base_options(),
             )
@@ -238,7 +248,7 @@ class SdkGenerationPort:
     async def variants(  # pragma: no cover - live-tested
         self, slug: str, unit: OutlineUnit, n: int = 4
     ) -> list[Variant]:
-        text = await self._variant_text(build_variant_prompt(unit, n))
+        text = await self._variant_text(build_variant_prompt(slug, unit, n))
         return variants_from_block(text, unit)
 
     async def aclose(self) -> None:  # pragma: no cover - live-tested

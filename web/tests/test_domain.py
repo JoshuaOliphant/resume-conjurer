@@ -8,10 +8,13 @@ from app.domain import (
     Application,
     Evidence,
     Frame,
+    LintCheck,
     Outline,
     OutlineUnit,
+    Support,
     Unit,
     Variant,
+    support_check,
     validate_slug,
 )
 
@@ -111,3 +114,79 @@ def test_application_rejects_a_grounded_variant_whose_pool_entry_text_differs():
     tampered_pool_entry = Evidence(id=ev.id, text="a fabricated quote", source=ev.source)
     with pytest.raises(ValueError, match="does not match this application's evidence pool"):
         _application_with((ev,), {ev.id: tampered_pool_entry})
+
+
+# --- Support verdicts ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("support", "flagged"),
+    [
+        pytest.param(Support(verdict="traced"), False, id="traced-has-no-note"),
+        pytest.param(Support(verdict="untraced"), False, id="untraced-has-no-note"),
+        pytest.param(
+            Support(verdict="adds_detail", note="Adds detail your evidence doesn't state: 12"),
+            True,
+            id="noted-verdict-is-flagged",
+        ),
+    ],
+)
+def test_support_is_flagged_only_when_it_carries_a_note(support: Support, flagged: bool):
+    assert support.flagged is flagged
+
+
+def test_a_variant_has_no_support_verdict_until_one_is_attached():
+    assert Variant(id="u#1", text="t").support is None
+
+
+# --- Review support row -------------------------------------------------------
+
+ADDS_DETAIL = Support(verdict="adds_detail", note="Adds detail your evidence doesn't state: 12")
+CONFLICTS = Support(verdict="conflicts", note="Conflicts with your evidence")
+TRACED = Support(verdict="traced")
+
+
+def _pick(label: str, support: Support | None) -> tuple[Unit, Variant]:
+    unit_id = label.lower().replace(" ", "_")
+    variant = Variant(id=f"{unit_id}#1", text="a line", support=support)
+    return Unit(id=unit_id, kind="resume_bullet", label=label, context="c", variants=[variant]), variant
+
+
+@pytest.mark.parametrize(
+    ("picked", "expected"),
+    [
+        pytest.param([], None, id="no-picks-no-row"),
+        pytest.param([_pick("Opening", None), _pick("Bullet", None)], None, id="no-pick-checked-no-row"),
+        pytest.param(
+            [_pick("Opening", TRACED), _pick("Bullet", TRACED)],
+            LintCheck("Claim check of picked lines", "No picked line was flagged.", True),
+            id="no-pick-flagged-passes",
+        ),
+        pytest.param(
+            [_pick("Opening", ADDS_DETAIL), _pick("Bullet", TRACED), _pick("Closing", CONFLICTS), _pick("Kicker", None)],
+            LintCheck(
+                "Claim check of picked lines",
+                "Opening: Adds detail your evidence doesn't state: 12. Closing: Conflicts with your evidence. Kicker: No current claim check.",
+                False,
+            ),
+            id="flagged-picks-fail-and-are-named-in-order",
+        ),
+        pytest.param(
+            [_pick("Opening", Support(verdict="untraced"))],
+            LintCheck("Claim check of picked lines", "Opening: Unverified citation.", False),
+            id="untraced-pick-does-not-pass",
+        ),
+        pytest.param(
+            [_pick("Opening", TRACED), _pick("Bullet", None)],
+            LintCheck("Claim check of picked lines", "Bullet: No current claim check.", False),
+            id="partially-checked-picks-do-not-pass",
+        ),
+        pytest.param(
+            [_pick("Opening", Support(verdict="unchecked"))],
+            LintCheck("Claim check of picked lines", "Opening: Couldn't check this line.", False),
+            id="failed-check-does-not-pass-without-note",
+        ),
+    ],
+)
+def test_support_check_names_flagged_picks(picked: list[tuple[Unit, Variant]], expected: LintCheck | None):
+    assert support_check(picked) == expected

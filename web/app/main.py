@@ -8,13 +8,20 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import lint_results
-from app.deps import build_composition, build_generation, build_repository, is_live
+from app.deps import (
+    build_composition,
+    build_generation,
+    build_repository,
+    build_verification,
+    is_live,
+)
+from app.domain import support_check
 from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
 from app.rail import template_context
 from app.runs import RunManager
@@ -210,6 +217,7 @@ def create_app(
                 cover=cover,
                 bullets=bullets,
                 lint=lint,
+                support=support_check(chosen),
                 complete=complete,
                 run_metrics=run_manager.metrics(SLUG),
             ),
@@ -219,14 +227,30 @@ def create_app(
     def export(request: Request):
         if _not_generated_yet():
             return RedirectResponse("/", status_code=303)
-        # Live: actually export the stitched docs and report the written/skipped map per
-        # format. Fake has no workspace to export, so it shows the static export template.
-        exported = comp.export(SLUG, ("pdf", "docx")) if comp is not None else None
+        exported = None
+        downloads = {}
+        if comp is not None:
+            exported = comp.export(SLUG, ("pdf", "docx"))
+            for extension in ("pdf", "docx", "md"):
+                downloads[extension] = []
+                for document, label in (("cover_letter", "Cover letter"), ("resume", "Resume")):
+                    filename = f"{document}.{extension}"
+                    if extension != "md" and exported.get(filename) != "written":
+                        continue
+                    if comp.download(SLUG, filename) is not None:
+                        downloads[extension].append((filename, label))
         return templates.TemplateResponse(
             request,
             "export.html",
-            template_context(request, "export", app_data=repo.load_application(SLUG), exported=exported),
+            template_context(request, "export", app_data=repo.load_application(SLUG), exported=exported, downloads=downloads),
         )
+
+    @app.get("/export/download/{filename}")
+    def download(filename: str):
+        artifact = comp.download(SLUG, filename) if comp is not None else None
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="No such exported file.")
+        return FileResponse(artifact, filename=filename)
 
     @app.post("/reset")
     def reset():
@@ -243,5 +267,5 @@ def create_app(
 _repo = build_repository()
 _gen = build_generation()
 _comp = build_composition()
-_run_manager = RunManager(repo=_repo, gen=_gen)
+_run_manager = RunManager(repo=_repo, gen=_gen, verifier=build_verification())
 app = create_app(repo=_repo, gen=_gen, run_manager=_run_manager, live=is_live(), comp=_comp)

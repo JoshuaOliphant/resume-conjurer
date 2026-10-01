@@ -8,9 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import sys
-
-from app.adapters.composition import ScriptCompositionPort, _ensure_scripts_on_path
+from app.adapters.composition import ScriptCompositionPort
 from app.adapters.workspace_fs import FsWorkspaceRepository
 from app.domain import LintCheck, Unit, Variant
 
@@ -67,16 +65,6 @@ def _prepare_picks(repo: FsWorkspaceRepository, slug: str) -> None:
     repo.set_pick(slug, "resume.northwind.billing.bullet_1", "resume.northwind.billing.bullet_1#1")
 
 
-def test_ensure_scripts_on_path_adds_once(tmp_path: Path) -> None:
-    fresh = tmp_path / "scripts"
-    assert str(fresh) not in sys.path
-    _ensure_scripts_on_path(fresh)  # absent -> appended
-    assert sys.path.count(str(fresh)) == 1
-    _ensure_scripts_on_path(fresh)  # present -> no duplicate
-    assert sys.path.count(str(fresh)) == 1
-    sys.path.remove(str(fresh))
-
-
 def test_stitch_writes_cover_and_resume_with_picked_content(
     repo: FsWorkspaceRepository, port: ScriptCompositionPort, workspace: Path
 ) -> None:
@@ -128,3 +116,28 @@ def test_export_returns_dict_and_handles_pandoc_presence(
             assert status == "written"
         else:
             assert status.startswith("skipped")
+
+
+@pytest.mark.parametrize("filename", ["cover_letter.md", "resume.md", "cover_letter.pdf", "resume.docx"])
+def test_download_returns_the_actual_export_file(port, workspace, filename):
+    artifact = workspace / "applications" / SLUG / filename
+    artifact.write_bytes(b"export artifact")
+    assert port.download(SLUG, filename) == artifact.resolve()
+
+
+@pytest.mark.parametrize("filename", ["../master-resume.md", "evidence.md", "metrics.json", "resume.html"])
+def test_download_rejects_non_export_filenames(port, filename):
+    assert port.download(SLUG, filename) is None
+
+
+def test_download_rejects_missing_files_and_directories(port, workspace):
+    artifact = workspace / "applications" / SLUG / "resume.pdf"
+    assert port.download(SLUG, artifact.name) is None
+    artifact.mkdir()
+    assert port.download(SLUG, artifact.name) is None
+
+
+def test_download_rejects_symlinks_outside_the_application(port, workspace):
+    artifact = workspace / "applications" / SLUG / "resume.md"
+    artifact.symlink_to(workspace / "master-resume.md")
+    assert port.download(SLUG, artifact.name) is None

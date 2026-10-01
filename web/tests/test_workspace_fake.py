@@ -3,7 +3,12 @@
 
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import get_application
+from app.adapters.scripts_path import ensure_scripts_on_path
 from app.ports import WorkspaceRepository
+
+ensure_scripts_on_path()
+
+import verify  # noqa: E402
 
 
 def test_fake_repository_conforms_to_port():
@@ -43,3 +48,10 @@ def test_clear_drops_a_slugs_picks():
     repo.set_pick("a", "u1", "v1")
     repo.clear("a")
     assert repo.get_picks("a") == {}
+
+
+def test_load_support_serves_the_fixture_overreaches():
+    support = FakeWorkspaceRepository().load_support("globex-staff-platform")
+    assert set(support) == {"cover-open-1", "bullet-kubernetes-1"}
+    assert {s.verdict for s in support.values()} == {"adds_detail"}
+    assert all(s.note == verify.note_for("adds_detail", []) for s in support.values())

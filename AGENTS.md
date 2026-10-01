@@ -18,6 +18,9 @@ contract that keeps them interchangeable:
 - `variants.md` — the `## Unit:` / `### Variant N` block format from `agents/variant-generator.md`.
   `stitch.py` parses it, so it is also **the single source of truth for the user's picks**
   (`- [x] Pick`, exactly one per unit). Never introduce a second pick store.
+- `support.json` — the claim check's verdicts, schema in the "Claim check" section of
+  `pipeline.md`, mirrored as `SUPPORT_SCHEMA` in `web/app/schemas.py`. A row applies only while
+  its fingerprint (`verify.fingerprint`) matches the variant's text and cited lines.
 
 Change either format and you must change it in both places, or the CLI and web flows silently
 diverge on the same workspace.
@@ -34,9 +37,9 @@ Web app (`cd web` first):
 
 ```
 uv sync
-uv run pytest                                   # the gate: 154 tests, 100% line+branch, deselects `live`
+uv run pytest                                   # the gate: 100% line+branch, deselects `live`
 uv run pytest tests/test_domain.py -q --no-cov  # single file — see below
-uv run pytest -m live                           # real API calls; needs auth
+uv run pytest -m live                           # real API calls; needs Claude auth, and TYPESAFE_API_KEY for the Jev verifier test
 uv run uvicorn app.main:app --reload --port 8400
 ```
 
@@ -52,17 +55,20 @@ There is no CI. A green suite is only as good as the last person who ran it.
 
 ## Backend configuration
 
-The composition root is `web/app/deps.py`, keyed on two env vars. Routes take ports and never name
+The composition root is `web/app/deps.py`, keyed on three env vars. Routes take ports and never name
 a concrete adapter, so switching backends is a one-line change there.
 
-| `CONJURER_BACKEND` | Repository | Generation | Composition |
-|---|---|---|---|
-| `fake` (default) | `FakeWorkspaceRepository` (fixtures in `app/data.py`, in-memory picks) | `FakeGenerationPort` | `None` — `/review` uses the in-memory lint, `/export` is static |
-| `live` | `FsWorkspaceRepository` | `SdkGenerationPort` | `ScriptCompositionPort` — real stitch/lint/export |
+| `CONJURER_BACKEND` | Repository | Generation | Verification | Composition |
+|---|---|---|---|---|
+| `fake` (default) | `FakeWorkspaceRepository` (fixtures in `app/data.py`, in-memory picks) | `FakeGenerationPort` | `FakeVerificationPort` | `None` — `/review` uses the in-memory lint, `/export` is static |
+| `live` | `FsWorkspaceRepository` | `SdkGenerationPort` | `NoVerificationPort` (checks nothing) | `ScriptCompositionPort` — real stitch/lint/export |
+| `live` + `CONJURER_VERIFIER=jev` | `FsWorkspaceRepository` | `SdkGenerationPort` | `JevVerificationPort` — `verify.check_variant` per variant, 8 at once | `ScriptCompositionPort` |
 
 `live` additionally requires `CONJURER_WORKSPACE` pointing at a directory with `grimoire.md`,
 `master-resume.md`, and `applications/`. `workspace_root()` raises rather than guessing: a silent
-fallback used to write generated output into the tracked test fixtures.
+fallback used to write generated output into the tracked test fixtures. Likewise
+`CONJURER_VERIFIER=jev` without `TYPESAFE_API_KEY`, or any other `CONJURER_VERIFIER` value, raises
+at startup instead of silently skipping the claim check.
 
 The whole offline suite runs on the `fake` pair, which is why it reaches 100% with no network.
 

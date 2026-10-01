@@ -21,11 +21,11 @@
     {% endif %}
   </div>
 
-  <div class="variants" role="radiogroup" aria-label="Choose a variant for {{ unit.label }}">
+  <div class="variants" role="radiogroup" aria-label="Choose a variant for {{ unit.label }}" aria-describedby="variant-choice-hint">
     {% for v in unit.variants %}
     <div class="variant">
       <label class="variant__main">
-        <input class="variant__radio" type="radio" name="variant_id" value="{{ v.id }}"
+        <input class="variant__radio" type="radio" name="variant_id" value="{{ v.id }}" required
                {% if selected == v.id %}checked{% endif %}>
         <span class="variant__key" aria-hidden="true">{{ loop.index }}</span>
         <span class="variant__text">{{ v.text }}</span>
@@ -33,7 +33,11 @@
       <span class="variant__check" aria-hidden="true">{{ i.icon("check") }}</span>
       <div class="variant__foot">
         {% set traces = v.evidence() %}
-        <details class="trace">
+        {% set flagged = v.support is not none and v.support.flagged %}
+        {% if flagged %}
+        <p class="variant__note">{{ v.support.note }}</p>
+        {% endif %}
+        <details class="trace"{% if flagged %} open{% endif %}>
           <summary>{{ i.icon("chevron", "chev") }} Evidence
             ({{ traces|length }} {{ "trace" if traces|length == 1 else "traces" }})</summary>
           <ul class="trace__items">
@@ -60,13 +64,17 @@
     {% else %}
     <a class="btn btn--quiet" href="/outline">{{ i.icon("arrow-left") }} Outline</a>
     {% endif %}
-    <button class="btn btn--primary" type="submit" data-continue>
+    <button class="btn btn--primary" type="submit" data-continue{% if not unit.variants %} disabled{% endif %}>
       {% if idx + 1 >= total %}Stitch the documents{% else %}Use this line{% endif %} {{ i.icon("arrow-right") }}
     </button>
   </div>
 
-  <p class="field__hint" style="text-align:right;margin-top:var(--space-3);">
-    Press <kbd>1</kbd>–<kbd>{{ unit.variants|length }}</kbd> to choose · <kbd>Enter</kbd> to continue
+  <p class="field__hint" id="variant-choice-hint" style="text-align:right;margin-top:var(--space-3);">
+    {% if unit.variants %}
+    Choose a line before continuing. Press <kbd>1</kbd>–<kbd>{{ unit.variants|length }}</kbd> to choose · <kbd>Enter</kbd> to continue
+    {% else %}
+    No variants are available for this line. Generate variants before continuing.
+    {% endif %}
   </p>
 </form>
 {% endblock %}

@@ -59,6 +59,28 @@ class Evidence:
     grounded: bool = True
 
 
+SupportVerdict = Literal[
+    "traced", "untraced", "adds_detail", "conflicts", "wrong_trace", "not_covered", "unchecked"
+]
+
+
+@dataclass(frozen=True)
+class Support:
+    """The claim check's verdict on one variant: how its cited evidence bears on its claim."""
+
+    verdict: SupportVerdict
+    note: str | None = None
+    unsourced_numbers: tuple[str, ...] = ()
+    relation: str | None = None
+    relation_confidence: float | None = None
+    unstated: float | None = None
+    fingerprint: str = ""
+
+    @property
+    def flagged(self) -> bool:
+        return self.note is not None
+
+
 @dataclass(frozen=True)
 class Variant:
     """One generated phrasing of a unit, carrying its already-resolved evidence trace."""
@@ -66,6 +88,7 @@ class Variant:
     id: str
     text: str
     evidence_items: tuple[Evidence, ...] = ()
+    support: Support | None = None
 
     def evidence(self) -> list[Evidence]:
         # Method (not the raw field) so templates keep calling ``v.evidence()``.
@@ -145,6 +168,36 @@ class LintCheck:
     label: str
     detail: str
     passed: bool
+
+
+ALL_FLAGGED_NOTE = (
+    "None of these lines is fully backed by your evidence. "
+    "Add the fact to your master resume, or pick the closest and edit it."
+)
+
+SUPPORT_CHECK_LABEL = "Claim check of picked lines"
+
+
+def support_check(picked: list[tuple[Unit, Variant]]) -> LintCheck | None:
+    """The review row naming flagged or incomplete checks; None when no pick has a verdict."""
+    if not any(variant.support is not None for _, variant in picked):
+        return None
+    issues = []
+    for unit, variant in picked:
+        support = variant.support
+        if support is None:
+            note = "No current claim check"
+        elif support.verdict == "untraced":
+            note = "Unverified citation"
+        elif support.verdict == "unchecked":
+            note = "Couldn't check this line"
+        else:
+            note = support.note
+        if note:
+            issues.append(f"{unit.label}: {note}.")
+    if not issues:
+        return LintCheck(SUPPORT_CHECK_LABEL, "No picked line was flagged.", True)
+    return LintCheck(SUPPORT_CHECK_LABEL, " ".join(issues), False)
 
 
 # --- Outline (the generation step before variants) -------------------------

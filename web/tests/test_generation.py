@@ -2,6 +2,11 @@
 # ABOUTME: The SDK I/O itself is covered by the live test (test_generation_live.py).
 
 import asyncio
+import re
+from pathlib import Path
+
+import jsonschema
+import pytest
 
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.generation_sdk import (
@@ -14,9 +19,23 @@ from app.adapters.generation_sdk import (
     outline_from_structured,
     variants_from_block,
 )
+from app.adapters.workspace_fs import FsWorkspaceRepository, resolve_citation
 from app.domain import FRAMES, Outline, OutlineUnit
 from app.ports import GenerationPort
+from app.schemas import OUTLINE_SCHEMA, outline_schema_for_resume_units
 from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+
+import composer
+
+SLUG = "globex-staff-platform"
+FIXTURE_WORKSPACE = Path(__file__).parent / "fixtures" / "workspace"
+VARIANT_GENERATOR_MD = DEFAULT_PLUGIN_DIR / "agents" / "variant-generator.md"
+EXAMPLE_CITATION_RE = re.compile(r"`((?:master-resume|evidence)\.md L[^`<]+)`")
+LEAD_BULLET = OutlineUnit(unit_id="resume.acme.bullet_1", kind="resume_bullet", description="Lead bullet")
+CITATION_INSTRUCTIONS = {
+    "web-variant-prompt": build_variant_prompt(SLUG, LEAD_BULLET),
+    "variant-generator-md": VARIANT_GENERATOR_MD.read_text(),
+}
 
 
 # --- The fake --------------------------------------------------------------
@@ -120,18 +139,39 @@ def test_fake_records_synthetic_metrics_with_a_cold_then_warm_cache():
 
 
 def test_build_outline_prompt_mentions_slug_and_frames():
-    prompt = build_outline_prompt("globex-staff-platform")
+    prompt = build_outline_prompt("globex-staff-platform", ("resume.northwind.billing_platform.bullet_1",))
     assert "applications/globex-staff-platform/jd.txt" in prompt
     assert "scale" in prompt and "multiplier" in prompt
     assert "Do not generate variants" in prompt
+    assert "resume.northwind.billing_platform.bullet_1" in prompt
 
 
-def test_build_variant_prompt_dispatches_the_subagent():
-    unit = OutlineUnit(unit_id="resume.acme.bullet_1", kind="resume_bullet", description="Lead bullet")
-    prompt = build_variant_prompt(unit, n=4)
+def test_build_variant_prompt_dispatches_the_subagent_with_both_evidence_sources():
+    prompt = build_variant_prompt(SLUG, LEAD_BULLET, n=4)
     assert "conjurer:variant-generator" in prompt
+    assert "generate 4 grounded variants" in prompt
     assert "resume.acme.bullet_1" in prompt
     assert "Lead bullet" in prompt
+    assert "master-resume.md" in prompt
+    assert f"applications/{SLUG}/evidence.md" in prompt
+
+
+@pytest.mark.parametrize("instructions", CITATION_INSTRUCTIONS.values(), ids=CITATION_INSTRUCTIONS.keys())
+def test_generator_is_asked_to_cite_every_line_it_uses(instructions: str):
+    assert "`master-resume.md L<n>`" in instructions
+    assert "`evidence.md L<n>`" in instructions
+    assert "line ranges" in instructions
+    assert "separated by `; `" in instructions
+
+
+@pytest.mark.parametrize("instructions", CITATION_INSTRUCTIONS.values(), ids=CITATION_INSTRUCTIONS.keys())
+def test_every_example_citation_resolves_fully_against_the_evidence_pool(instructions: str):
+    pool = FsWorkspaceRepository(FIXTURE_WORKSPACE).load_inputs(SLUG).evidence_pool
+    examples = EXAMPLE_CITATION_RE.findall(instructions)
+    assert any("evidence.md L" in example and "; " in example for example in examples)
+    assert any(re.search(r"L\d+-\d+", example) for example in examples)
+    for example in examples:
+        assert all(evidence.grounded for evidence in resolve_citation(example, pool)), example
 
 
 def test_outline_from_structured_maps_kinds_and_units():
@@ -186,17 +226,22 @@ def test_variants_from_block_parses_citations_and_ids():
     assert "Axis" not in variants[0].text and "Pick" not in variants[0].text
 
 
-def test_variants_from_block_skips_empty_and_defaults_missing_citation():
+def test_variants_from_block_skips_empty_numbers_the_rest_in_order_and_defaults_missing_citation():
     unit = OutlineUnit(unit_id="cover_letter.opening", kind="cover_paragraph", description="open")
     block = (
         "### Variant 1: \n\n"
         "I led the billing migration that took invoicing from 40s to under 2s.\n\n"
         "- [ ] Pick\n\n"
-        "### Variant 2: master-resume.md L3\n\n\n"  # empty body -> skipped
+        "### Variant 2: master-resume.md L3\n\n\n"
+        "- [ ] Pick\n\n"
+        "### Variant 3: master-resume.md L16\n\n"
+        "I cut paging volume 60%.\n\n"
         "- [ ] Pick\n"
     )
     variants = variants_from_block(block, unit)
-    assert len(variants) == 1
+    # Ids match the numbers save_variants writes to variants.md, so verdicts keyed by id attach.
+    assert [v.id for v in variants] == ["cover_letter.opening#1", "cover_letter.opening#2"]
+    assert variants[1].text == "I cut paging volume 60%."
     assert variants[0].evidence_items[0].id == "master-resume.md"
 
 
@@ -226,3 +271,43 @@ def test_variants_from_block_final_variant_multiline_to_end_of_string():
     assert "across three regions" in variants[1].text
     assert "rotation that followed." in variants[1].text
     assert variants[1].evidence_items[0].id == "master-resume.md L17"
+
+
+
+@pytest.mark.parametrize("unit_ids", [(), ("resume.northwind.billing_platform.bullet_1", "resume.leadership.bullet_1")])
+def test_outline_schema_only_accepts_existing_resume_slots(unit_ids):
+    schema = outline_schema_for_resume_units(unit_ids)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    outline = {
+        "strategic_frame": "multiplier",
+        "frame_rationale": "Leverage over teams",
+        "company": "Globex",
+        "role_title": "Staff Platform Engineer",
+        "cover_letter_units": [{"unit_id": "cover_letter.opening", "description": "Open the letter"}],
+        "resume_units": [{"unit_id": unit_id, "description": "Tailor this bullet"} for unit_id in unit_ids],
+    }
+    jsonschema.validate(outline, schema)
+    outline["resume_units"] = [{"unit_id": "resume.invented.role.bullet_1", "description": "Invented slot"}]
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(outline, schema)
+    assert "enum" not in OUTLINE_SCHEMA["properties"]["resume_units"]["items"]["properties"]["unit_id"]
+    assert "maxItems" not in OUTLINE_SCHEMA["properties"]["resume_units"]
+
+
+def test_master_resume_schema_slots_all_compose_into_their_existing_sections():
+    master = (FIXTURE_WORKSPACE / "master-resume.md").read_text()
+    unit_ids = composer.resume_unit_ids(master)
+    assert "resume.leadership.bullet_1" in unit_ids
+    schema = outline_schema_for_resume_units(unit_ids)
+    for unit_id in unit_ids:
+        outline = {
+            "strategic_frame": "multiplier",
+            "frame_rationale": "Leverage over teams",
+            "company": "Globex",
+            "role_title": "Staff Platform Engineer",
+            "cover_letter_units": [],
+            "resume_units": [{"unit_id": unit_id, "description": "Tailor an existing bullet"}],
+        }
+        jsonschema.validate(outline, schema)
+        marker = f"Tailored content for {unit_id}"
+        assert marker in composer.compose_resume(master, [(unit_id, marker)])

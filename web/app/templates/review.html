@@ -5,8 +5,7 @@
 <div class="page page--wide">
   <p class="page__eyebrow">Stitched from your picks · <b>{{ app_data.company }} · {{ app_data.role }}</b></p>
   <h1 class="page__title">Your documents, in your words.</h1>
-  <p class="page__lede">Assembled from the lines you chose. Every sentence still traces to your evidence;
-    nothing here was invented to fill a gap.</p>
+  <p class="page__lede">Assembled from the lines you chose, each one citing your evidence.</p>
 
   {% if not complete %}
   <div class="ground-note" role="note" style="margin-top:var(--space-6);">
@@ -28,7 +27,7 @@
     <h2>{{ app_data.role }}: tailored highlights</h2>
     <ul class="doc__bullets">
       {% for unit, v in bullets %}
-      <li>{{ v.text }}</li>
+      <li>{{ v.text.removeprefix('- ') }}</li>
       {% endfor %}
     </ul>
   </article>
@@ -36,7 +35,7 @@
   <section class="lint panel">
     <p class="lint__title">Style check</p>
     <ul class="lint__list">
-      {% for c in lint %}
+      {% for c in lint + ([support] if support else []) %}
       <li class="lint__row lint__row--{{ 'pass' if c.passed else 'fail' }}">
         {{ i.icon("check" if c.passed else "alert") }}
         <span><b>{{ c.label }}.</b> <span class="lint__detail">{{ c.detail }}</span></span>

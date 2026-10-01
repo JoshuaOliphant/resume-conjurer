@@ -5,13 +5,20 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
+from typing import get_args
 
+import jsonschema
 import pytest
 
 from app.adapters.workspace_fs import FsWorkspaceRepository, resolve_citation
-from app.domain import Outline, OutlineUnit, Unit, Variant, Evidence
+from app.domain import Outline, OutlineUnit, Support, SupportVerdict, Unit, Variant, Evidence
 from app.metrics import CallMetrics, RunMetrics, StepMetrics
+from app.schemas import SUPPORT_SCHEMA
+
+import citations  # on sys.path once app.adapters.workspace_fs is imported
+import verify
 
 SLUG = "globex-staff-platform"
 FIXTURE_WORKSPACE = Path(__file__).parent / "fixtures" / "workspace"
@@ -92,59 +99,37 @@ def test_load_inputs_indexes_evidence_md_lines(repo: FsWorkspaceRepository) -> N
 
 
 # --- resolve_citation ------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("citation", "expected_ids"),
-    [
-        ("master-resume.md L16", ["master-resume.md L16"]),
-        ("master-resume.md L16; master-resume.md L17", ["master-resume.md L16", "master-resume.md L17"]),
-        ("master-resume.md L16, L17", ["master-resume.md L16", "master-resume.md L17"]),
-        ("master-resume.md L16-L17", ["master-resume.md L16", "master-resume.md L17"]),
-        ("master-resume.md L14-16", ["master-resume.md L15", "master-resume.md L16"]),
-        ("evidence.md L13", ["evidence.md L13"]),
-        ("evidence.md - billing migration", ["evidence.md L11"]),
-        ("evidence.md - On-call", ["evidence.md L13"]),
-        ("evidence.md - Project receipts", [f"evidence.md L{n}" for n in range(11, 17)]),
-        ("master-resume.md L16; evidence.md - cost", ["master-resume.md L16", "evidence.md L15"]),
-        ("master-resume.md L16, evidence.md - cost", ["master-resume.md L16", "evidence.md L15"]),
-    ],
-    ids=[
-        "single-line",
-        "semicolon-list",
-        "shorthand-line-list",
-        "range-with-L",
-        "range-skips-blank-line",
-        "evidence-line",
-        "evidence-bullet-label",
-        "evidence-label-case-insensitive",
-        "evidence-heading-expands-to-bullets",
-        "mixed-files",
-        "comma-before-file",
-    ],
-)
-def test_resolve_citation_grounds_every_pooled_line(
-    repo: FsWorkspaceRepository, citation: str, expected_ids: list[str]
-) -> None:
-    pool = repo.load_inputs(SLUG).evidence_pool
-    items = resolve_citation(citation, pool)
-    assert [e.id for e in items] == expected_ids
-    assert all(e.grounded and pool[e.id] is e for e in items)
+# The grammar itself is tested in the plugin's tests/test_citations.py; here, the web
+# repository's contract: the same lines as the plugin, wrapped as pooled or ungrounded Evidence.
 
 
 @pytest.mark.parametrize(
     "citation",
-    ["master-resume.md", "master-resume.md L999", "master-resume.md L18-16", "evidence.md - hobbies", "notes.md L3", ""],
-    ids=["no-line", "missing-line", "reversed-range", "unknown-label", "unknown-file", "empty"],
+    [
+        "master-resume.md L16; evidence.md - on-call",
+        "master-resume.md L14-16, L17",
+        "evidence.md - Project receipts",
+        "master-resume.md L16; notes.md",
+        "master-resume.md L999",
+    ],
+    ids=["mixed-files", "range-then-bare-line", "evidence-heading", "partial-list", "missing-line"],
 )
-def test_resolve_citation_keeps_unresolvable_citation_ungrounded(repo: FsWorkspaceRepository, citation: str) -> None:
+def test_resolve_citation_cites_the_same_lines_as_the_plugin_grammar(
+    repo: FsWorkspaceRepository, workspace: Path, citation: str
+) -> None:
+    app_dir = workspace / "applications" / SLUG
+    lines = citations.pool_lines(
+        (workspace / "master-resume.md").read_text(), (app_dir / "evidence.md").read_text()
+    )
     items = resolve_citation(citation, repo.load_inputs(SLUG).evidence_pool)
-    assert items == (Evidence(id=citation, text=citation, source=citation, grounded=False),)
+    assert [(e.id, e.grounded) for e in items] == list(citations.resolve_citation(citation, lines))
 
 
-def test_resolve_citation_grounds_what_it_can_in_a_partial_list(repo: FsWorkspaceRepository) -> None:
-    items = resolve_citation("master-resume.md L16; notes.md", repo.load_inputs(SLUG).evidence_pool)
-    assert [(e.id, e.grounded) for e in items] == [("master-resume.md L16", True), ("notes.md", False)]
+def test_resolve_citation_wraps_pooled_and_unresolved_references(repo: FsWorkspaceRepository) -> None:
+    pool = repo.load_inputs(SLUG).evidence_pool
+    pooled, unresolved = resolve_citation("master-resume.md L16; notes.md", pool)
+    assert pooled is pool["master-resume.md L16"]
+    assert unresolved == Evidence(id="notes.md", text="notes.md", source="notes.md", grounded=False)
 
 
 # --- outline round-trip ----------------------------------------------------
@@ -494,3 +479,285 @@ def test_save_jd_creates_app_dir_and_normalizes_newline(tmp_path: Path) -> None:
 
     repo.save_jd(SLUG, "Already newline-terminated\n")  # trailing newline preserved, not doubled
     assert jd_path.read_text() == "Already newline-terminated\n"
+
+
+# --- support.json ------------------------------------------------------------
+
+PIPELINE_MD = (
+    Path(__file__).resolve().parents[2]
+    / "plugins" / "conjurer" / "skills" / "conjurer" / "references" / "pipeline.md"
+)
+
+
+def _cli_rows(workspace: Path, verdicts: dict[str, tuple[str, list[str]]]) -> dict[str, dict]:
+    """support.json rows fingerprinted the way the CLI claim check does, from variants.md on disk."""
+    app_dir = workspace / "applications" / SLUG
+    lines = citations.pool_lines(
+        (workspace / "master-resume.md").read_text(), (app_dir / "evidence.md").read_text()
+    )
+    rows = {}
+    for variant_id, variant in verify.variant_targets((app_dir / "variants.md").read_text()):
+        if variant_id not in verdicts:
+            continue
+        verdict, numbers = verdicts[variant_id]
+        cited = [
+            lines[line.id]
+            for line in citations.resolve_citation(variant.citation, lines)
+            if line.grounded
+        ]
+        rows[variant_id] = {
+            "verdict": verdict,
+            "relation": "partly_supports",
+            "relation_confidence": 1.0,
+            "unstated": 0.94,
+            "unsourced_numbers": numbers,
+            "fingerprint": verify.fingerprint(variant.content, cited),
+        }
+    return rows
+
+
+def _write_support(workspace: Path, rows: dict[str, dict]) -> None:
+    document = {"model": verify.JEV_MODEL, "variants": rows}
+    (workspace / "applications" / SLUG / "support.json").write_text(json.dumps(document))
+
+
+def test_load_support_is_empty_without_support_json(repo: FsWorkspaceRepository) -> None:
+    assert repo.load_support(SLUG) == {}
+
+
+def test_save_support_stamps_fingerprints_that_load_application_matches(
+    repo: FsWorkspaceRepository, workspace: Path
+) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
+    support = {
+        "cover_letter.opening#1": Support(
+            verdict="adds_detail",
+            note=verify.note_for("adds_detail", ["12"]),
+            unsourced_numbers=("12",),
+            relation="partly_supports",
+            relation_confidence=1.0,
+            unstated=0.94,
+        ),
+        "cover_letter.opening#2": Support(verdict="unchecked", note=verify.NOTES["unchecked"]),
+        "resume.northwind.billing.bullet_1#9": Support(verdict="traced"),
+    }
+    pool = repo.load_inputs(SLUG).evidence_pool
+    repo.save_support(SLUG, support, _sample_units(pool), pool)
+
+    cli = _cli_rows(workspace, {"cover_letter.opening#1": ("", []), "cover_letter.opening#2": ("", [])})
+    stamped = {
+        variant_id: replace(support[variant_id], fingerprint=row["fingerprint"])
+        for variant_id, row in cli.items()
+    }
+    stamped["resume.northwind.billing.bullet_1#9"] = Support(verdict="traced", fingerprint="")
+    assert repo.load_support(SLUG) == stamped
+    variants = {v.id: v for unit in repo.load_application(SLUG).units for v in unit.variants}
+    assert variants["cover_letter.opening#1"].support == stamped["cover_letter.opening#1"]
+    assert variants["cover_letter.opening#2"].support == stamped["cover_letter.opening#2"]
+
+
+def test_save_support_writes_the_documented_support_json(
+    repo: FsWorkspaceRepository, workspace: Path
+) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
+    pool = repo.load_inputs(SLUG).evidence_pool
+    support = {"cover_letter.opening#1": Support(verdict="unchecked")}
+    repo.save_support(SLUG, support, _sample_units(pool), pool)
+    document = json.loads((workspace / "applications" / SLUG / "support.json").read_text())
+    jsonschema.validate(document, SUPPORT_SCHEMA)
+    assert document["model"] == verify.JEV_MODEL
+    assert document["variants"]["cover_letter.opening#1"]["verdict"] == "unchecked"
+
+
+def test_support_schema_validates_the_documented_example() -> None:
+    section = PIPELINE_MD.read_text().split("### support.json", 1)[1]
+    example = json.loads(section.split("```json", 1)[1].split("```", 1)[0])
+    jsonschema.validate(example, SUPPORT_SCHEMA)
+    row_schema = SUPPORT_SCHEMA["properties"]["variants"]["additionalProperties"]
+    assert set(row_schema["properties"]["verdict"]["enum"]) == set(verify.VERDICTS)
+    assert set(get_args(SupportVerdict)) == set(verify.VERDICTS)
+
+
+def test_load_application_attaches_only_verdicts_whose_fingerprint_matches(
+    repo: FsWorkspaceRepository, workspace: Path
+) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
+    rows = _cli_rows(
+        workspace,
+        {
+            "cover_letter.opening#1": ("adds_detail", ["12"]),
+            "cover_letter.opening#2": ("conflicts", []),
+            "resume.northwind.billing.bullet_1#1": ("traced", []),
+        },
+    )
+    rows["cover_letter.opening#2"]["fingerprint"] = verify.fingerprint("an edited claim", [])
+    _write_support(workspace, rows)
+
+    variants = {v.id: v for unit in repo.load_application(SLUG).units for v in unit.variants}
+
+    assert variants["cover_letter.opening#1"].support == Support(
+        verdict="adds_detail",
+        note="Adds detail your evidence doesn't state: 12",
+        unsourced_numbers=("12",),
+        relation="partly_supports",
+        relation_confidence=1.0,
+        unstated=0.94,
+        fingerprint=rows["cover_letter.opening#1"]["fingerprint"],
+    )
+    assert variants["cover_letter.opening#2"].support is None
+    traced = variants["resume.northwind.billing.bullet_1#1"].support
+    assert traced is not None and traced.verdict == "traced" and traced.note is None
+
+
+def test_load_application_without_support_json_attaches_no_verdicts(repo: FsWorkspaceRepository) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
+    app = repo.load_application(SLUG)
+    assert [v.support for unit in app.units for v in unit.variants] == [None, None, None]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{truncated",
+        '{"model": "jev-1.13.0"}',
+        '{"model": "jev-1.13.0", "variants": {"cover_letter.opening#1": "x"}}',
+        '{"model": "jev-1.13.0", "variants": []}',
+    ],
+    ids=["truncated-json", "no-variants-key", "row-not-an-object", "variants-not-an-object"],
+)
+def test_unreadable_support_json_loads_as_no_verdicts_and_says_so(
+    repo: FsWorkspaceRepository, workspace: Path, caplog: pytest.LogCaptureFixture, content: str
+) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
+    (workspace / "applications" / SLUG / "support.json").write_text(content)
+
+    app = repo.load_application(SLUG)
+
+    assert [v.support for unit in app.units for v in unit.variants] == [None, None, None]
+    assert f"unreadable support.json for slug={SLUG}" in caplog.text
+
+
+def test_save_support_fingerprints_a_saved_transient_citation_like_the_cli(
+    repo: FsWorkspaceRepository, workspace: Path
+) -> None:
+    # Generation hands back each variant's citation unresolved; its fingerprint must still be
+    # the one the CLI computes from variants.md once the variant is saved.
+    citation = "master-resume.md L16; evidence.md L13; notes.md - side project"
+    variant = Variant(
+        id="cover_letter.opening#1",
+        text="I led the migration and cut paging 60%.",
+        evidence_items=(Evidence(id=citation, text=citation, source=citation, grounded=False),),
+    )
+    repo.save_outline(SLUG, _sample_outline())
+    unit = Unit(id="cover_letter.opening", kind="cover_paragraph", label="Opening", context="c", variants=[variant])
+    repo.save_variants(SLUG, [unit])
+    repo.save_support(SLUG, {variant.id: Support(verdict="traced")}, [unit], repo.load_inputs(SLUG).evidence_pool)
+    expected = _cli_rows(workspace, {variant.id: ("traced", [])})[variant.id]["fingerprint"]
+    assert repo.load_support(SLUG)[variant.id].fingerprint == expected
+
+
+@pytest.mark.parametrize(
+    ("opening_verdicts", "opening_note"),
+    [
+        pytest.param(
+            {"cover_letter.opening#1": ("adds_detail", ["12"]), "cover_letter.opening#2": ("conflicts", [])},
+            "None of these lines is fully backed by your evidence. Add the fact to your master resume, "
+            "or pick the closest and edit it.",
+            id="every-variant-flagged-gets-the-note",
+        ),
+        pytest.param(
+            {"cover_letter.opening#1": ("adds_detail", ["12"]), "cover_letter.opening#2": ("traced", [])},
+            None,
+            id="one-unflagged-variant-no-note",
+        ),
+        pytest.param(
+            {"cover_letter.opening#1": ("adds_detail", ["12"])},
+            None,
+            id="one-variant-unchecked-by-absence-no-note",
+        ),
+    ],
+)
+def test_load_application_notes_a_unit_whose_every_variant_is_flagged(
+    repo: FsWorkspaceRepository,
+    workspace: Path,
+    opening_verdicts: dict[str, tuple[str, list[str]]],
+    opening_note: str | None,
+) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    empty = Unit(id="resume.northwind.billing.bullet_2", kind="resume_bullet", label="Bullet 2", context="c", variants=[])
+    repo.save_variants(SLUG, [*_sample_units(repo.load_inputs(SLUG).evidence_pool), empty])
+    _write_support(workspace, _cli_rows(workspace, opening_verdicts))
+
+    notes = {unit.id: unit.grounding_note for unit in repo.load_application(SLUG).units}
+
+    assert notes == {
+        "cover_letter.opening": opening_note,
+        "resume.northwind.billing.bullet_1": None,
+        "resume.northwind.billing.bullet_2": None,
+    }
+
+
+@pytest.mark.parametrize("has_fingerprint", [False, True], ids=["fallback", "checked"])
+def test_save_support_keeps_the_checked_snapshot_after_workspace_edits(repo, workspace, has_fingerprint):
+    pool = repo.load_inputs(SLUG).evidence_pool
+    units = _sample_units(pool)
+    variant = units[0].variants[0]
+    cited = [item.text for item in variant.evidence_items]
+    fingerprint = verify.fingerprint(variant.text, cited)
+    support = Support(verdict="traced", fingerprint=fingerprint if has_fingerprint else "")
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, units)
+    master = workspace / "master-resume.md"
+    master.write_text(master.read_text().replace("billing platform from a monolith", "an unrelated project"))
+
+    repo.save_support(SLUG, {variant.id: support}, units, pool)
+
+    assert repo.load_support(SLUG)[variant.id].fingerprint == fingerprint
+    loaded = repo.load_application(SLUG)
+    assert loaded.units[0].variants[0].support is None
+
+
+def test_support_directory_does_not_block_loading_application(repo, workspace, caplog):
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
+    (workspace / "applications" / SLUG / "support.json").mkdir()
+
+    app = repo.load_application(SLUG)
+
+    assert all(v.support is None for unit in app.units for v in unit.variants)
+    assert f"unreadable support.json for slug={SLUG}" in caplog.text
+
+
+def test_support_stat_failure_is_advisory(repo, monkeypatch, caplog):
+    original_exists = Path.exists
+
+    def exists(path):
+        if path.name == "support.json":
+            raise PermissionError("support directory is inaccessible")
+        return original_exists(path)
+
+    monkeypatch.setattr(Path, "exists", exists)
+    assert repo.load_support(SLUG) == {}
+    assert "support directory is inaccessible" in caplog.text
+
+
+def test_save_support_preserves_a_verifiers_fingerprint_for_an_edited_claim(repo):
+    pool = repo.load_inputs(SLUG).evidence_pool
+    units = _sample_units(pool)
+    variant = units[0].variants[0]
+    checked_fingerprint = verify.fingerprint(variant.text, [item.text for item in variant.evidence_items])
+    units[0].variants[0] = replace(variant, text="An edited claim after checking")
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, units)
+
+    repo.save_support(
+        SLUG, {variant.id: Support(verdict="traced", fingerprint=checked_fingerprint)}, units, pool
+    )
+
+    assert repo.load_support(SLUG)[variant.id].fingerprint == checked_fingerprint
+    assert repo.load_application(SLUG).units[0].variants[0].support is None

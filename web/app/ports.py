@@ -12,19 +12,26 @@ typed contract.
   adapter and offline by a fixture-backed fake.
 - ``CompositionPort`` — the deterministic conjurer scripts (stitch / lint / export),
   which operate purely on the workspace directory.
+- ``VerificationPort`` — the claim check: a support verdict for each variant of a unit,
+  judged against the evidence it cites. Advisory; a failure never blocks a run.
 - ``WorkspaceRepository`` — persistence and loading of one application's files
-  (inputs, outline.json, variants.md and its picks), and hydration into the domain model.
+  (inputs, outline.json, variants.md and its picks, support.json), and hydration into the
+  domain model.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from app.domain import (
     Application,
+    Evidence,
     LintCheck,
     Outline,
     OutlineUnit,
+    Support,
     Unit,
     Variant,
     WorkspaceInputs,
@@ -62,6 +69,19 @@ class GenerationPort(Protocol):
 
 
 @runtime_checkable
+class VerificationPort(Protocol):
+    """The claim check. Judges each variant of a unit against the evidence it cites."""
+
+    async def verify(self, unit: Unit, pool: Mapping[str, Evidence]) -> dict[str, Support]:
+        """Support verdicts for ``unit``'s variants, keyed by variant id; ``pool`` is the evidence pool."""
+        ...
+
+    async def aclose(self) -> None:
+        """Release any held resources. No-op if none."""
+        ...
+
+
+@runtime_checkable
 class CompositionPort(Protocol):
     """The deterministic conjurer scripts. Operate on the workspace application directory.
 
@@ -79,6 +99,10 @@ class CompositionPort(Protocol):
 
     def export(self, slug: str, formats: tuple[str, ...] = ("pdf", "docx")) -> dict[str, str]:
         """Export the stitched documents; map each target to 'written' or 'skipped: ...'."""
+        ...
+
+    def download(self, slug: str, filename: str) -> Path | None:
+        """An existing export artifact within the application directory, or None."""
         ...
 
 
@@ -119,8 +143,18 @@ class WorkspaceRepository(Protocol):
         """Return the current unit_id -> picked variant_id mapping from variants.md."""
         ...
 
+    def save_support(
+        self, slug: str, support: dict[str, Support], units: list[Unit], pool: Mapping[str, Evidence]
+    ) -> None:
+        """Write verdicts using checked units and their evidence snapshot for missing fingerprints."""
+        ...
+
+    def load_support(self, slug: str) -> dict[str, Support]:
+        """Every saved verdict keyed by variant id, stale or not; empty if none are saved."""
+        ...
+
     def load_application(self, slug: str) -> Application:
-        """Hydrate the full Application (frame, units, variants, evidence) from the workspace."""
+        """Hydrate the full Application (frame, units, variants and their current verdicts, evidence)."""
         ...
 
     def save_metrics(self, slug: str, metrics: RunMetrics) -> None:

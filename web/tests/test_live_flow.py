@@ -1,6 +1,8 @@
 # ABOUTME: Route tests for the live generation flow, wired with a FakeGenerationPort + temp FsRepo.
 # ABOUTME: Exercises POST /start (live), the status partial's render branches, and the env composition.
 
+import asyncio
+import os
 import shutil
 from pathlib import Path
 
@@ -9,10 +11,13 @@ from fastapi.testclient import TestClient
 
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.generation_sdk import SdkGenerationPort
+from app.adapters.verification_fake import FakeVerificationPort, NoVerificationPort
+from app.adapters.verification_jev import JevVerificationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.adapters.workspace_fs import FsWorkspaceRepository
 from app.adapters.composition import ScriptCompositionPort
-from app.deps import build_composition, build_generation, build_repository
+from app.deps import build_composition, build_generation, build_repository, build_verification
+from app.domain import Evidence, Variant
 from app.main import create_app
 from app.runs import RunManager, RunStatus
 
@@ -61,7 +66,7 @@ def workspace(tmp_path):
 def live_client(workspace):
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
-    manager = RunManager(repo=repo, gen=gen)
+    manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
     with TestClient(app) as c:
         yield c, manager
@@ -75,6 +80,8 @@ def test_live_start_renders_the_progress_page(live_client):
     r = client.post("/start", data={"source": "reuse", "jd": "x"})
     assert r.status_code == 200
     assert "Summoning" in r.text
+    assert "drafting options from your evidence" in r.text
+    assert "Nothing is invented" not in r.text
 
 
 def test_status_partial_running_keeps_polling(live_client):
@@ -117,7 +124,7 @@ def test_live_outline_renders_from_persisted_workspace(workspace):
 
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
-    manager = RunManager(repo=repo, gen=gen)
+    manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -143,7 +150,7 @@ def _ran_live_app(workspace):
 
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
-    manager = RunManager(repo=repo, gen=gen)
+    manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -193,7 +200,7 @@ def test_review_omits_the_summary_when_no_run(live_client):
 
     repo = FakeWorkspaceRepository()
     gen = FakeGenerationPort()
-    app = _create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=False)
+    app = _create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=False)
     with TestClient(app) as c:
         r = c.get("/review")
     assert r.status_code == 200
@@ -223,6 +230,44 @@ def test_build_generation_live_is_sdk(monkeypatch, workspace):
     monkeypatch.setenv("CONJURER_BACKEND", "live")
     monkeypatch.setenv("CONJURER_WORKSPACE", str(workspace))
     assert isinstance(build_generation(), SdkGenerationPort)
+
+
+def test_build_verification_defaults_to_fake(monkeypatch):
+    monkeypatch.delenv("CONJURER_BACKEND", raising=False)
+    assert isinstance(build_verification(), FakeVerificationPort)
+
+
+@pytest.mark.parametrize(
+    ("verifier", "api_key", "expected"),
+    [
+        pytest.param("jev", "ts-key", JevVerificationPort, id="jev-with-key-checks-claims"),
+        pytest.param(None, "ts-key", NoVerificationPort, id="unset-checks-nothing"),
+    ],
+)
+def test_build_verification_live_follows_conjurer_verifier(monkeypatch, verifier, api_key, expected):
+    monkeypatch.setenv("CONJURER_BACKEND", "live")
+    monkeypatch.delenv("CONJURER_WORKSPACE", raising=False)
+    if verifier is None:
+        monkeypatch.delenv("CONJURER_VERIFIER", raising=False)
+    else:
+        monkeypatch.setenv("CONJURER_VERIFIER", verifier)
+    monkeypatch.setenv("TYPESAFE_API_KEY", api_key)
+    assert isinstance(build_verification(), expected)
+
+
+@pytest.mark.parametrize(
+    ("verifier", "message"),
+    [
+        pytest.param("jev", "TYPESAFE_API_KEY", id="jev-without-key-refuses-to-start"),
+        pytest.param("jevv", "must be 'jev' or unset", id="unknown-verifier-refuses-to-start"),
+    ],
+)
+def test_build_verification_live_refuses_a_verifier_it_cannot_run(monkeypatch, verifier, message):
+    monkeypatch.setenv("CONJURER_BACKEND", "live")
+    monkeypatch.setenv("CONJURER_VERIFIER", verifier)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match=message):
+        build_verification()
 
 
 def test_live_repository_requires_workspace_env(monkeypatch):
@@ -299,7 +344,7 @@ def test_live_curate_renders_unverified_note_for_ungrounded_citation(workspace):
         ],
     )
     gen = FakeGenerationPort()
-    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=True)
+    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=True)
     with TestClient(app) as c:
         r = c.get("/curate/0")
     assert r.status_code == 200
@@ -354,7 +399,7 @@ def _prepare_picked_live_workspace(workspace):
     gen = FakeGenerationPort()
     comp = ScriptCompositionPort(workspace)
     app = create_app(
-        repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=True, comp=comp
+        repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=True, comp=comp
     )
     return app
 
@@ -365,12 +410,67 @@ def test_live_review_stitches_and_lints_the_real_docs(workspace):
         r = c.get("/review")
     assert r.status_code == 200
     assert "Style check" in r.text
+    assert "<li>Led the billing platform migration to event-driven services.</li>" in r.text
+    assert "<li>- Led the billing platform migration" not in r.text
     # Stitch wrote the real documents to the workspace.
     app_dir = workspace / "applications" / SLUG
     assert (app_dir / "cover_letter.md").exists()
     assert (app_dir / "resume.md").exists()
     # The picked content is in the stitched cover letter.
     assert "billing migration end to end" in (app_dir / "cover_letter.md").read_text()
+    assert "- Led the billing platform migration to event-driven services." in (app_dir / "resume.md").read_text()
+    assert "- Led the billing platform migration to event-driven services." in (app_dir / "variants.md").read_text()
+
+
+@pytest.mark.live
+@pytest.mark.skipif(not os.environ.get("TYPESAFE_API_KEY"), reason="no TYPESAFE_API_KEY")
+def test_real_jev_verdict_persists_and_reaches_live_curate_and_review(workspace):
+    app = _prepare_picked_live_workspace(workspace)
+    repo = FsWorkspaceRepository(workspace)
+    units = repo.load_application(SLUG).units
+    unit = units[1]
+    citation = "master-resume.md L18"
+    variant = Variant(
+        id=f"{unit.id}#1",
+        text="- Led a team of 25 engineers who cut paging volume 60%.",
+        evidence_items=(Evidence(id=citation, text=citation, source=citation, grounded=False),),
+    )
+    unit.variants = [variant]
+    repo.save_variants(SLUG, units)
+    for chosen_unit in units:
+        repo.set_pick(SLUG, chosen_unit.id, chosen_unit.variants[0].id)
+    pool = repo.load_inputs(SLUG).evidence_pool
+    verifier = JevVerificationPort(os.environ["TYPESAFE_API_KEY"])
+    verdicts = asyncio.run(verifier.verify(unit, pool))
+    assert verdicts[variant.id].verdict == "adds_detail", verdicts[variant.id]
+    assert verdicts[variant.id].unsourced_numbers == ("25",)
+
+    repo.save_support(SLUG, verdicts, units, pool)
+    assert FsWorkspaceRepository(workspace).load_support(SLUG) == verdicts
+    hydrated = repo.load_application(SLUG).units[1].variants[0]
+    assert hydrated.support == verdicts[variant.id]
+
+    with TestClient(app) as client:
+        curate = client.get("/curate/1")
+        review = client.get("/review")
+    for response in (curate, review):
+        assert response.status_code == 200
+        assert "Led a team of 25 engineers" in response.text
+        assert "Adds detail your evidence doesn" in response.text
+        assert "25" in response.text
+
+
+@pytest.mark.parametrize("route", ["/curate/0", "/review"])
+def test_unreadable_support_does_not_block_live_pages(workspace, caplog, route):
+    app = _prepare_picked_live_workspace(workspace)
+    (workspace / "applications" / SLUG / "support.json").mkdir()
+
+    with TestClient(app) as client:
+        response = client.get(route)
+
+    assert response.status_code == 200
+    assert "I led the billing migration end to end." in response.text
+    assert f"unreadable support.json for slug={SLUG}" in caplog.text
 
 
 def test_live_review_with_incomplete_picks_does_not_stitch_or_500(workspace):
@@ -413,7 +513,7 @@ def test_live_review_with_incomplete_picks_does_not_stitch_or_500(workspace):
     gen = FakeGenerationPort()
     comp = ScriptCompositionPort(workspace)
     app = create_app(
-        repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=True, comp=comp
+        repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=True, comp=comp
     )
     with TestClient(app) as c:
         r = c.get("/review")
@@ -438,6 +538,57 @@ def test_live_export_reports_the_written_or_skipped_map(workspace):
         assert "written" in r.text
     else:
         assert "skipped" in r.text
+
+
+def test_live_export_downloads_the_stitched_markdown(workspace):
+    app = _prepare_picked_live_workspace(workspace)
+    with TestClient(app) as client:
+        client.get("/review")
+        page = client.get("/export")
+        assert 'href="#"' not in page.text
+        for filename in ("cover_letter.md", "resume.md"):
+            assert f'href="/export/download/{filename}" hx-boost="false" download' in page.text
+            response = client.get(f"/export/download/{filename}")
+            assert response.status_code == 200
+            assert response.content == (workspace / "applications" / SLUG / filename).read_bytes()
+            assert response.headers["content-disposition"] == f'attachment; filename="{filename}"'
+
+
+def test_live_export_without_documents_has_no_download_links(workspace):
+    app = _prepare_picked_live_workspace(workspace)
+    with TestClient(app) as client:
+        page = client.get("/export")
+        assert "/export/download/" not in page.text
+        assert "No Markdown files available." in page.text
+        assert client.get("/export/download/resume.md").status_code == 404
+
+
+def test_live_export_downloads_written_formats_and_hides_skipped_artifacts(workspace, monkeypatch):
+    app = _prepare_picked_live_workspace(workspace)
+    app_dir = workspace / "applications" / SLUG
+
+    def export_artifacts(directory, formats):
+        (directory / "resume.pdf").write_bytes(b"real-pdf-artifact")
+        (directory / "resume.docx").write_bytes(b"older-artifact")
+        return {"resume.pdf": "written", "resume.docx": "skipped: no exporter", "cover_letter.pdf": "written"}
+
+    monkeypatch.setattr("app.adapters.composition.export_app_dir", export_artifacts)
+    with TestClient(app) as client:
+        client.get("/review")
+        page = client.get("/export")
+        assert 'href="/export/download/resume.pdf"' in page.text
+        assert 'href="/export/download/resume.docx"' not in page.text
+        assert 'href="/export/download/cover_letter.pdf"' not in page.text
+        response = client.get("/export/download/resume.pdf")
+        assert response.content == (app_dir / "resume.pdf").read_bytes()
+        assert response.headers["content-type"] == "application/pdf"
+
+
+@pytest.mark.parametrize("filename", ["evidence.md", "metrics.json", "resume.html"])
+def test_live_download_rejects_workspace_sources(workspace, filename):
+    app = _prepare_picked_live_workspace(workspace)
+    with TestClient(app) as client:
+        assert client.get(f"/export/download/{filename}").status_code == 404
 
 
 def test_build_composition_is_none_offline(monkeypatch):
@@ -473,7 +624,7 @@ def test_live_landing_states_honest_master_resume_source(live_client):
 def test_live_start_writes_the_pasted_jd_to_the_workspace(workspace):
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
-    manager = RunManager(repo=repo, gen=gen)
+    manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
     with TestClient(app) as c:
         r = c.post("/start", data={"jd": "Widget Wrangler at Globex. Unique-JD-Marker-42."})
@@ -487,7 +638,7 @@ def test_live_start_with_blank_jd_keeps_the_existing_jd(workspace):
     original = jd_path.read_text()
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
-    manager = RunManager(repo=repo, gen=gen)
+    manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
     with TestClient(app) as c:
         r = c.post("/start", data={"jd": "   "})  # whitespace-only -> not written

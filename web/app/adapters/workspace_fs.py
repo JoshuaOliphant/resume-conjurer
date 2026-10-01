@@ -1,5 +1,5 @@
 # ABOUTME: Filesystem WorkspaceRepository — reads/writes one application's workspace files.
-# ABOUTME: Round-trips outline.json and variants.md and hydrates the domain Application.
+# ABOUTME: Round-trips outline.json, variants.md, and support.json and hydrates the domain Application.
 
 """Filesystem-backed :class:`WorkspaceRepository`.
 
@@ -9,24 +9,29 @@ generated ``outline.json`` / ``variants.md``. This adapter is the only place tha
 knows that layout; the workspace root is injected so a future multi-user resolver
 can scope a slug to a different root without touching these methods.
 
-``variants.md`` is the canonical store for variants AND picks. Unlike
-``stitch.py``'s parser, the parser here keeps the ``### Variant N: <citation>``
-citation so we can resolve each variant's evidence trace back into the domain.
+``variants.md`` is the canonical store for variants AND picks. The parser here
+keeps each variant's ``### Variant N: <citation>`` number and citation so we can
+resolve its evidence trace back into the domain.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from pathlib import Path
 
+from app.adapters.scripts_path import ensure_scripts_on_path
 from app.domain import (
+    ALL_FLAGGED_NOTE,
     Application,
     Evidence,
     Frame,
     Outline,
     OutlineUnit,
+    Support,
     Unit,
     UnitKind,
     Variant,
@@ -36,9 +41,15 @@ from app.domain import (
 )
 from app.metrics import RunMetrics
 
+ensure_scripts_on_path()
+
+import citations  # noqa: E402
+import verify  # noqa: E402
+
+logger = logging.getLogger(__name__)
+
 # variants.md grammar. The unit marker and pick line mirror stitch.py exactly so
-# the two stay in lockstep; the variant header adds capturing groups for the
-# variant number and its citation (which stitch.py discards).
+# the two stay in lockstep.
 UNIT_MARKER_RE = re.compile(r"<!--\s*conjurer:unit\s+id=([\w.\-]+)\s*-->")
 VARIANT_HEADER_RE = re.compile(r"^###\s+Variant\s+(\d+):\s*(.*?)\s*$")
 PICK_LINE_RE = re.compile(r"^-\s+\[(\s|x|X)\]\s+Pick\s*$")
@@ -46,21 +57,6 @@ AXIS_LINE_RE = re.compile(r"^\*Axis:.*?\*\s*$", re.MULTILINE)
 
 COVER_LETTER_PREFIX = "cover_letter."
 RESUME_PREFIX = "resume."
-
-MASTER_RESUME = "master-resume.md"
-EVIDENCE = "evidence.md"
-
-# One cited reference inside a (possibly multi-part) citation: an optional file, then either a
-# line or line range (`L16`, `L16-18`, `L16-L18`) or a ` - <label>` naming evidence.md content.
-_REFERENCE_RE = re.compile(
-    r"^(?:(?P<file>[\w.\-]+\.md)\s*)?"
-    r"(?:L(?P<start>\d+)(?:\s*[-–]\s*L?(?P<end>\d+))?|-\s+(?P<label>.+))$"
-)
-# References are separated by `;`, or by `,` when the next one names a file or a line.
-_REFERENCE_SPLIT_RE = re.compile(r"\s*;\s*|\s*,\s*(?=[\w.\-]+\.md\b|L\d)")
-_BULLET_RE = re.compile(r"^\s*[-*]\s+(?:(?P<label>[^:]+):)?")
-_HEADING_RE = re.compile(r"^#+\s+(?P<heading>.+?)\s*$")
-
 
 def _kind_for(unit_id: str) -> UnitKind:
     """Infer a unit's kind from its id prefix."""
@@ -81,52 +77,52 @@ def _ungrounded(citation: str) -> Evidence:
     return Evidence(id=citation, text=citation, source=citation, grounded=False)
 
 
-def _evidence_md_by_label(label: str, pool: Mapping[str, Evidence]) -> list[Evidence]:
-    """The evidence.md bullets a ` - <label>` names: a bullet's lead label, else a heading's bullets."""
-    wanted = label.strip().casefold()
-    by_bullet: list[Evidence] = []
-    by_heading: list[Evidence] = []
-    in_heading = False
-    for ev in pool.values():
-        if not ev.id.startswith(f"{EVIDENCE} L"):
-            continue
-        heading = _HEADING_RE.match(ev.text)
-        if heading:
-            in_heading = heading.group("heading").casefold() == wanted
-            continue
-        bullet = _BULLET_RE.match(ev.text)
-        if bullet is None:
-            continue
-        if bullet.group("label") and bullet.group("label").strip().casefold() == wanted:
-            by_bullet.append(ev)
-        if in_heading:
-            by_heading.append(ev)
-    return by_bullet or by_heading
-
-
-def _resolve_reference(reference: re.Match[str], file: str, pool: Mapping[str, Evidence]) -> list[Evidence]:
-    if reference.group("label") is not None:
-        return _evidence_md_by_label(reference.group("label"), pool) if file == EVIDENCE else []
-    start = int(reference.group("start"))
-    end = int(reference.group("end") or start)
-    return [pool[key] for n in range(start, end + 1) if (key := f"{file} L{n}") in pool]
-
-
 def resolve_citation(citation: str, pool: Mapping[str, Evidence]) -> tuple[Evidence, ...]:
-    """Resolve every reference in a variant's citation to its pooled evidence lines.
+    """Resolve every reference in a variant's citation to its pooled evidence lines."""
+    return tuple(
+        pool[line.id] if line.grounded else _ungrounded(line.id)
+        for line in citations.resolve_citation(citation, {key: ev.text for key, ev in pool.items()})
+    )
 
-    A reference that resolves to nothing stays as an ungrounded citation, so the trace never
-    presents text the pool does not hold. A bare line (`L17`) inherits the preceding file.
-    """
-    items: list[Evidence] = []
-    file: str | None = None
-    for text in _REFERENCE_SPLIT_RE.split(citation.strip()):
-        reference = _REFERENCE_RE.match(text)
-        if reference and reference.group("file"):
-            file = reference.group("file")
-        resolved = _resolve_reference(reference, file, pool) if reference and file else []
-        items.extend(resolved or [_ungrounded(text)])
-    return tuple(items)
+
+def cited_lines(items: Iterable[Evidence], pool: Mapping[str, Evidence]) -> list[str]:
+    """The text of every pooled line a variant's evidence items cite."""
+    return [line.text for item in items for line in resolve_citation(item.id, pool) if line.grounded]
+
+
+def _claim_fingerprint(text: str, items: Iterable[Evidence], pool: Mapping[str, Evidence]) -> str:
+    """The support.json fingerprint of a variant: its text and the pooled lines it cites."""
+    return verify.fingerprint(text, cited_lines(items, pool))
+
+
+def _all_flagged(variants: list[Variant]) -> bool:
+    """True when the unit has variants and the claim check flagged every one of them."""
+    return bool(variants) and all(v.support is not None and v.support.flagged for v in variants)
+
+
+def _support_row(support: Support, fingerprint: str) -> dict:
+    return {
+        "verdict": support.verdict,
+        "relation": support.relation,
+        "relation_confidence": support.relation_confidence,
+        "unstated": support.unstated,
+        "unsourced_numbers": list(support.unsourced_numbers),
+        "fingerprint": fingerprint,
+    }
+
+
+def support_from_row(row: dict) -> Support:
+    """A support.json row as the domain's ``Support``, its note derived from the verdict."""
+    note = verify.note_for(row["verdict"], row["unsourced_numbers"])
+    return Support(
+        verdict=row["verdict"],
+        note=note or None,
+        unsourced_numbers=tuple(row["unsourced_numbers"]),
+        relation=row["relation"],
+        relation_confidence=row["relation_confidence"],
+        unstated=row["unstated"],
+        fingerprint=row["fingerprint"],
+    )
 
 
 class _ParsedVariant:
@@ -226,13 +222,10 @@ class FsWorkspaceRepository:
         jd = (app_dir / "jd.txt").read_text()
         evidence = (app_dir / "evidence.md").read_text()
 
-        evidence_pool: dict[str, Evidence] = {}
-        for file, text in ((MASTER_RESUME, master_resume), (EVIDENCE, evidence)):
-            for n, line in enumerate(text.splitlines(), start=1):
-                if not line.strip():
-                    continue
-                ev_id = f"{file} L{n}"
-                evidence_pool[ev_id] = Evidence(id=ev_id, text=line, source=ev_id)
+        evidence_pool = {
+            key: Evidence(id=key, text=line, source=key)
+            for key, line in citations.pool_lines(master_resume, evidence).items()
+        }
 
         return WorkspaceInputs(
             grimoire=grimoire,
@@ -302,7 +295,7 @@ class FsWorkspaceRepository:
             lines.append("")
             for n, variant in enumerate(unit.variants, start=1):
                 items = variant.evidence_items
-                citation = "; ".join(item.id for item in items) if items else MASTER_RESUME
+                citation = "; ".join(item.id for item in items) if items else citations.MASTER_RESUME
                 lines.append(f"### Variant {n}: {citation}")
                 lines.append("")
                 lines.append(variant.text)
@@ -360,6 +353,39 @@ class FsWorkspaceRepository:
             return None
         return RunMetrics.from_dict(json.loads(path.read_text()))
 
+    # --- support -----------------------------------------------------------
+
+    def save_support(
+        self, slug: str, support: dict[str, Support], units: list[Unit], pool: Mapping[str, Evidence]
+    ) -> None:
+        """Write verdicts against the evidence snapshot used for their checks."""
+        fingerprints = {
+            variant.id: _claim_fingerprint(variant.text, variant.evidence_items, pool)
+            for unit in units
+            for variant in unit.variants
+        }
+        document = {
+            "model": verify.JEV_MODEL,
+            "variants": {
+                variant_id: _support_row(s, s.fingerprint or fingerprints.get(variant_id, ""))
+                for variant_id, s in support.items()
+            },
+        }
+        path = self._app_dir(slug) / "support.json"
+        path.write_text(json.dumps(document, indent=2) + "\n")
+
+    def load_support(self, slug: str) -> dict[str, Support]:
+        path = self._app_dir(slug) / "support.json"
+        try:
+            if not path.exists():
+                return {}
+            rows = json.loads(path.read_text())["variants"]
+            return {variant_id: support_from_row(row) for variant_id, row in rows.items()}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            # Verdicts are advisory: a damaged support.json must not block curation.
+            logger.warning("unreadable support.json for slug=%s: %r", slug, exc)
+            return {}
+
     # --- hydration ---------------------------------------------------------
 
     def load_application(self, slug: str) -> Application:
@@ -373,6 +399,7 @@ class FsWorkspaceRepository:
         order = {u.unit_id: i for i, u in enumerate(outline.units)}
 
         parsed = _parse_variants_md((self._app_dir(slug) / "variants.md").read_text())
+        support = self.load_support(slug)
         cited: dict[str, Evidence] = {}
 
         units: list[Unit] = []
@@ -382,9 +409,11 @@ class FsWorkspaceRepository:
             for pv in punit.variants:
                 items = resolve_citation(pv.citation, pool)
                 cited.update((item.id, item) for item in items)
-                variants.append(
-                    Variant(id=f"{punit.unit_id}#{pv.n}", text=pv.text, evidence_items=items)
-                )
+                variant = Variant(id=f"{punit.unit_id}#{pv.n}", text=pv.text, evidence_items=items)
+                verdict = support.get(variant.id)
+                if verdict is not None and verdict.fingerprint == _claim_fingerprint(pv.text, items, pool):
+                    variant = replace(variant, support=verdict)
+                variants.append(variant)
             units.append(
                 Unit(
                     id=punit.unit_id,
@@ -392,6 +421,7 @@ class FsWorkspaceRepository:
                     label=label_for_unit_id(punit.unit_id),
                     context=context,
                     variants=variants,
+                    grounding_note=ALL_FLAGGED_NOTE if _all_flagged(variants) else None,
                 )
             )
 

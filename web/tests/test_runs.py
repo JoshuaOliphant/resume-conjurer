@@ -3,14 +3,18 @@
 
 import asyncio
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from app.adapters.generation_fake import FakeGenerationPort
-from app.adapters.workspace_fs import FsWorkspaceRepository
-from app.domain import OutlineUnit
+from app.adapters.verification_fake import FakeVerificationPort, NoVerificationPort
+from app.adapters.workspace_fs import FsWorkspaceRepository, cited_lines
+from app.domain import Evidence, OutlineUnit, Support
 from app.runs import RunManager
+
+import verify  # on sys.path once app.adapters.workspace_fs is imported
 
 SLUG = "globex-staff-platform"
 FIXTURE = Path(__file__).parent / "fixtures" / "workspace"
@@ -25,7 +29,7 @@ def workspace(tmp_path):
 
 def test_run_reaches_done_and_persists_outputs(workspace):
     repo = FsWorkspaceRepository(workspace)
-    manager = RunManager(repo=repo, gen=FakeGenerationPort())
+    manager = RunManager(repo=repo, gen=FakeGenerationPort(), verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -49,7 +53,7 @@ def test_run_reaches_done_and_persists_outputs(workspace):
 
 def test_run_aggregates_metrics_and_persists_them(workspace):
     repo = FsWorkspaceRepository(workspace)
-    manager = RunManager(repo=repo, gen=FakeGenerationPort())
+    manager = RunManager(repo=repo, gen=FakeGenerationPort(), verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -78,7 +82,7 @@ def test_run_aggregates_metrics_and_persists_them(workspace):
 
 
 def test_metrics_for_unstarted_slug_is_none(workspace):
-    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort())
+    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort(), verifier=NoVerificationPort())
     assert manager.metrics(SLUG) is None
 
 
@@ -94,7 +98,7 @@ def test_metrics_keep_partial_steps_on_error(workspace):
                 raise RuntimeError("the summoning failed mid-flight")
             return await super().variants(slug, unit, n)
 
-    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=RaiseOnSecondUnit())
+    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=RaiseOnSecondUnit(), verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -111,7 +115,7 @@ def test_metrics_keep_partial_steps_on_error(workspace):
 
 
 def test_status_for_unstarted_slug_is_idle(workspace):
-    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort())
+    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort(), verifier=NoVerificationPort())
     status = manager.status(SLUG)
     assert status.state == "idle"
     assert status.units_done == 0
@@ -127,7 +131,7 @@ def test_start_sets_running_synchronously_and_guards_double_start(workspace):
             await gate.wait()
             return await super().outline(slug)
 
-    manager = RunManager(repo=repo, gen=GatedGen())
+    manager = RunManager(repo=repo, gen=GatedGen(), verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -147,7 +151,7 @@ def test_error_path_sets_state_error_with_message(workspace):
         async def outline(self, slug):
             raise RuntimeError("the summoning failed")
 
-    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=BrokenGen())
+    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=BrokenGen(), verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -176,7 +180,7 @@ def test_zero_variant_unit_fails_the_run_honestly(workspace):
                 return []
             return await super().variants(slug, unit, n)
 
-    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=EmptyOnSecondUnit())
+    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=EmptyOnSecondUnit(), verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -203,7 +207,7 @@ def test_error_mid_loop_keeps_partial_progress_snapshot(workspace):
                 raise RuntimeError("the summoning failed mid-flight")
             return await super().variants(slug, unit, n)
 
-    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=RaiseOnSecondUnit())
+    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=RaiseOnSecondUnit(), verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -223,7 +227,7 @@ def test_error_mid_loop_keeps_partial_progress_snapshot(workspace):
 
 
 def test_join_on_unstarted_slug_is_a_noop(workspace):
-    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort())
+    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort(), verifier=NoVerificationPort())
     asyncio.run(manager.join(SLUG))  # no task; returns immediately
     assert manager.status(SLUG).state == "idle"
 
@@ -238,7 +242,7 @@ def test_progress_advances_per_unit(workspace):
             seen.append((manager.status(slug).units_done, manager.status(slug).units_total))
             return result
 
-    manager = RunManager(repo=repo, gen=CountingGen())
+    manager = RunManager(repo=repo, gen=CountingGen(), verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -251,8 +255,15 @@ def test_progress_advances_per_unit(workspace):
     assert seen[0][0] == 0
 
 
-def test_aclose_after_completion_skips_cancel(workspace):
-    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort())
+def test_aclose_after_completion_skips_cancel_and_closes_the_verifier(workspace):
+    class ClosingVerifier(FakeVerificationPort):
+        closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    verifier = ClosingVerifier()
+    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort(), verifier=verifier)
 
     async def go():
         manager.start(SLUG)
@@ -261,6 +272,99 @@ def test_aclose_after_completion_skips_cancel(workspace):
         await manager.aclose()  # done task: cancel is skipped, the await returns cleanly
 
     asyncio.run(go())
+    assert verifier.closed
+
+
+FLAGGED = Support(
+    verdict="adds_detail", note="Adds detail your evidence doesn't state: 12", unsourced_numbers=("12",)
+)
+TRACED = Support(verdict="traced")
+
+
+class RecordingRepo(FsWorkspaceRepository):
+    """Keeps the verdicts the run hands to save_support, before the repository stamps them."""
+
+    saved_support: dict[str, Support] | None = None
+
+    def save_support(self, slug, support, units, pool):
+        self.saved_support = support
+        super().save_support(slug, support, units, pool)
+
+
+def test_run_verifies_each_unit_after_its_variants_and_saves_support_after_variants(workspace):
+    events: list[tuple[str, str]] = []
+    pools: list[set[str]] = []
+
+    class LoggingGen(FakeGenerationPort):
+        async def variants(self, slug, unit: OutlineUnit, n: int = 4):
+            events.append(("variants", unit.unit_id))
+            return await super().variants(slug, unit, n)
+
+    class LoggingVerifier(FakeVerificationPort):
+        async def verify(self, unit, pool):
+            events.append(("verify", unit.id))
+            pools.append(set(pool))
+            return await super().verify(unit, pool)
+
+    class LoggingRepo(RecordingRepo):
+        def save_variants(self, slug, units):
+            events.append(("save_variants", slug))
+            super().save_variants(slug, units)
+
+        def save_support(self, slug, support, units, pool):
+            events.append(("save_support", slug))
+            super().save_support(slug, support, units, pool)
+
+    scripted = {"cover_letter.opening#1": FLAGGED, "resume.fixture.bullet_1#2": TRACED}
+    repo = LoggingRepo(workspace)
+    manager = RunManager(repo=repo, gen=LoggingGen(), verifier=LoggingVerifier(scripted))
+
+    async def go():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+
+    asyncio.run(go())
+
+    assert manager.status(SLUG).state == "done"
+    unit_ids = [unit_id for step, unit_id in events if step == "variants"]
+    per_unit = [event for unit_id in unit_ids for event in (("variants", unit_id), ("verify", unit_id))]
+    assert events == per_unit + [("save_variants", SLUG), ("save_support", SLUG)]
+    assert pools == [set(repo.load_inputs(SLUG).evidence_pool)] * len(unit_ids)
+    assert repo.saved_support == scripted
+
+
+def test_failing_verifier_marks_its_unit_unchecked_and_the_run_still_finishes(workspace, caplog):
+    class FailsOnOpening(FakeVerificationPort):
+        async def verify(self, unit, pool):
+            if unit.id == "cover_letter.opening":
+                raise TimeoutError("jev timed out")
+            return await super().verify(unit, pool)
+
+    repo = RecordingRepo(workspace)
+    verifier = FailsOnOpening({"resume.fixture.bullet_1#1": TRACED})
+    manager = RunManager(repo=repo, gen=FakeGenerationPort(), verifier=verifier)
+
+    async def go():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+
+    with caplog.at_level("WARNING"):
+        asyncio.run(go())
+
+    assert manager.status(SLUG).state == "done"
+    [failure] = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert SLUG in failure.getMessage()
+    assert "cover_letter.opening" in failure.getMessage()
+    assert "jev timed out" in failure.getMessage()
+
+    assert repo.saved_support == {
+        **{f"cover_letter.opening#{n}": Support(verdict="unchecked") for n in range(1, 5)},
+        "resume.fixture.bullet_1#1": TRACED,
+    }
+    units = {unit.id: unit for unit in repo.load_application(SLUG).units}
+    for variant in units["cover_letter.opening"].variants:
+        assert variant.support is not None
+        assert (variant.support.verdict, variant.support.note) == ("unchecked", verify.NOTES["unchecked"])
 
 
 def test_log_task_exception_logs_a_real_uncaught_exception(workspace, caplog):
@@ -268,7 +372,7 @@ def test_log_task_exception_logs_a_real_uncaught_exception(workspace, caplog):
     # exception" branch is unreachable through the normal start()/_run() path — this is
     # exactly the defense-in-depth the callback exists for if that invariant ever breaks.
     # Exercise it directly rather than excluding the line from coverage.
-    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort())
+    manager = RunManager(repo=FsWorkspaceRepository(workspace), gen=FakeGenerationPort(), verifier=NoVerificationPort())
 
     async def boom():
         raise RuntimeError("a future bug broke _run's exception safety")
@@ -294,7 +398,7 @@ def test_can_close_cancels_pending_runs(workspace):
             await gate.wait()
             return await super().outline(slug)
 
-    manager = RunManager(repo=repo, gen=GatedGen())
+    manager = RunManager(repo=repo, gen=GatedGen(), verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -321,7 +425,7 @@ def test_cancel_mid_variants_loop_leaves_a_running_snapshot_not_an_error(workspa
                 await gate.wait()
             return await super().variants(slug, unit, n)
 
-    manager = RunManager(repo=repo, gen=GatedOnSecondUnit())
+    manager = RunManager(repo=repo, gen=GatedOnSecondUnit(), verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -342,7 +446,7 @@ def test_concurrent_runs_across_slugs_stay_isolated(workspace):
     # progressing) must not be visible through the other slug's status/metrics.
     repo = FsWorkspaceRepository(workspace)
     other_slug = "other-app"
-    (workspace / "applications" / other_slug).mkdir(parents=True)
+    shutil.copytree(workspace / "applications" / SLUG, workspace / "applications" / other_slug)
     gate_a = asyncio.Event()
     gate_b = asyncio.Event()
 
@@ -351,7 +455,7 @@ def test_concurrent_runs_across_slugs_stay_isolated(workspace):
             await (gate_a if slug == SLUG else gate_b).wait()
             return await super().outline(slug)
 
-    manager = RunManager(repo=repo, gen=GatedGen())
+    manager = RunManager(repo=repo, gen=GatedGen(), verifier=NoVerificationPort())
 
     async def go():
         manager.start(SLUG)
@@ -383,3 +487,66 @@ def test_concurrent_runs_across_slugs_stay_isolated(workspace):
     assert metrics_b is not None and metrics_b.slug == other_slug
     assert (workspace / "applications" / SLUG / "outline.json").exists()
     assert (workspace / "applications" / other_slug / "outline.json").exists()
+
+
+def test_support_write_failure_does_not_fail_generation(workspace, caplog):
+    repo = FsWorkspaceRepository(workspace)
+    (workspace / "applications" / SLUG / "support.json").mkdir()
+    manager = RunManager(repo, FakeGenerationPort(), NoVerificationPort())
+
+    async def go():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+
+    asyncio.run(go())
+
+    assert manager.status(SLUG).state == "done"
+    assert repo.load_metrics(SLUG) is not None
+    app = repo.load_application(SLUG)
+    assert app.units
+    assert all(v.support is None for unit in app.units for v in unit.variants)
+    assert f"could not save support.json for slug={SLUG}" in caplog.text
+    assert f"unreadable support.json for slug={SLUG}" in caplog.text
+
+
+def test_run_does_not_attach_verdicts_after_evidence_changes_during_verification(workspace):
+    class CitingGenerator(FakeGenerationPort):
+        async def variants(self, slug, unit, n=4):
+            variants = await super().variants(slug, unit, n)
+            citation = Evidence(id="master-resume.md L16", text="", source="master-resume.md L16")
+            return [replace(variant, evidence_items=(citation,)) for variant in variants]
+
+    class EditingVerifier(NoVerificationPort):
+        def __init__(self):
+            self.changed = False
+            self.fingerprints = {}
+
+        async def verify(self, unit, pool):
+            support = {}
+            for variant in unit.variants:
+                fingerprint = verify.fingerprint(variant.text, cited_lines(variant.evidence_items, pool))
+                self.fingerprints[variant.id] = fingerprint
+                support[variant.id] = Support(verdict="traced", fingerprint=fingerprint)
+            if not self.changed:
+                master = workspace / "master-resume.md"
+                master.write_text(
+                    master.read_text().replace("billing platform from a monolith", "an unrelated project")
+                )
+                self.changed = True
+            return support
+
+    repo = FsWorkspaceRepository(workspace)
+    verifier = EditingVerifier()
+    manager = RunManager(repo, CitingGenerator(), verifier)
+
+    async def go():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+
+    asyncio.run(go())
+
+    assert manager.status(SLUG).state == "done"
+    assert {key: value.fingerprint for key, value in repo.load_support(SLUG).items()} == verifier.fingerprints
+    app = repo.load_application(SLUG)
+    assert app.units
+    assert all(variant.support is None for unit in app.units for variant in unit.variants)

@@ -1,5 +1,5 @@
 # ABOUTME: Composition root — resolves which adapters back each port for this process.
-# ABOUTME: Keyed on env (CONJURER_BACKEND, CONJURER_WORKSPACE); routes never name a concrete adapter.
+# ABOUTME: Keyed on env (CONJURER_BACKEND, CONJURER_WORKSPACE, CONJURER_VERIFIER); routes never name a concrete adapter.
 """Where the ports get their concrete adapters.
 
 One place resolves which backend (fake/offline vs live SDK) and which workspace, keyed on
@@ -16,9 +16,11 @@ from pathlib import Path
 from app.adapters.composition import ScriptCompositionPort
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.generation_sdk import SdkGenerationPort
+from app.adapters.verification_fake import FakeVerificationPort, NoVerificationPort
+from app.adapters.verification_jev import JevVerificationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.adapters.workspace_fs import FsWorkspaceRepository
-from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
+from app.ports import CompositionPort, GenerationPort, VerificationPort, WorkspaceRepository
 
 
 def is_live() -> bool:
@@ -51,6 +53,27 @@ def build_generation() -> GenerationPort:
     if is_live():
         return SdkGenerationPort(workspace_root())
     return FakeGenerationPort()
+
+
+def build_verification() -> VerificationPort:
+    """Live checks claims with Jev only when ``CONJURER_VERIFIER=jev``; otherwise it checks nothing.
+
+    Asking for Jev without ``TYPESAFE_API_KEY`` refuses to start rather than silently skipping.
+    """
+    if not is_live():
+        return FakeVerificationPort()
+    verifier = os.environ.get("CONJURER_VERIFIER", "")
+    if not verifier:
+        return NoVerificationPort()
+    if verifier != "jev":
+        raise RuntimeError(f"CONJURER_VERIFIER must be 'jev' or unset, not {verifier!r}.")
+    api_key = os.environ.get("TYPESAFE_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "CONJURER_VERIFIER=jev requires TYPESAFE_API_KEY; unset CONJURER_VERIFIER to run "
+            "without the claim check."
+        )
+    return JevVerificationPort(api_key)
 
 
 def build_composition() -> CompositionPort | None:

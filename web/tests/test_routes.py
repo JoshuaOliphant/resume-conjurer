@@ -3,12 +3,20 @@
 
 import pytest
 from fastapi.testclient import TestClient
+from markupsafe import escape
 
 from app.adapters.generation_fake import FakeGenerationPort
+from app.adapters.scripts_path import ensure_scripts_on_path
+from app.adapters.verification_fake import NoVerificationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import EVIDENCE, _v, get_application
+from app.domain import Application, Frame, Support, Unit, Variant
 from app.main import SLUG, create_app
 from app.runs import RunManager
+
+ensure_scripts_on_path()
+
+import verify  # noqa: E402
 
 
 @pytest.fixture
@@ -19,7 +27,7 @@ def repo():
 @pytest.fixture
 def client(repo):
     gen = FakeGenerationPort()
-    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen), live=False)
+    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=False)
     with TestClient(app) as c:
         yield c
 
@@ -64,6 +72,87 @@ def test_curate_shows_limited_evidence_note(client):
     idx = next(i for i, u in enumerate(units) if u.grounding_note)
     r = client.get(f"/curate/{idx}")
     assert "Limited evidence" in r.text
+    assert "The cited evidence does not state Kubernetes experience" in r.text
+    assert "These variants stay within" not in r.text
+
+
+@pytest.mark.parametrize("pick", [None, "cover-open-2"])
+def test_curate_requires_a_line_choice_with_native_validation(client, pick):
+    if pick:
+        client.post("/curate/0", data={"variant_id": pick}, follow_redirects=False)
+    html = client.get("/curate/0").text
+    cards = _cards(html)
+    assert 'aria-describedby="variant-choice-hint"' in html
+    assert "Choose a line before continuing." in html
+    for variant_id, card in cards.items():
+        input_tag = card.split("<input", 1)[1].split(">", 1)[0]
+        assert " required" in input_tag
+        assert ("checked" in input_tag) == (variant_id == pick)
+
+
+def _cards(html: str) -> dict[str, str]:
+    """Each variant card's HTML on the curate page, keyed by its variant id, in page order."""
+    stack = html.split('<div class="actions', 1)[0]
+    cards = stack.split('<div class="variant">')[1:]
+    return {card.split('value="', 1)[1].split('"', 1)[0]: card for card in cards}
+
+
+def _page(variants: list[Variant], path: str) -> str:
+    """One page rendered for an application holding a single unit with these variants."""
+    unit = Unit(id="resume.northwind.billing.bullet_1", kind="resume_bullet", label="Billing bullet",
+                context="Surface the migration.", variants=variants)
+    app_data = Application(slug=SLUG, company="Globex", role="Staff Platform Engineer", jd_excerpt="x",
+                           frame=Frame(name="Scale", rationale="why"), units=[unit], evidence=dict(EVIDENCE))
+
+    class _StubRepo(FakeWorkspaceRepository):
+        def load_application(self, slug: str) -> Application:
+            return app_data
+
+    stub = _StubRepo()
+    gen = FakeGenerationPort()
+    app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen, verifier=NoVerificationPort()), live=False)
+    with TestClient(app) as c:
+        r = c.get(path)
+    assert r.status_code == 200
+    return r.text
+
+
+def test_curate_notes_a_flagged_variant_and_leaves_a_traced_one_unchanged():
+    note = verify.note_for("adds_detail", ["12"])
+    evidence = (EVIDENCE["billing-migration"],)
+
+    def variants(traced_support: Support | None) -> list[Variant]:
+        return [
+            Variant(id="bullet#1", text="Cut invoicing to 2s.", evidence_items=evidence, support=traced_support),
+            Variant(id="bullet#2", text="Cut invoicing to 2s for 12 teams.", evidence_items=evidence,
+                    support=Support(verdict="adds_detail", note=note, unsourced_numbers=("12",))),
+        ]
+
+    cards = _cards(_page(variants(Support(verdict="traced")), "/curate/0"))
+
+    assert list(cards) == ["bullet#1", "bullet#2"]
+    flagged = cards["bullet#2"]
+    foot = flagged.index('class="variant__foot"')
+    assert foot < flagged.index(str(escape(note))) < flagged.index('<details class="trace" open>')
+
+    traced = cards["bullet#1"]
+    assert traced == _cards(_page(variants(None), "/curate/0"))["bullet#1"]
+    assert "checked" not in traced.lower() and "verified" not in traced.lower()
+
+
+def test_curate_notes_the_fixture_overreaches(client):
+    units = get_application().units
+    note = str(escape(verify.note_for("adds_detail", [])))
+    for unit_id, flagged_id, clean_id in [
+        ("cover-open", "cover-open-1", "cover-open-2"),
+        ("bullet-kubernetes", "bullet-kubernetes-1", "bullet-kubernetes-2"),
+    ]:
+        idx = next(i for i, u in enumerate(units) if u.id == unit_id)
+        cards = _cards(client.get(f"/curate/{idx}").text)
+        assert list(cards) == [v.id for v in units[idx].variants]
+        assert note in cards[flagged_id]
+        assert note not in cards[clean_id]
+    assert "the last three years" in _cards(client.get("/curate/0").text)["cover-open-1"]
 
 
 def test_curate_out_of_range_goes_to_review(client):
@@ -127,6 +216,64 @@ def test_review_complete_hides_incomplete_banner(client):
         )
     r = client.get("/review")
     assert "haven’t chosen every line yet" not in r.text
+
+
+SUPPORT_ROW_LABEL = "Claim check of picked lines"
+EXPORT_LINK = '<a class="btn btn--primary" href="/export">'
+
+
+def _support_row(html: str) -> str | None:
+    """The review checklist row for the claim check, or None when the page has none."""
+    rows = [row.split("</li>", 1)[0] for row in html.split('<li class="lint__row')[1:]]
+    return next((row for row in rows if SUPPORT_ROW_LABEL in row), None)
+
+
+@pytest.mark.parametrize(
+    ("support", "state"),
+    [
+        pytest.param(Support(verdict="conflicts", note="Conflicts with your evidence"), "fail", id="flagged-pick-fails"),
+        pytest.param(Support(verdict="traced"), "pass", id="unflagged-pick-passes"),
+        pytest.param(Support(verdict="untraced"), "fail", id="untraced-pick-fails"),
+        pytest.param(Support(verdict="unchecked"), "fail", id="failed-check-fails"),
+        pytest.param(None, None, id="unchecked-pick-no-row"),
+    ],
+)
+def test_review_support_row_follows_the_pick_and_never_blocks_export(support: Support | None, state: str | None):
+    variant = Variant(id="bullet#1", text="Cut invoicing to 2s.", evidence_items=(EVIDENCE["billing-migration"],),
+                      support=support)
+    html = _page([variant], "/review")
+
+    row = _support_row(html)
+    if state is None:
+        assert row is None
+    else:
+        assert row is not None and row.startswith(f' lint__row--{state}"')
+    assert EXPORT_LINK in html
+    assert "Every picked line traces to your evidence" not in html
+    if support is not None and support.verdict == "untraced":
+        assert row is not None and "Unverified citation" in row
+    if support is not None and support.verdict == "unchecked":
+        assert row is not None and "Couldn&#39;t check this line" in row
+
+
+def test_review_names_each_flagged_pick_with_its_note(client):
+    units = get_application().units
+    picks = {"cover-open": "cover-open-1", "bullet-kubernetes": "bullet-kubernetes-1"}
+    for idx, unit in enumerate(units):
+        client.post(f"/curate/{idx}", data={"variant_id": picks.get(unit.id, unit.variants[1].id)})
+
+    html = client.get("/review").text
+
+    note = "Adds detail your evidence doesn&#39;t state"
+    row = _support_row(html)
+    assert row is not None and row.startswith(' lint__row--fail"')
+    opening_note = f"Opening paragraph: {note}."
+    kubernetes_note = f"Kubernetes bullet: {note}."
+    assert opening_note in row and kubernetes_note in row
+    assert row.index(opening_note) < row.index(kubernetes_note)
+    assert "No current claim check" in row
+    assert "Every sentence still traces to your evidence" not in html
+    assert EXPORT_LINK in html
 
 
 def test_review_unselected_unit_shows_first_variant(client):
@@ -200,7 +347,7 @@ def test_review_skips_zero_variant_unit_without_500(repo):
 
     stub = _StubRepo()
     gen = FakeGenerationPort()
-    app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen), live=False)
+    app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen, verifier=NoVerificationPort()), live=False)
     with TestClient(app) as c:
         r = c.get("/review")
     assert r.status_code == 200
@@ -233,17 +380,27 @@ def test_curate_renders_zero_variant_unit_without_500(repo):
 
     stub = _StubRepo()
     gen = FakeGenerationPort()
-    app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen), live=False)
+    app = create_app(repo=stub, gen=gen, run_manager=RunManager(repo=stub, gen=gen, verifier=NoVerificationPort()), live=False)
     with TestClient(app) as c:
         r = c.get("/curate/0")
     assert r.status_code == 200
     assert "Empty bullet" in r.text
+    assert "data-continue disabled" in r.text
+    assert "No variants are available for this line." in r.text
 
 
 def test_export_renders(client):
     r = client.get("/export")
     assert r.status_code == 200
     assert "pandoc" in r.text
+    assert "The bundled sample does not create downloadable files." in r.text
+    assert 'href="#"' not in r.text
+    assert "/export/download/" not in r.text
+
+
+def test_fixture_download_returns_not_found(client):
+    response = client.get("/export/download/resume.md")
+    assert response.status_code == 404
 
 
 def test_reset_clears_selections(client, repo):
@@ -262,3 +419,10 @@ def test_entry_is_honest_and_has_no_dead_upload(client):
     assert "2 days ago" not in r.text
     assert "7 evidence entries" not in r.text
     assert "Upload a different one" not in r.text
+    assert "Live generation sends your source text to Claude." in r.text
+    assert "Optional claim checks send claims and evidence to TypeSafe." in r.text
+    assert "Review each claim before using it." in r.text
+    assert "Compare each line with its cited evidence." in r.text
+    assert "Nothing is sent anywhere" not in r.text
+    assert "never invents" not in r.text
+    assert "Every claim traces back" not in r.text

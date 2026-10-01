@@ -30,7 +30,7 @@ from pathlib import Path
 from composer import compose_resume
 
 UNIT_MARKER_RE = re.compile(r"<!--\s*conjurer:unit\s+id=([\w.\-]+)\s*-->")
-VARIANT_HEADER_RE = re.compile(r"^###\s+Variant\s+\d+\b", re.MULTILINE)
+VARIANT_HEADER_RE = re.compile(r"^###\s+Variant\s+(\d+)\b:?\s*(.*?)\s*$")
 PICK_LINE_RE = re.compile(r"^-\s+\[(\s|x|X)\]\s+Pick\s*$", re.MULTILINE)
 AXIS_LINE_RE = re.compile(r"^\*Axis:.*?\*\s*$", re.MULTILINE)
 
@@ -40,6 +40,8 @@ RESUME_PREFIX = "resume"
 
 @dataclass
 class Variant:
+    n: int
+    citation: str
     content: str
     picked: bool
 
@@ -66,13 +68,13 @@ def parse_variants_md(text: str) -> list[Unit]:
     """
     units: list[Unit] = []
     current_unit: Unit | None = None
-    in_variant = False
+    current_header: re.Match[str] | None = None
     current_lines: list[str] = []
 
     def finalize() -> None:
-        nonlocal in_variant, current_lines
-        if not in_variant or current_unit is None:
-            in_variant = False
+        nonlocal current_header, current_lines
+        if current_header is None or current_unit is None:
+            current_header = None
             current_lines = []
             return
         raw = "\n".join(current_lines).strip()
@@ -80,8 +82,15 @@ def parse_variants_md(text: str) -> list[Unit]:
         picked = bool(pick_match and pick_match.group(1).lower() == "x")
         content = PICK_LINE_RE.sub("", raw)
         content = AXIS_LINE_RE.sub("", content).strip()
-        current_unit.variants.append(Variant(content=content, picked=picked))
-        in_variant = False
+        current_unit.variants.append(
+            Variant(
+                n=int(current_header.group(1)),
+                citation=current_header.group(2),
+                content=content,
+                picked=picked,
+            )
+        )
+        current_header = None
         current_lines = []
 
     for line in text.splitlines():
@@ -92,12 +101,13 @@ def parse_variants_md(text: str) -> list[Unit]:
             units.append(current_unit)
             continue
 
-        if VARIANT_HEADER_RE.match(line):
+        header_match = VARIANT_HEADER_RE.match(line)
+        if header_match:
             finalize()
-            in_variant = True
+            current_header = header_match
             continue
 
-        if in_variant:
+        if current_header is not None:
             current_lines.append(line)
             if PICK_LINE_RE.match(line):
                 finalize()

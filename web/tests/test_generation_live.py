@@ -24,6 +24,8 @@ import pytest
 from app.adapters.generation_sdk import SdkGenerationPort
 from app.domain import FRAMES, Outline
 
+import composer
+
 HERE = Path(__file__).parent
 FIXTURE_WORKSPACE = HERE / "fixtures" / "workspace"
 SLUG = "globex-staff-platform"
@@ -55,8 +57,11 @@ def test_live_outline_and_variants_with_cache_hit():
             assert isinstance(outline, Outline)
             assert outline.strategic_frame in FRAMES
             assert outline.frame_rationale.strip()
+            assert outline.cover_letter_units
+            assert all(unit.unit_id.startswith("cover_letter.") for unit in outline.cover_letter_units)
             assert outline.resume_units, "expected at least one resume unit"
-            assert all(u.unit_id.startswith("resume.") for u in outline.resume_units)
+            eligible = set(composer.resume_unit_ids((FIXTURE_WORKSPACE / "master-resume.md").read_text()))
+            assert all(u.unit_id in eligible for u in outline.resume_units)
 
             # Two units on the persistent variant client: the 2nd must hit the cache.
             first, second = outline.resume_units[0], outline.resume_units[1]

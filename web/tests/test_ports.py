@@ -3,9 +3,12 @@
 
 from pathlib import Path
 
+import pytest
+
 from app.adapters.composition import ScriptCompositionPort
+from app.adapters.verification_fake import FakeVerificationPort, NoVerificationPort
 from app.adapters.workspace_fs import FsWorkspaceRepository
-from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
+from app.ports import CompositionPort, GenerationPort, VerificationPort, WorkspaceRepository
 
 FIXTURE = Path(__file__).parent / "fixtures" / "workspace"
 
@@ -23,3 +26,14 @@ def test_generation_port_protocol_surface():
     # contract's method surface exists (and import-cover the module).
     assert hasattr(GenerationPort, "outline")
     assert hasattr(GenerationPort, "variants")
+
+
+@pytest.mark.parametrize(
+    "verifier",
+    [
+        pytest.param(FakeVerificationPort(), id="fake"),
+        pytest.param(NoVerificationPort(), id="no-op"),
+    ],
+)
+def test_verification_adapters_satisfy_verification_port(verifier):
+    assert isinstance(verifier, VerificationPort)
