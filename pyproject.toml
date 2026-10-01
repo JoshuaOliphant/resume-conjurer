@@ -12,3 +12,17 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--cov=plugins --cov-branch --cov-report=term-missing"
+
+[tool.coverage.run]
+branch = true
+source = ["plugins"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

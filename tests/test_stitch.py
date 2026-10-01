@@ -2,6 +2,7 @@
 # ABOUTME: Verifies variants.md parsing, pick collection, and final-doc assembly.
 import stitch
 import pytest
+import sys
 
 VARIANTS_MD = """# Conjurer Variants
 
@@ -132,3 +133,28 @@ def test_nonexistent_master_resume_raises_with_path(tmp_path):
     missing = tmp_path / "does-not-exist.md"
     with pytest.raises(FileNotFoundError, match=str(missing)):
         stitch.stitch_app_dir(app, master_resume_path=missing)
+
+
+def test_collect_picks_ignores_non_document_unit():
+    text = VARIANTS_MD.replace("cover_letter.opening", "interview.opening")
+    units = stitch.parse_variants_md(text)
+    cover, resume = stitch.collect_picks(units)
+    assert cover == []
+    assert resume == [("resume.acme.platform.bullet_1", "- Architected the platform migration.")]
+
+
+def test_stitch_cli_reports_usage_and_written_paths(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["stitch.py"])
+    with pytest.raises(SystemExit, match="2"):
+        stitch.main()
+    assert "usage: python3 stitch.py" in capsys.readouterr().err
+
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "variants.md").write_text(VARIANTS_MD)
+    master = tmp_path / "master-resume.md"
+    master.write_text(MASTER)
+    monkeypatch.setattr(sys, "argv", ["stitch.py", str(app), str(master)])
+    stitch.main()
+    assert capsys.readouterr().out == f"Wrote {app / 'cover_letter.md'}\nWrote {app / 'resume.md'}\n"
+    assert (app / "resume.md").exists()
