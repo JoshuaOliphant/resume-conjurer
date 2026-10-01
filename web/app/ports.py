@@ -138,8 +138,10 @@ class WorkspaceRepository(Protocol):
         """Return the current unit_id -> picked variant_id mapping from variants.md."""
         ...
 
-    def save_support(self, slug: str, support: dict[str, Support]) -> None:
-        """Write applications/<slug>/support.json from verdicts keyed by variant id."""
+    def save_support(
+        self, slug: str, support: dict[str, Support], units: list[Unit], pool: Mapping[str, Evidence]
+    ) -> None:
+        """Write verdicts using checked units and their evidence snapshot for missing fingerprints."""
         ...
 
     def load_support(self, slug: str) -> dict[str, Support]:

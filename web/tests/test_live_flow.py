@@ -413,6 +413,19 @@ def test_live_review_stitches_and_lints_the_real_docs(workspace):
     assert "billing migration end to end" in (app_dir / "cover_letter.md").read_text()
 
 
+@pytest.mark.parametrize("route", ["/curate/0", "/review"])
+def test_unreadable_support_does_not_block_live_pages(workspace, caplog, route):
+    app = _prepare_picked_live_workspace(workspace)
+    (workspace / "applications" / SLUG / "support.json").mkdir()
+
+    with TestClient(app) as client:
+        response = client.get(route)
+
+    assert response.status_code == 200
+    assert "I led the billing migration end to end." in response.text
+    assert f"unreadable support.json for slug={SLUG}" in caplog.text
+
+
 def test_live_review_with_incomplete_picks_does_not_stitch_or_500(workspace):
     # A live user can open /review mid-curation. stitch needs one pick per unit, so when the
     # picks are incomplete we must NOT stitch (it would 500); we show the in-memory lint and

@@ -106,6 +106,13 @@ never a reason to hide, reorder, or regenerate a variant, and an unflagged varia
 - `fingerprint` is the sha256 hex digest of the UTF-8 text of the variant followed by each
   resolved cited line, joined by `\n`. **A row whose fingerprint no longer matches the variant is
   ignored**, so a hand-edited variant reads as "no verdict", never as a stale one.
+  Web saves preserve the checker's fingerprint. Verdicts without a fingerprint use the checked
+  units and evidence snapshot; saving never substitutes evidence edited after the check.
+
+The web review row is "Claim check of picked lines". It names flagged picks, unresolved
+citations, failed checks, and picks without a current verdict. A passing row means no picked
+line was flagged, not that every claim was proven. Support-file read and write failures are
+logged and leave generation and curation available without verdicts.
 
 ### Verdicts
 

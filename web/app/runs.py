@@ -149,7 +149,10 @@ class RunManager:
                 support.update(await self._check_claims(slug, unit, pool))
                 self._status[slug].units_done = len(units)
             self._repo.save_variants(slug, units)
-            self._repo.save_support(slug, support)
+            try:
+                self._repo.save_support(slug, support, units, pool)
+            except OSError as exc:
+                logger.warning("could not save support.json for slug=%s: %r", slug, exc)
             self._repo.save_metrics(slug, run_metrics)
             self._status[slug].state = "done"
         except Exception as exc:  # the agent can fail; we say so honestly rather than pretend.

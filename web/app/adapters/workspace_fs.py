@@ -355,23 +355,19 @@ class FsWorkspaceRepository:
 
     # --- support -----------------------------------------------------------
 
-    def save_support(self, slug: str, support: dict[str, Support]) -> None:
-        """Write support.json, fingerprinting each verdict against the variant in variants.md.
-
-        A verdict for a variant that variants.md does not hold gets an empty fingerprint, so it
-        never attaches on load.
-        """
-        pool = self.load_inputs(slug).evidence_pool
-        parsed = _parse_variants_md((self._app_dir(slug) / "variants.md").read_text())
+    def save_support(
+        self, slug: str, support: dict[str, Support], units: list[Unit], pool: Mapping[str, Evidence]
+    ) -> None:
+        """Write verdicts against the evidence snapshot used for their checks."""
         fingerprints = {
-            f"{punit.unit_id}#{pv.n}": _claim_fingerprint(pv.text, resolve_citation(pv.citation, pool), pool)
-            for punit in parsed
-            for pv in punit.variants
+            variant.id: _claim_fingerprint(variant.text, variant.evidence_items, pool)
+            for unit in units
+            for variant in unit.variants
         }
         document = {
             "model": verify.JEV_MODEL,
             "variants": {
-                variant_id: _support_row(s, fingerprints.get(variant_id, ""))
+                variant_id: _support_row(s, s.fingerprint or fingerprints.get(variant_id, ""))
                 for variant_id, s in support.items()
             },
         }
@@ -380,12 +376,12 @@ class FsWorkspaceRepository:
 
     def load_support(self, slug: str) -> dict[str, Support]:
         path = self._app_dir(slug) / "support.json"
-        if not path.exists():
-            return {}
         try:
+            if not path.exists():
+                return {}
             rows = json.loads(path.read_text())["variants"]
             return {variant_id: support_from_row(row) for variant_id, row in rows.items()}
-        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
             # Verdicts are advisory: a damaged support.json must not block curation.
             logger.warning("unreadable support.json for slug=%s: %r", slug, exc)
             return {}

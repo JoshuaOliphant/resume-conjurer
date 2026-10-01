@@ -3,14 +3,15 @@
 
 import asyncio
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.verification_fake import FakeVerificationPort, NoVerificationPort
-from app.adapters.workspace_fs import FsWorkspaceRepository
-from app.domain import OutlineUnit, Support
+from app.adapters.workspace_fs import FsWorkspaceRepository, cited_lines
+from app.domain import Evidence, OutlineUnit, Support
 from app.runs import RunManager
 
 import verify  # on sys.path once app.adapters.workspace_fs is imported
@@ -285,9 +286,9 @@ class RecordingRepo(FsWorkspaceRepository):
 
     saved_support: dict[str, Support] | None = None
 
-    def save_support(self, slug, support):
+    def save_support(self, slug, support, units, pool):
         self.saved_support = support
-        super().save_support(slug, support)
+        super().save_support(slug, support, units, pool)
 
 
 def test_run_verifies_each_unit_after_its_variants_and_saves_support_after_variants(workspace):
@@ -310,9 +311,9 @@ def test_run_verifies_each_unit_after_its_variants_and_saves_support_after_varia
             events.append(("save_variants", slug))
             super().save_variants(slug, units)
 
-        def save_support(self, slug, support):
+        def save_support(self, slug, support, units, pool):
             events.append(("save_support", slug))
-            super().save_support(slug, support)
+            super().save_support(slug, support, units, pool)
 
     scripted = {"cover_letter.opening#1": FLAGGED, "resume.fixture.bullet_1#2": TRACED}
     repo = LoggingRepo(workspace)
@@ -486,3 +487,66 @@ def test_concurrent_runs_across_slugs_stay_isolated(workspace):
     assert metrics_b is not None and metrics_b.slug == other_slug
     assert (workspace / "applications" / SLUG / "outline.json").exists()
     assert (workspace / "applications" / other_slug / "outline.json").exists()
+
+
+def test_support_write_failure_does_not_fail_generation(workspace, caplog):
+    repo = FsWorkspaceRepository(workspace)
+    (workspace / "applications" / SLUG / "support.json").mkdir()
+    manager = RunManager(repo, FakeGenerationPort(), NoVerificationPort())
+
+    async def go():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+
+    asyncio.run(go())
+
+    assert manager.status(SLUG).state == "done"
+    assert repo.load_metrics(SLUG) is not None
+    app = repo.load_application(SLUG)
+    assert app.units
+    assert all(v.support is None for unit in app.units for v in unit.variants)
+    assert f"could not save support.json for slug={SLUG}" in caplog.text
+    assert f"unreadable support.json for slug={SLUG}" in caplog.text
+
+
+def test_run_does_not_attach_verdicts_after_evidence_changes_during_verification(workspace):
+    class CitingGenerator(FakeGenerationPort):
+        async def variants(self, slug, unit, n=4):
+            variants = await super().variants(slug, unit, n)
+            citation = Evidence(id="master-resume.md L16", text="", source="master-resume.md L16")
+            return [replace(variant, evidence_items=(citation,)) for variant in variants]
+
+    class EditingVerifier(NoVerificationPort):
+        def __init__(self):
+            self.changed = False
+            self.fingerprints = {}
+
+        async def verify(self, unit, pool):
+            support = {}
+            for variant in unit.variants:
+                fingerprint = verify.fingerprint(variant.text, cited_lines(variant.evidence_items, pool))
+                self.fingerprints[variant.id] = fingerprint
+                support[variant.id] = Support(verdict="traced", fingerprint=fingerprint)
+            if not self.changed:
+                master = workspace / "master-resume.md"
+                master.write_text(
+                    master.read_text().replace("billing platform from a monolith", "an unrelated project")
+                )
+                self.changed = True
+            return support
+
+    repo = FsWorkspaceRepository(workspace)
+    verifier = EditingVerifier()
+    manager = RunManager(repo, CitingGenerator(), verifier)
+
+    async def go():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+
+    asyncio.run(go())
+
+    assert manager.status(SLUG).state == "done"
+    assert {key: value.fingerprint for key, value in repo.load_support(SLUG).items()} == verifier.fingerprints
+    app = repo.load_application(SLUG)
+    assert app.units
+    assert all(variant.support is None for unit in app.units for variant in unit.variants)

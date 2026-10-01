@@ -158,18 +158,33 @@ def _pick(label: str, support: Support | None) -> tuple[Unit, Variant]:
         pytest.param([], None, id="no-picks-no-row"),
         pytest.param([_pick("Opening", None), _pick("Bullet", None)], None, id="no-pick-checked-no-row"),
         pytest.param(
-            [_pick("Opening", TRACED), _pick("Bullet", None)],
-            LintCheck("Every picked line traces to your evidence", "No picked line was flagged.", True),
+            [_pick("Opening", TRACED), _pick("Bullet", TRACED)],
+            LintCheck("Claim check of picked lines", "No picked line was flagged.", True),
             id="no-pick-flagged-passes",
         ),
         pytest.param(
             [_pick("Opening", ADDS_DETAIL), _pick("Bullet", TRACED), _pick("Closing", CONFLICTS), _pick("Kicker", None)],
             LintCheck(
-                "Every picked line traces to your evidence",
-                "Opening: Adds detail your evidence doesn't state: 12. Closing: Conflicts with your evidence.",
+                "Claim check of picked lines",
+                "Opening: Adds detail your evidence doesn't state: 12. Closing: Conflicts with your evidence. Kicker: No current claim check.",
                 False,
             ),
             id="flagged-picks-fail-and-are-named-in-order",
+        ),
+        pytest.param(
+            [_pick("Opening", Support(verdict="untraced"))],
+            LintCheck("Claim check of picked lines", "Opening: Unverified citation.", False),
+            id="untraced-pick-does-not-pass",
+        ),
+        pytest.param(
+            [_pick("Opening", TRACED), _pick("Bullet", None)],
+            LintCheck("Claim check of picked lines", "Bullet: No current claim check.", False),
+            id="partially-checked-picks-do-not-pass",
+        ),
+        pytest.param(
+            [_pick("Opening", Support(verdict="unchecked"))],
+            LintCheck("Claim check of picked lines", "Opening: Couldn't check this line.", False),
+            id="failed-check-does-not-pass-without-note",
         ),
     ],
 )

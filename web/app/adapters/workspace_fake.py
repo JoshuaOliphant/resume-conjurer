@@ -16,8 +16,10 @@ The generation-persistence methods (``load_inputs`` / ``save_outline`` / ``load_
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from app.data import get_application
-from app.domain import Application, Outline, Support, Unit, WorkspaceInputs, validate_slug
+from app.domain import Application, Evidence, Outline, Support, Unit, WorkspaceInputs, validate_slug
 from app.metrics import RunMetrics
 
 
@@ -51,7 +53,9 @@ class FakeWorkspaceRepository:
     def load_metrics(self, slug: str) -> RunMetrics | None:
         raise NotImplementedError
 
-    def save_support(self, slug: str, support: dict[str, Support]) -> None:
+    def save_support(
+        self, slug: str, support: dict[str, Support], units: list[Unit], pool: Mapping[str, Evidence]
+    ) -> None:
         raise NotImplementedError
 
     # --- support -----------------------------------------------------------

@@ -175,18 +175,29 @@ ALL_FLAGGED_NOTE = (
     "Add the fact to your master resume, or pick the closest and edit it."
 )
 
-SUPPORT_CHECK_LABEL = "Every picked line traces to your evidence"
+SUPPORT_CHECK_LABEL = "Claim check of picked lines"
 
 
 def support_check(picked: list[tuple[Unit, Variant]]) -> LintCheck | None:
-    """The review row naming each picked line the claim check flagged; None when no pick was checked."""
-    checked = [(unit, variant.support) for unit, variant in picked if variant.support is not None]
-    if not checked:
+    """The review row naming flagged or incomplete checks; None when no pick has a verdict."""
+    if not any(variant.support is not None for _, variant in picked):
         return None
-    flagged = [f"{unit.label}: {support.note}." for unit, support in checked if support.flagged]
-    if not flagged:
+    issues = []
+    for unit, variant in picked:
+        support = variant.support
+        if support is None:
+            note = "No current claim check"
+        elif support.verdict == "untraced":
+            note = "Unverified citation"
+        elif support.verdict == "unchecked":
+            note = "Couldn't check this line"
+        else:
+            note = support.note
+        if note:
+            issues.append(f"{unit.label}: {note}.")
+    if not issues:
         return LintCheck(SUPPORT_CHECK_LABEL, "No picked line was flagged.", True)
-    return LintCheck(SUPPORT_CHECK_LABEL, " ".join(flagged), False)
+    return LintCheck(SUPPORT_CHECK_LABEL, " ".join(issues), False)
 
 
 # --- Outline (the generation step before variants) -------------------------

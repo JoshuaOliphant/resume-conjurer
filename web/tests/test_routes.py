@@ -202,7 +202,7 @@ def test_review_complete_hides_incomplete_banner(client):
     assert "haven’t chosen every line yet" not in r.text
 
 
-SUPPORT_ROW_LABEL = "Every picked line traces to your evidence"
+SUPPORT_ROW_LABEL = "Claim check of picked lines"
 EXPORT_LINK = '<a class="btn btn--primary" href="/export">'
 
 
@@ -217,6 +217,8 @@ def _support_row(html: str) -> str | None:
     [
         pytest.param(Support(verdict="conflicts", note="Conflicts with your evidence"), "fail", id="flagged-pick-fails"),
         pytest.param(Support(verdict="traced"), "pass", id="unflagged-pick-passes"),
+        pytest.param(Support(verdict="untraced"), "fail", id="untraced-pick-fails"),
+        pytest.param(Support(verdict="unchecked"), "fail", id="failed-check-fails"),
         pytest.param(None, None, id="unchecked-pick-no-row"),
     ],
 )
@@ -231,6 +233,11 @@ def test_review_support_row_follows_the_pick_and_never_blocks_export(support: Su
     else:
         assert row is not None and row.startswith(f' lint__row--{state}"')
     assert EXPORT_LINK in html
+    assert "Every picked line traces to your evidence" not in html
+    if support is not None and support.verdict == "untraced":
+        assert row is not None and "Unverified citation" in row
+    if support is not None and support.verdict == "unchecked":
+        assert row is not None and "Couldn&#39;t check this line" in row
 
 
 def test_review_names_each_flagged_pick_with_its_note(client):
@@ -244,7 +251,11 @@ def test_review_names_each_flagged_pick_with_its_note(client):
     note = "Adds detail your evidence doesn&#39;t state"
     row = _support_row(html)
     assert row is not None and row.startswith(' lint__row--fail"')
-    assert f"Opening paragraph: {note}. Kubernetes bullet: {note}." in row
+    opening_note = f"Opening paragraph: {note}."
+    kubernetes_note = f"Kubernetes bullet: {note}."
+    assert opening_note in row and kubernetes_note in row
+    assert row.index(opening_note) < row.index(kubernetes_note)
+    assert "No current claim check" in row
     assert "Every sentence still traces to your evidence" not in html
     assert EXPORT_LINK in html
 

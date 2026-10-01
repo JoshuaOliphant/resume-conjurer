@@ -542,7 +542,8 @@ def test_save_support_stamps_fingerprints_that_load_application_matches(
         "cover_letter.opening#2": Support(verdict="unchecked", note=verify.NOTES["unchecked"]),
         "resume.northwind.billing.bullet_1#9": Support(verdict="traced"),
     }
-    repo.save_support(SLUG, support)
+    pool = repo.load_inputs(SLUG).evidence_pool
+    repo.save_support(SLUG, support, _sample_units(pool), pool)
 
     cli = _cli_rows(workspace, {"cover_letter.opening#1": ("", []), "cover_letter.opening#2": ("", [])})
     stamped = {
@@ -561,7 +562,9 @@ def test_save_support_writes_the_documented_support_json(
 ) -> None:
     repo.save_outline(SLUG, _sample_outline())
     repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
-    repo.save_support(SLUG, {"cover_letter.opening#1": Support(verdict="unchecked")})
+    pool = repo.load_inputs(SLUG).evidence_pool
+    support = {"cover_letter.opening#1": Support(verdict="unchecked")}
+    repo.save_support(SLUG, support, _sample_units(pool), pool)
     document = json.loads((workspace / "applications" / SLUG / "support.json").read_text())
     jsonschema.validate(document, SUPPORT_SCHEMA)
     assert document["model"] == verify.JEV_MODEL
@@ -653,7 +656,7 @@ def test_save_support_fingerprints_a_saved_transient_citation_like_the_cli(
     repo.save_outline(SLUG, _sample_outline())
     unit = Unit(id="cover_letter.opening", kind="cover_paragraph", label="Opening", context="c", variants=[variant])
     repo.save_variants(SLUG, [unit])
-    repo.save_support(SLUG, {variant.id: Support(verdict="traced")})
+    repo.save_support(SLUG, {variant.id: Support(verdict="traced")}, [unit], repo.load_inputs(SLUG).evidence_pool)
     expected = _cli_rows(workspace, {variant.id: ("traced", [])})[variant.id]["fingerprint"]
     assert repo.load_support(SLUG)[variant.id].fingerprint == expected
 
@@ -697,3 +700,64 @@ def test_load_application_notes_a_unit_whose_every_variant_is_flagged(
         "resume.northwind.billing.bullet_1": None,
         "resume.northwind.billing.bullet_2": None,
     }
+
+
+@pytest.mark.parametrize("has_fingerprint", [False, True], ids=["fallback", "checked"])
+def test_save_support_keeps_the_checked_snapshot_after_workspace_edits(repo, workspace, has_fingerprint):
+    pool = repo.load_inputs(SLUG).evidence_pool
+    units = _sample_units(pool)
+    variant = units[0].variants[0]
+    cited = [item.text for item in variant.evidence_items]
+    fingerprint = verify.fingerprint(variant.text, cited)
+    support = Support(verdict="traced", fingerprint=fingerprint if has_fingerprint else "")
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, units)
+    master = workspace / "master-resume.md"
+    master.write_text(master.read_text().replace("billing platform from a monolith", "an unrelated project"))
+
+    repo.save_support(SLUG, {variant.id: support}, units, pool)
+
+    assert repo.load_support(SLUG)[variant.id].fingerprint == fingerprint
+    loaded = repo.load_application(SLUG)
+    assert loaded.units[0].variants[0].support is None
+
+
+def test_support_directory_does_not_block_loading_application(repo, workspace, caplog):
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
+    (workspace / "applications" / SLUG / "support.json").mkdir()
+
+    app = repo.load_application(SLUG)
+
+    assert all(v.support is None for unit in app.units for v in unit.variants)
+    assert f"unreadable support.json for slug={SLUG}" in caplog.text
+
+
+def test_support_stat_failure_is_advisory(repo, monkeypatch, caplog):
+    original_exists = Path.exists
+
+    def exists(path):
+        if path.name == "support.json":
+            raise PermissionError("support directory is inaccessible")
+        return original_exists(path)
+
+    monkeypatch.setattr(Path, "exists", exists)
+    assert repo.load_support(SLUG) == {}
+    assert "support directory is inaccessible" in caplog.text
+
+
+def test_save_support_preserves_a_verifiers_fingerprint_for_an_edited_claim(repo):
+    pool = repo.load_inputs(SLUG).evidence_pool
+    units = _sample_units(pool)
+    variant = units[0].variants[0]
+    checked_fingerprint = verify.fingerprint(variant.text, [item.text for item in variant.evidence_items])
+    units[0].variants[0] = replace(variant, text="An edited claim after checking")
+    repo.save_outline(SLUG, _sample_outline())
+    repo.save_variants(SLUG, units)
+
+    repo.save_support(
+        SLUG, {variant.id: Support(verdict="traced", fingerprint=checked_fingerprint)}, units, pool
+    )
+
+    assert repo.load_support(SLUG)[variant.id].fingerprint == checked_fingerprint
+    assert repo.load_application(SLUG).units[0].variants[0].support is None
