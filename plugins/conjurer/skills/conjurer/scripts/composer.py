@@ -2,9 +2,8 @@
 # ABOUTME: Matches sub-roles and standalone bullet sections; preserves untailored content.
 """Compose a tailored resume by slotting picked bullets into master-resume.md.
 
-Walks master-resume.md, finds the Experience section, and for each sub-role under
-each company H3, either keeps the master bullets unchanged or replaces them with
-the picked bullets that match the sub-role's unit_id.
+Walks master-resume.md and replaces only the bullet at each picked unit ID's
+position, keeping other bullets in their original order.
 
 Unit_id format: resume.<company>.<optional_subrole_qualifiers...>.bullet_<n>
   - 'resume.acme.bullet_1' matches the only Acme sub-role
@@ -17,7 +16,6 @@ Unknown or ambiguous targets raise RuntimeError rather than dropping picked cont
 """
 
 import re
-from collections import defaultdict
 from dataclasses import dataclass, field
 
 H3_RE = re.compile(r"^###\s+(.+?)\s+(?:—|--)\s+")
@@ -26,7 +24,8 @@ BULLET_RE = re.compile(r"^-\s")
 EXPERIENCE_RE = re.compile(r"^##\s+Experience\s*$")
 H2_RE = re.compile(r"^##\s+(.+?)\s*$")
 NESTED_HEADING_RE = re.compile(r"^#{3,}\s+")
-SECTION_UNIT_RE = re.compile(r"^resume\.([a-z0-9]+(?:_[a-z0-9]+)*)\.bullet_([1-9]\d*)$")
+SECTION_UNIT_RE = re.compile(r"^resume\.([a-z0-9]+(?:_[a-z0-9]+)*)\.bullet_([1-9][0-9]*)$")
+RESUME_UNIT_RE = re.compile(r"^resume(?:\.[a-z0-9]+(?:_[a-z0-9]+)*)+\.bullet_([1-9][0-9]*)$")
 START_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 
 STOPWORDS = frozenset(
@@ -44,7 +43,8 @@ def _tokens(text: str) -> set[str]:
 class SubRole:
     title_line: str
     tokens: frozenset
-    bullet_lines: list[str] = field(default_factory=list)
+    body_lines: list[str] = field(default_factory=list)
+    bullet_blocks: list[list[int]] = field(default_factory=list)
     start_year: int = 0
 
 
@@ -114,13 +114,14 @@ def _match_section(unit_id: str, sections: list[BulletSection]) -> BulletSection
 
 
 def _compose_sections(
-    lines: list[str], sections: list[BulletSection], grouped: dict[int, list[str]]
+    lines: list[str], sections: list[BulletSection], grouped: dict[int, dict[int, str]]
 ) -> list[str]:
     replacements: dict[int, list[str]] = {}
     for section in sections:
-        if id(section) in grouped:
-            replacements.update({position: [] for block in section.bullet_blocks for position in block})
-            replacements[section.bullet_blocks[0][0]] = grouped[id(section)]
+        for ordinal, bullet in grouped.get(id(section), {}).items():
+            block = section.bullet_blocks[ordinal - 1]
+            replacements.update({position: [] for position in block})
+            replacements[block[0]] = [bullet]
     return [text for position, line in enumerate(lines) for text in replacements.get(position, [line])]
 
 
@@ -145,12 +146,16 @@ def parse_master_resume(text: str) -> MasterStructure:
 
     current_role: RoleBlock | None = None
     current_sub: SubRole | None = None
+    bullet: list[int] | None = None
 
     def flush_sub() -> None:
-        nonlocal current_sub
+        nonlocal current_sub, bullet
         if current_sub is not None and current_role is not None:
+            while current_sub.body_lines and not current_sub.body_lines[-1].strip():
+                current_sub.body_lines.pop()
             current_role.sub_roles.append(current_sub)
             current_sub = None
+            bullet = None
 
     def flush_role() -> None:
         nonlocal current_role
@@ -188,8 +193,16 @@ def parse_master_resume(text: str) -> MasterStructure:
             i += 1
             continue
 
-        if BULLET_RE.match(line) and current_sub is not None:
-            current_sub.bullet_lines.append(line)
+        if current_sub is not None:
+            position = len(current_sub.body_lines)
+            current_sub.body_lines.append(line)
+            if BULLET_RE.match(line):
+                bullet = [position]
+                current_sub.bullet_blocks.append(bullet)
+            elif bullet is not None and line.startswith((" ", "\t")):
+                bullet.append(position)
+            elif line.strip():
+                bullet = None
             i += 1
             continue
 
@@ -253,7 +266,7 @@ def resume_unit_ids(master_text: str) -> tuple[str, ...]:
             prefix = f"resume.{_identifier(company)}.{_identifier(title)}"
             if len(_subrole_candidates(f"{prefix}.bullet_1", master.role_blocks)) != 1:
                 continue
-            targets.extend(f"{prefix}.bullet_{n}" for n in range(1, len(subrole.bullet_lines) + 1))
+            targets.extend(f"{prefix}.bullet_{n}" for n in range(1, len(subrole.bullet_blocks) + 1))
     targets.extend(unit_id for section in after for unit_id in section_ids(section))
     return tuple(targets)
 
@@ -261,19 +274,23 @@ def resume_unit_ids(master_text: str) -> tuple[str, ...]:
 def compose_resume(master_text: str, resume_picks: list[tuple[str, str]]) -> str:
     """Compose tailored resume by replacing matched role or section bullets with picks.
 
-    resume_picks: ordered list of (unit_id, content). Content may include
+    resume_picks: list of (unit_id, content). Content may include
     leading '- ' or not; we normalize.
 
-    Raises RuntimeError if any pick has no target or an ambiguous section target.
+    Raises RuntimeError for invalid, duplicate, missing, or ambiguous targets.
     """
     master = parse_master_resume(master_text)
     before = _bullet_sections(master.preamble)
     after = _bullet_sections(master.postamble)
 
-    grouped: dict[int, list[str]] = defaultdict(list)
+    grouped: dict[int, dict[int, str]] = {}
     unmatched: list[str] = []
 
     for unit_id, content in resume_picks:
+        match = RESUME_UNIT_RE.fullmatch(unit_id)
+        if match is None:
+            raise RuntimeError(f"Invalid resume bullet unit ID: {unit_id}")
+        ordinal = int(match.group(1))
         sr = match_subrole(unit_id, master.role_blocks)
         section = _match_section(unit_id, before + after)
         if sr is not None and section is not None:
@@ -282,10 +299,16 @@ def compose_resume(master_text: str, resume_picks: list[tuple[str, str]]) -> str
         if target is None:
             unmatched.append(unit_id)
             continue
+        bullet_count = len(target.bullet_blocks)
+        if ordinal > bullet_count:
+            raise RuntimeError(f"Could not match bullet ordinal: {unit_id}")
+        target_picks = grouped.setdefault(id(target), {})
+        if ordinal in target_picks:
+            raise RuntimeError(f"Duplicate bullet position: {unit_id}")
         bullet = content.strip()
         if not bullet.startswith("- "):
             bullet = f"- {bullet.lstrip('-').strip()}"
-        grouped[id(target)].append(bullet)
+        target_picks[ordinal] = bullet
 
     if unmatched:
         available = "\n".join(
@@ -312,10 +335,17 @@ def compose_resume(master_text: str, resume_picks: list[tuple[str, str]]) -> str
         for sr in rb.sub_roles:
             out.append("")
             out.append(sr.title_line)
-            if id(sr) in grouped:
-                out.extend(grouped[id(sr)])
-            else:
-                out.extend(sr.bullet_lines)
+            replacements = {
+                position: []
+                for ordinal in grouped.get(id(sr), {})
+                for position in sr.bullet_blocks[ordinal - 1]
+            }
+            for ordinal, bullet_text in grouped.get(id(sr), {}).items():
+                replacements[sr.bullet_blocks[ordinal - 1][0]] = [bullet_text]
+            out.extend(
+                text for position, line in enumerate(sr.body_lines)
+                for text in replacements.get(position, [line])
+            )
         out.append("")
 
     out.extend(_compose_sections(master.postamble, after, grouped))
