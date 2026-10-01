@@ -39,20 +39,22 @@ def test_partial_pick_preserves_remaining_bullets_without_postamble():
 def test_partial_pick_preserves_untouched_role_bullet_continuations():
     master = MASTER.replace(
         "- Old platform bullet one.\n- Old platform bullet two.",
-        "- Old platform bullet one.\n  Wrapped first line.\n- Old platform bullet two.\n  Wrapped second line.",
+        "- Old platform bullet one.\n  Wrapped first line.\nand continues without indentation.\n"
+        "- Old platform bullet two.\n  Wrapped second line.\nand continues too.",
     )
     out = composer.compose_resume(master, [("resume.acme.platform.bullet_1", "Replacement.")])
     assert "Wrapped first line." not in out
-    assert "- Replacement.\n- Old platform bullet two.\n  Wrapped second line." in out
+    assert "and continues without indentation." not in out
+    assert "- Replacement.\n- Old platform bullet two.\n  Wrapped second line.\nand continues too." in out
 
 
 def test_role_prose_stays_between_replaced_and_untouched_bullets():
     master = MASTER.replace(
         "- Old platform bullet one.\n- Old platform bullet two.",
-        "- Old platform bullet one.\nRole context.\n  Further context.\n- Old platform bullet two.",
+        "- Old platform bullet one.\n\nRole context.\n  Further context.\n- Old platform bullet two.",
     )
     out = composer.compose_resume(master, [("resume.acme.platform.bullet_1", "Replacement.")])
-    assert "- Replacement.\nRole context.\n  Further context.\n- Old platform bullet two." in out
+    assert "- Replacement.\n\nRole context.\n  Further context.\n- Old platform bullet two." in out
 
 
 def test_unmatched_pick_raises():
@@ -250,10 +252,12 @@ def test_standalone_section_replacement_preserves_other_bullet_continuations_and
 Independent introduction.
 - Original mentorship.
   A wrapped continuation.
+and continues without indentation.
 
   - A nested achievement.
     Its continuation.
 - Original coaching.
+and continues too.
 
 Independent closing paragraph.
 
@@ -262,7 +266,7 @@ Independent closing paragraph.
 """
     out = composer.compose_resume(master, [("resume.leadership.bullet_2", "Chosen coaching.")])
     assert "- Chosen coaching." in out
-    assert "- Original mentorship.\n  A wrapped continuation.\n\n  - A nested achievement.\n    Its continuation." in out
+    assert "- Original mentorship.\n  A wrapped continuation.\nand continues without indentation.\n\n  - A nested achievement.\n    Its continuation." in out
     assert "Original coaching." not in out
     assert "Independent introduction." in out
     assert "Independent closing paragraph." in out
@@ -274,5 +278,6 @@ Independent closing paragraph.
     first_replaced = composer.compose_resume(master, [("resume.leadership.bullet_1", "Chosen mentorship.")])
     assert "Original mentorship." not in first_replaced
     assert "A wrapped continuation." not in first_replaced
+    assert "and continues without indentation." not in first_replaced
     assert "A nested achievement." not in first_replaced
-    assert "- Chosen mentorship.\n\n- Original coaching." in first_replaced
+    assert "- Chosen mentorship.\n\n- Original coaching.\nand continues too." in first_replaced
