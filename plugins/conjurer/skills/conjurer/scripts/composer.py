@@ -78,6 +78,7 @@ def _bullet_sections(lines: list[str]) -> list[BulletSection]:
     sections: list[BulletSection] = []
     current: BulletSection | None = None
     bullet: list[int] | None = None
+    lazy = False
     direct = False
     for position, line in enumerate(lines):
         heading = H2_RE.match(line)
@@ -86,15 +87,22 @@ def _bullet_sections(lines: list[str]) -> list[BulletSection]:
             sections.append(current)
             direct = True
             bullet = None
+            lazy = False
         elif NESTED_HEADING_RE.match(line):
             direct = False
             bullet = None
+            lazy = False
         elif direct and current is not None and BULLET_RE.match(line):
             bullet = [position]
             current.bullet_blocks.append(bullet)
+            lazy = True
+        elif not line.strip():
+            lazy = False
         elif bullet is not None and line.startswith((" ", "\t")):
             bullet.append(position)
-        elif line.strip():
+        elif bullet is not None and lazy:
+            bullet.append(position)
+        else:
             bullet = None
     return [section for section in sections if section.identifier and section.bullet_blocks]
 
@@ -147,15 +155,17 @@ def parse_master_resume(text: str) -> MasterStructure:
     current_role: RoleBlock | None = None
     current_sub: SubRole | None = None
     bullet: list[int] | None = None
+    lazy = False
 
     def flush_sub() -> None:
-        nonlocal current_sub, bullet
+        nonlocal current_sub, bullet, lazy
         if current_sub is not None and current_role is not None:
             while current_sub.body_lines and not current_sub.body_lines[-1].strip():
                 current_sub.body_lines.pop()
             current_role.sub_roles.append(current_sub)
             current_sub = None
             bullet = None
+            lazy = False
 
     def flush_role() -> None:
         nonlocal current_role
@@ -199,9 +209,14 @@ def parse_master_resume(text: str) -> MasterStructure:
             if BULLET_RE.match(line):
                 bullet = [position]
                 current_sub.bullet_blocks.append(bullet)
+                lazy = True
+            elif not line.strip():
+                lazy = False
             elif bullet is not None and line.startswith((" ", "\t")):
                 bullet.append(position)
-            elif line.strip():
+            elif bullet is not None and lazy:
+                bullet.append(position)
+            else:
                 bullet = None
             i += 1
             continue
