@@ -410,12 +410,16 @@ def test_live_review_stitches_and_lints_the_real_docs(workspace):
         r = c.get("/review")
     assert r.status_code == 200
     assert "Style check" in r.text
+    assert "<li>Led the billing platform migration to event-driven services.</li>" in r.text
+    assert "<li>- Led the billing platform migration" not in r.text
     # Stitch wrote the real documents to the workspace.
     app_dir = workspace / "applications" / SLUG
     assert (app_dir / "cover_letter.md").exists()
     assert (app_dir / "resume.md").exists()
     # The picked content is in the stitched cover letter.
     assert "billing migration end to end" in (app_dir / "cover_letter.md").read_text()
+    assert "- Led the billing platform migration to event-driven services." in (app_dir / "resume.md").read_text()
+    assert "- Led the billing platform migration to event-driven services." in (app_dir / "variants.md").read_text()
 
 
 @pytest.mark.live

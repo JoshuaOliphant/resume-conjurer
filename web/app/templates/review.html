@@ -27,7 +27,7 @@
     <h2>{{ app_data.role }}: tailored highlights</h2>
     <ul class="doc__bullets">
       {% for unit, v in bullets %}
-      <li>{{ v.text }}</li>
+      <li>{{ v.text.removeprefix('- ') }}</li>
       {% endfor %}
     </ul>
   </article>
