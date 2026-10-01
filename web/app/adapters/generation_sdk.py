@@ -4,8 +4,8 @@
 
 Verified against the SDK live (see web/IMPLEMENTATION_PLAN.md "Spike results"):
 
-- Outline uses a client with ``output_format`` = OUTLINE_SCHEMA and reads
-  ``ResultMessage.structured_output``.
+- Outline constrains ``output_format`` to the master resume's composable bullet slots
+  and reads ``ResultMessage.structured_output``.
 - Variants use a SEPARATE persistent client (no output_format) that dispatches the
   plugin's ``conjurer:variant-generator`` subagent and relays its native ``## Unit:``
   block; we extract the variants from that block.
@@ -24,9 +24,14 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.adapters.scripts_path import ensure_scripts_on_path
 from app.domain import Evidence, Outline, OutlineUnit, UnitKind, Variant
 from app.metrics import CallMetrics
-from app.schemas import OUTLINE_SCHEMA
+from app.schemas import outline_schema_for_resume_units
+
+ensure_scripts_on_path()
+
+import composer  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_PLUGIN_DIR = REPO_ROOT / "plugins" / "conjurer"
@@ -55,8 +60,9 @@ _VARIANT_RE = re.compile(
 # --- Pure helpers (offline-tested) -----------------------------------------
 
 
-def build_outline_prompt(slug: str) -> str:
+def build_outline_prompt(slug: str, resume_unit_ids: tuple[str, ...]) -> str:
     """Prompt for the discrete outline step, grounded in the workspace files for slug."""
+    slots = "\n".join(f"- {unit_id}" for unit_id in resume_unit_ids)
     return (
         "Read these files in the current working directory and design a tailored application "
         "outline:\n"
@@ -66,8 +72,10 @@ def build_outline_prompt(slug: str) -> str:
         f"- applications/{slug}/evidence.md (extra evidence)\n\n"
         "Choose exactly ONE strategic frame: scale, friction, conviction, or multiplier. Then "
         "design the unit skeleton, in document order: the cover-letter paragraphs and the resume "
-        "bullets worth tailoring. Resume unit_ids encode the role: "
-        "resume.<company>.<subrole?>.bullet_<n>; cover-letter unit_ids start with cover_letter. "
+        "bullets worth tailoring. Resume unit_ids must use only these existing bullet slots, "
+        "in the listed document order, with each slot included at most once:\n"
+        f"{slots}\nLeave slots that do not need tailoring out of the outline. "
+        "Cover-letter unit_ids start with cover_letter. "
         "Do only the outline. Do not generate variants, initialize anything, or write files."
     )
 
@@ -185,6 +193,7 @@ class SdkGenerationPort:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
         from claude_agent_sdk.types import ResultMessage
 
+        resume_unit_ids = composer.resume_unit_ids((self.workspace / "master-resume.md").read_text())
         options = ClaudeAgentOptions(
             # `tools` restricts the AVAILABLE toolset (least privilege); `allowed_tools`
             # only auto-approves. The outline step needs no subagent, so restricting `tools`
@@ -192,12 +201,15 @@ class SdkGenerationPort:
             tools=["Read", "Glob", "Grep"],
             allowed_tools=["Read", "Glob", "Grep"],
             permission_mode="bypassPermissions",
-            output_format={"type": "json_schema", "schema": OUTLINE_SCHEMA},
+            output_format={
+                "type": "json_schema",
+                "schema": outline_schema_for_resume_units(resume_unit_ids),
+            },
             **self._base_options(),
         )
         structured: Any = None
         async with ClaudeSDKClient(options=options) as client:
-            await client.query(build_outline_prompt(slug))
+            await client.query(build_outline_prompt(slug, resume_unit_ids))
             async for msg in client.receive_response():
                 if isinstance(msg, ResultMessage):
                     structured = msg.structured_output

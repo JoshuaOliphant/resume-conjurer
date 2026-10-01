@@ -5,6 +5,7 @@ import asyncio
 import re
 from pathlib import Path
 
+import jsonschema
 import pytest
 
 from app.adapters.generation_fake import FakeGenerationPort
@@ -21,7 +22,10 @@ from app.adapters.generation_sdk import (
 from app.adapters.workspace_fs import FsWorkspaceRepository, resolve_citation
 from app.domain import FRAMES, Outline, OutlineUnit
 from app.ports import GenerationPort
+from app.schemas import OUTLINE_SCHEMA, outline_schema_for_resume_units
 from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+
+import composer
 
 SLUG = "globex-staff-platform"
 FIXTURE_WORKSPACE = Path(__file__).parent / "fixtures" / "workspace"
@@ -135,10 +139,11 @@ def test_fake_records_synthetic_metrics_with_a_cold_then_warm_cache():
 
 
 def test_build_outline_prompt_mentions_slug_and_frames():
-    prompt = build_outline_prompt("globex-staff-platform")
+    prompt = build_outline_prompt("globex-staff-platform", ("resume.northwind.billing_platform.bullet_1",))
     assert "applications/globex-staff-platform/jd.txt" in prompt
     assert "scale" in prompt and "multiplier" in prompt
     assert "Do not generate variants" in prompt
+    assert "resume.northwind.billing_platform.bullet_1" in prompt
 
 
 def test_build_variant_prompt_dispatches_the_subagent_with_both_evidence_sources():
@@ -266,3 +271,43 @@ def test_variants_from_block_final_variant_multiline_to_end_of_string():
     assert "across three regions" in variants[1].text
     assert "rotation that followed." in variants[1].text
     assert variants[1].evidence_items[0].id == "master-resume.md L17"
+
+
+
+@pytest.mark.parametrize("unit_ids", [(), ("resume.northwind.billing_platform.bullet_1", "resume.leadership.bullet_1")])
+def test_outline_schema_only_accepts_existing_resume_slots(unit_ids):
+    schema = outline_schema_for_resume_units(unit_ids)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    outline = {
+        "strategic_frame": "multiplier",
+        "frame_rationale": "Leverage over teams",
+        "company": "Globex",
+        "role_title": "Staff Platform Engineer",
+        "cover_letter_units": [{"unit_id": "cover_letter.opening", "description": "Open the letter"}],
+        "resume_units": [{"unit_id": unit_id, "description": "Tailor this bullet"} for unit_id in unit_ids],
+    }
+    jsonschema.validate(outline, schema)
+    outline["resume_units"] = [{"unit_id": "resume.invented.role.bullet_1", "description": "Invented slot"}]
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(outline, schema)
+    assert "enum" not in OUTLINE_SCHEMA["properties"]["resume_units"]["items"]["properties"]["unit_id"]
+    assert "maxItems" not in OUTLINE_SCHEMA["properties"]["resume_units"]
+
+
+def test_master_resume_schema_slots_all_compose_into_their_existing_sections():
+    master = (FIXTURE_WORKSPACE / "master-resume.md").read_text()
+    unit_ids = composer.resume_unit_ids(master)
+    assert "resume.leadership.bullet_1" in unit_ids
+    schema = outline_schema_for_resume_units(unit_ids)
+    for unit_id in unit_ids:
+        outline = {
+            "strategic_frame": "multiplier",
+            "frame_rationale": "Leverage over teams",
+            "company": "Globex",
+            "role_title": "Staff Platform Engineer",
+            "cover_letter_units": [],
+            "resume_units": [{"unit_id": unit_id, "description": "Tailor an existing bullet"}],
+        }
+        jsonschema.validate(outline, schema)
+        marker = f"Tailored content for {unit_id}"
+        assert marker in composer.compose_resume(master, [(unit_id, marker)])

@@ -23,7 +23,7 @@ The same synthetic outline completed with CLI 2.1.285 in 84.14 seconds; the olde
 | Persistent session so the static context stays warm in prompt cache | `async with ClaudeSDKClient(options) as client:` then repeated `await client.query(...)` / `async for m in client.receive_response()`. **Connect once, reuse** — the load-bearing rule from BACKEND.md. |
 | Reuse the existing conjurer skill + `variant-generator` subagent (no prompt duplication) | `ClaudeAgentOptions(plugins=[{"type":"local","path":"<repo>/plugins/conjurer"}], skills=["conjurer"])` |
 | Ground the agent against the workspace files | `cwd="<workspace>"` so `Read`/`Glob` resolve `grimoire.md`, `master-resume.md`, `applications/<slug>/…` |
-| Outline as a validated contract | `output_format={"type":"json_schema","schema": OUTLINE_SCHEMA}` → read `ResultMessage.structured_output` (OUTLINE_SCHEMA mirrors `references/pipeline.md` exactly) |
+| Outline as a validated contract | Copy `OUTLINE_SCHEMA` and constrain resume unit IDs to `composer.resume_unit_ids(master_text)` before setting `output_format`; read `ResultMessage.structured_output`. The outline.json fields still mirror `references/pipeline.md`. |
 | Per-unit variants | one query per unit (see fork below); structured output or the `## Unit:` block format from `variant-generator.md` |
 | Parallel fan-out option | `agents=` / loaded plugin subagent invoked via the default `Agent` tool with `can_use_tool` handling permission prompts; subagent messages carry `parent_tool_use_id` for per-unit progress |
 | Least privilege | Outline: `tools=["Read","Glob","Grep"]`; variants: default toolset plus deny-by-default `can_use_tool` for permission prompts, without bypass or whole-tool auto-approval |
@@ -58,7 +58,7 @@ empirical, not doc-inferred:
 - **`output_format` is an options-level field, fixed per client** — `client.query(prompt,
   session_id)` takes NO per-call options (confirmed in `client.py`). So outline and variants need
   **two clients** (different/absent `output_format`), not one.
-- **Outline client:** `output_format={"type":"json_schema","schema": OUTLINE_SCHEMA}` →
+- **Outline client:** `output_format={"type":"json_schema","schema": outline_schema_for_resume_units(resume_unit_ids)}` →
   `ResultMessage.structured_output` is a valid outline dict. The agent does **not** auto-run the
   pipeline and does **not** write `outline.json` — *we* persist it from `structured_output`.
 - **Variants client (no `output_format`):** instruct it to use the `conjurer:variant-generator`
@@ -89,7 +89,8 @@ base = dict(
 outline_opts = ClaudeAgentOptions(
     tools=["Read","Glob","Grep"], allowed_tools=["Read","Glob","Grep"],
     permission_mode="bypassPermissions",
-    output_format={"type":"json_schema","schema": OUTLINE_SCHEMA}, **base)
+    output_format={"type":"json_schema","schema": outline_schema_for_resume_units(
+        composer.resume_unit_ids(master_text))}, **base)
 # Variant: cannot use a `tools` allowlist (breaks subagent dispatch), so it does NOT bypass
 # and instead supplies a deny-by-default `can_use_tool` guard (guard_variant_tool).
 variant_opts = ClaudeAgentOptions(

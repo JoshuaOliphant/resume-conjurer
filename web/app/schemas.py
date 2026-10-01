@@ -2,8 +2,8 @@
 # ABOUTME: Mirror the shapes documented in plugins/.../references/pipeline.md exactly.
 """The outline contract as a JSON Schema.
 
-The live generation adapter passes this as ``output_format={"type":"json_schema",
-"schema": OUTLINE_SCHEMA}`` so the SDK returns a validated dict in
+The live generation adapter narrows outline unit IDs to the master resume's composable
+bullet slots before passing the schema to the SDK. The SDK returns a validated dict in
 ``ResultMessage.structured_output`` (verified live; see web/IMPLEMENTATION_PLAN.md).
 Keep the keys identical to the conjurer pipeline's outline.json so the web and CLI
 paths share one contract.
@@ -11,6 +11,7 @@ paths share one contract.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 _UNIT_ITEMS: dict[str, Any] = {
@@ -46,6 +47,19 @@ OUTLINE_SCHEMA: dict[str, Any] = {
         "resume_units",
     ],
 }
+
+
+def outline_schema_for_resume_units(unit_ids: tuple[str, ...]) -> dict[str, Any]:
+    """Constrain generation to the master resume's composable bullet slots."""
+    schema = deepcopy(OUTLINE_SCHEMA)
+    resume_units = schema["properties"]["resume_units"]
+    if unit_ids:
+        resume_units["items"] = deepcopy(resume_units["items"])
+        resume_units["items"]["properties"]["unit_id"]["enum"] = list(unit_ids)
+    else:
+        resume_units["maxItems"] = 0
+    return schema
+
 
 # Mirrors applications/<slug>/support.json, the claim check's output (the "Claim check"
 # section of plugins/.../references/pipeline.md). The CLI and the web both write it.

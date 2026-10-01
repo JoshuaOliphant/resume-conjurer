@@ -27,9 +27,25 @@ Be decisive: one strategic frame, clearly justified. Units in document order —
 first, then resume bullets in the order they appear in the master resume. Only include resume
 bullets worth tailoring; leave older roles untouched.
 
-Resume `unit_id`s must encode the role so the stitcher can match them to a sub-role:
+Experience `unit_id`s encode the role so the stitcher can match them to a sub-role:
 `resume.<company>.<optional subrole qualifiers>.bullet_<n>` (for example
 `resume.acme.platform.bullet_1`). Token overlap matches the unit to its sub-role.
+
+Standalone H2 sections with direct bullets can also be tailored, using
+`resume.<normalized_heading>.bullet_<n>`: `## Leadership` becomes
+`resume.leadership.bullet_1`. Normalize the complete heading to lowercase words joined by
+underscores, preserving word order. Match the heading exactly; nested subsection bullets,
+prose-only sections, and ambiguous headings are not targets. The ordinal must identify an
+existing direct bullet. As with a targeted role, selected variants replace the targeted
+section's entire direct-bullet list, in pick order; the ordinal identifies an eligible slot,
+not an instruction to preserve the other original bullets. Wrapped and nested content belongs
+to its original bullet and is replaced with it. The stitcher keeps unrelated headings, prose,
+and subsection content in place.
+
+`composer.resume_unit_ids(master_resume_text)` returns the canonical eligible IDs in document
+order. Use only those existing targets when creating an outline; a subset is fine. It excludes
+ambiguous role or section identifiers. Unknown or ambiguous picks fail composition rather
+than disappearing from the exported resume.
 
 ## Strategic frames
 
