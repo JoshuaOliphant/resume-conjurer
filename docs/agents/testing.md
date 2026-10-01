@@ -23,7 +23,7 @@ its own suite.
 
 | Gate | Command | Status |
 |---|---|---|
-| Plugin suite and coverage | `uv run pytest -q` | passing (210 tests, 100% line and branch, enforced by `fail_under` in root `pyproject.toml`) |
+| Plugin suite and coverage | `uv run pytest -q` | passing (100% line and branch, enforced by `fail_under` in root `pyproject.toml`) |
 | Web suite and coverage | `cd web && uv run pytest -q` | passing (100% line and branch, enforced by `fail_under` in `web/pyproject.toml`) |
 | Lint | `uvx ruff check .` | passing |
 | Types | `cd web && uvx ty check` | passing |
