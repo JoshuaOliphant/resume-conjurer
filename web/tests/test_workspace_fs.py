@@ -368,6 +368,28 @@ def test_set_pick_does_not_corrupt_other_units(repo: FsWorkspaceRepository) -> N
     }
 
 
+def test_colonless_variant_header_keeps_pick_citation_and_text(
+    repo: FsWorkspaceRepository, workspace: Path
+) -> None:
+    repo.save_outline(SLUG, _sample_outline())
+    pool = repo.load_inputs(SLUG).evidence_pool
+    repo.save_variants(SLUG, _sample_units(pool))
+    path = workspace / "applications" / SLUG / "variants.md"
+    text = path.read_text().replace(
+        "### Variant 2: master-resume.md L17", "### Variant 2 master-resume.md L17"
+    )
+    path.write_text(text)
+
+    repo.set_pick(SLUG, "cover_letter.opening", "cover_letter.opening#2")
+
+    assert repo.get_picks(SLUG) == {"cover_letter.opening": "cover_letter.opening#2"}
+    variant = repo.load_application(SLUG).units[0].variants[1]
+    assert variant.id == "cover_letter.opening#2"
+    assert variant.text == "The migration cut invoicing to seconds."
+    assert [item.id for item in variant.evidence()] == ["master-resume.md L17"]
+    assert variant.evidence()[0].grounded is True
+
+
 def test_relayed_block_survives_save_then_load_application(repo: FsWorkspaceRepository) -> None:
     # Cross-parser round-trip: the SDK adapter parses a relayed variant-generator block into
     # domain Units, the repository writes them to variants.md, and load_application reads them
