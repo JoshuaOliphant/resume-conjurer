@@ -6,6 +6,7 @@ import logging
 import runpy
 import threading
 import time
+from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -135,7 +136,7 @@ class JevStub:
 
     def __init__(self, url):
         self.url = url
-        self.responses = dict(RECORDED)
+        self.responses = deepcopy(RECORDED)
         self.status = 200
         self.raw_body = None
         self.delay = 0.0
@@ -340,6 +341,43 @@ def test_check_variant_records_a_failed_request_as_unchecked(jev, caplog, status
     (record,) = caplog.records
     assert "Claim check failed" in record.getMessage()
     assert error in record.getMessage()
+
+
+@pytest.mark.parametrize("choice", ["unexpected", None, 1, True, [], {}])
+def test_check_variant_rejects_invalid_relation_choices(jev, caplog, choice):
+    jev.responses[("relation", TEAM_SIZE_CLAIM)]["answers"]["relation"]["choice"] = choice
+    with caplog.at_level(logging.WARNING, logger="verify"):
+        row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [MIGRATION], "sk-test", url=jev.url)
+    assert row["verdict"] == "unchecked"
+    assert (row["relation"], row["relation_confidence"], row["unstated"]) == (None, None, None)
+    (record,) = caplog.records
+    assert "Claim check failed" in record.getMessage()
+
+
+@pytest.mark.parametrize("question, field", [("relation", "confidence"), ("unstated", "noul")])
+@pytest.mark.parametrize(
+    "value",
+    ["0.2", None, True, False, [], {}, -0.01, 1.01, float("nan"), float("inf"), float("-inf")],
+)
+def test_check_variant_rejects_invalid_probabilities(jev, caplog, question, field, value):
+    jev.responses[(question, TEAM_SIZE_CLAIM)]["answers"][question][field] = value
+    with caplog.at_level(logging.WARNING, logger="verify"):
+        row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [MIGRATION], "sk-test", url=jev.url)
+    assert row["verdict"] == "unchecked"
+    assert (row["relation"], row["relation_confidence"], row["unstated"]) == (None, None, None)
+    (record,) = caplog.records
+    assert "expected a probability between 0 and 1" in record.getMessage()
+
+
+@pytest.mark.parametrize("choice", list(verify.RELATION_QUESTION["criteria"]))
+@pytest.mark.parametrize("value", [0, 1, 0.0, 1.0, 0.5])
+def test_check_variant_accepts_relation_choices_and_probability_boundaries(jev, choice, value):
+    relation = jev.responses[("relation", TEAM_SIZE_CLAIM)]["answers"]["relation"]
+    relation["choice"], relation["confidence"] = choice, value
+    jev.responses[("unstated", TEAM_SIZE_CLAIM)]["answers"]["unstated"]["noul"] = value
+    row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [MIGRATION], "sk-test", url=jev.url)
+    assert row["verdict"] == verify.verdict_for(Reading(choice, value, value), has_trace=True)
+    assert (row["relation"], row["relation_confidence"], row["unstated"]) == (choice, value, value)
 
 
 def test_verify_app_dir_writes_one_row_per_variant(jev, workspace):

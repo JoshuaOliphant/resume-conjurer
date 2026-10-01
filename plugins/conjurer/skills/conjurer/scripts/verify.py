@@ -156,16 +156,26 @@ def ask_jev(state: dict, questions: dict, api_key: str, url: str = JEV_URL, time
         return json.loads(response.read())["answers"]
 
 
+def _probability(value: object, field: str) -> float:
+    if type(value) not in (int, float) or not 0 <= value <= 1:
+        raise ValueError(f"Invalid Jev {field}: expected a probability between 0 and 1")
+    return float(value)
+
+
 def _read(claim: str, cited: list[str], pool: list[str], api_key: str, url: str) -> Reading:
     relation = confidence = None
     if cited:
         answer = ask_jev(
             {"claim": claim, "evidence": cited}, {"relation": RELATION_QUESTION}, api_key, url
         )["relation"]
-        relation, confidence = answer["choice"], answer["confidence"]
-    unstated = ask_jev(
+        relation = answer["choice"]
+        if relation not in RELATION_QUESTION["criteria"]:
+            raise ValueError("Invalid Jev relation choice")
+        confidence = _probability(answer["confidence"], "relation confidence")
+    answer = ask_jev(
         {"claim": claim, "evidence": pool}, {"unstated": UNSTATED_QUESTION}, api_key, url
-    )["unstated"]["noul"]
+    )["unstated"]
+    unstated = _probability(answer["noul"], "unstated noul")
     return Reading(relation=relation, relation_confidence=confidence, unstated=unstated)
 
 
