@@ -9,9 +9,8 @@ generated ``outline.json`` / ``variants.md``. This adapter is the only place tha
 knows that layout; the workspace root is injected so a future multi-user resolver
 can scope a slug to a different root without touching these methods.
 
-``variants.md`` is the canonical store for variants AND picks. The parser here
-keeps each variant's ``### Variant N: <citation>`` number and citation so we can
-resolve its evidence trace back into the domain.
+``variants.md`` is the canonical store for variants AND picks. The stitch parser
+keeps each variant's number and citation so we can resolve its evidence trace.
 """
 
 from __future__ import annotations
@@ -44,16 +43,10 @@ from app.metrics import RunMetrics
 ensure_scripts_on_path()
 
 import citations  # noqa: E402
+from stitch import PICK_LINE_RE, UNIT_MARKER_RE, VARIANT_HEADER_RE, parse_variants_md  # noqa: E402
 import verify  # noqa: E402
 
 logger = logging.getLogger(__name__)
-
-# variants.md grammar. The unit marker and pick line mirror stitch.py exactly so
-# the two stay in lockstep.
-UNIT_MARKER_RE = re.compile(r"<!--\s*conjurer:unit\s+id=([\w.\-]+)\s*-->")
-VARIANT_HEADER_RE = re.compile(r"^###\s+Variant\s+(\d+):\s*(.*?)\s*$")
-PICK_LINE_RE = re.compile(r"^-\s+\[(\s|x|X)\]\s+Pick\s*$")
-AXIS_LINE_RE = re.compile(r"^\*Axis:.*?\*\s*$", re.MULTILINE)
 
 COVER_LETTER_PREFIX = "cover_letter."
 RESUME_PREFIX = "resume."
@@ -123,84 +116,6 @@ def support_from_row(row: dict) -> Support:
         unstated=row["unstated"],
         fingerprint=row["fingerprint"],
     )
-
-
-class _ParsedVariant:
-    """A variant as read from variants.md, before domain resolution."""
-
-    def __init__(self, n: int, citation: str, text: str, picked: bool) -> None:
-        self.n = n
-        self.citation = citation
-        self.text = text
-        self.picked = picked
-
-
-class _ParsedUnit:
-    def __init__(self, unit_id: str) -> None:
-        self.unit_id = unit_id
-        self.variants: list[_ParsedVariant] = []
-
-
-def _parse_variants_md(text: str) -> list[_ParsedUnit]:
-    """Walk variants.md, keeping each variant's number and citation.
-
-    A variant's content runs from its ``### Variant N: <citation>`` header to its
-    ``- [ ] Pick`` line; the Axis line and Pick line are stripped from the text.
-    """
-    units: list[_ParsedUnit] = []
-    current_unit: _ParsedUnit | None = None
-    current_header: re.Match[str] | None = None
-    current_lines: list[str] = []
-
-    def finalize() -> None:
-        nonlocal current_header, current_lines
-        if current_header is None or current_unit is None:
-            current_header = None
-            current_lines = []
-            return
-        raw = "\n".join(current_lines).strip()
-        pick_match = None
-        for line in current_lines:
-            m = PICK_LINE_RE.match(line)
-            if m:
-                pick_match = m
-        picked = bool(pick_match and pick_match.group(1).lower() == "x")
-        content = "\n".join(
-            line for line in raw.splitlines() if not PICK_LINE_RE.match(line)
-        )
-        content = AXIS_LINE_RE.sub("", content).strip()
-        current_unit.variants.append(
-            _ParsedVariant(
-                n=int(current_header.group(1)),
-                citation=current_header.group(2).strip(),
-                text=content,
-                picked=picked,
-            )
-        )
-        current_header = None
-        current_lines = []
-
-    for line in text.splitlines():
-        unit_match = UNIT_MARKER_RE.search(line)
-        if unit_match:
-            finalize()
-            current_unit = _ParsedUnit(unit_match.group(1))
-            units.append(current_unit)
-            continue
-
-        header_match = VARIANT_HEADER_RE.match(line)
-        if header_match:
-            finalize()
-            current_header = header_match
-            continue
-
-        if current_header is not None:
-            current_lines.append(line)
-            if PICK_LINE_RE.match(line):
-                finalize()
-
-    finalize()
-    return units
 
 
 class FsWorkspaceRepository:
@@ -335,7 +250,7 @@ class FsWorkspaceRepository:
     def get_picks(self, slug: str) -> dict[str, str]:
         path = self._app_dir(slug) / "variants.md"
         picks: dict[str, str] = {}
-        for unit in _parse_variants_md(path.read_text()):
+        for unit in parse_variants_md(path.read_text()):
             for variant in unit.variants:
                 if variant.picked:
                     picks[unit.unit_id] = f"{unit.unit_id}#{variant.n}"
@@ -398,7 +313,7 @@ class FsWorkspaceRepository:
         contexts = {u.unit_id: u.description for u in outline.units}
         order = {u.unit_id: i for i, u in enumerate(outline.units)}
 
-        parsed = _parse_variants_md((self._app_dir(slug) / "variants.md").read_text())
+        parsed = parse_variants_md((self._app_dir(slug) / "variants.md").read_text())
         support = self.load_support(slug)
         cited: dict[str, Evidence] = {}
 
@@ -409,9 +324,9 @@ class FsWorkspaceRepository:
             for pv in punit.variants:
                 items = resolve_citation(pv.citation, pool)
                 cited.update((item.id, item) for item in items)
-                variant = Variant(id=f"{punit.unit_id}#{pv.n}", text=pv.text, evidence_items=items)
+                variant = Variant(id=f"{punit.unit_id}#{pv.n}", text=pv.content, evidence_items=items)
                 verdict = support.get(variant.id)
-                if verdict is not None and verdict.fingerprint == _claim_fingerprint(pv.text, items, pool):
+                if verdict is not None and verdict.fingerprint == _claim_fingerprint(pv.content, items, pool):
                     variant = replace(variant, support=verdict)
                 variants.append(variant)
             units.append(
