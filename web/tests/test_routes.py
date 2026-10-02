@@ -324,6 +324,32 @@ def test_two_column_pdf_requires_review_and_corrected_composer_targets(document_
     )
 
 
+def test_warning_free_import_does_not_clear_pdf_review_in_another_tab(document_client, document_store):
+    revision = document_store.revision("master-resume.md")
+    pdf = _two_column_pdf()
+    first = document_client.post("/documents/import", data={
+        "document_name": "master-resume.md", "revision": revision,
+    }, files={"file": ("columns.pdf", pdf)})
+    assert first.status_code == 200
+    second = document_client.post("/documents/import", data={
+        "document_name": "master-resume.md", "revision": revision,
+    }, files={"file": ("other.txt", b"## Experience\n### Beta -- 2020-2023\n**Analyst** -- 2020-2023\n- Grew Beta revenue 12%")})
+    assert second.status_code == 200
+    draft = (
+        "## Experience\n### Acme -- 2021-2024\n**Engineer** -- 2021-2024\n"
+        "- Reduced Acme cost 42%\n### Beta -- 2020-2023\n**Analyst** -- 2020-2023\n"
+        "- Grew Beta revenue 12%\n"
+    )
+    token = _prepare_token(document_client, revision, import_document("columns.pdf", pdf).text)
+    blocked = document_client.post("/documents/normalize/accept", data={
+        "document_name": "master-resume.md", "revision": revision, "text": draft,
+        "review_token": token,
+    })
+    assert blocked.status_code == 422
+    assert "Review and correct the reading order" in blocked.text
+    assert document_store.revision("master-resume.md") == revision
+
+
 def test_review_token_is_bound_to_revision_and_bounded(document_client, document_store):
     revision = document_store.revision("master-resume.md")
     draft = "## Experience\n### Acme -- 2021-2024\n**Engineer** -- 2021-2024\n- Saved 42%\n"
