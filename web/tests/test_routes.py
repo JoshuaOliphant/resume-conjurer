@@ -1,18 +1,25 @@
 # ABOUTME: Route and flow tests for the Conjurer web UI.
 # ABOUTME: Covers every screen renders, the curate flow stores picks, and review reflects them.
 
+import asyncio
+import hashlib
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from markupsafe import escape
+from test_document_import import _docx, _pdf
 
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.scripts_path import ensure_scripts_on_path
 from app.adapters.verification_fake import NoVerificationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import EVIDENCE, _v, get_application
+from app.document_routes import MAX_UPLOAD_REQUEST_BYTES, DocumentUploadLimit
+from app.document_store import DocumentStore
 from app.domain import Application, Frame, Support, Unit, Variant
 from app.main import SLUG, create_app
-from app.runs import RunManager
+from app.runs import RunManager, RunStatus
 
 ensure_scripts_on_path()
 
@@ -30,6 +37,306 @@ def client(repo):
     app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=False)
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture
+def document_store(tmp_path):
+    (tmp_path / "master-resume.md").write_text("# Master\n- Original claim\n")
+    (tmp_path / "grimoire.md").write_text("# Voice\nWrite plainly.\n")
+    return DocumentStore(tmp_path)
+
+
+@pytest.fixture
+def document_gen():
+    return FakeGenerationPort()
+
+
+@pytest.fixture
+def document_runs(repo, document_gen):
+    return RunManager(repo=repo, gen=document_gen, verifier=NoVerificationPort())
+
+
+@pytest.fixture
+def document_client(repo, document_store, document_runs, document_gen):
+    app = create_app(repo=repo, gen=document_gen, run_manager=document_runs,
+                     documents=document_store, live=False)
+    with TestClient(app) as c:
+        yield c
+
+
+def test_document_workbench_shows_saved_sources_and_entry_link(document_client, document_store, client):
+    assert "/documents" not in client.get("/").text
+    assert 'href="/documents"' in document_client.get("/").text
+
+    master = document_client.get("/documents")
+    assert master.status_code == 200
+    assert "# Master\n- Original claim" in master.text
+    assert 'aria-current="page"' in master.text
+    assert 'name="document_name" value="master-resume.md"' in master.text
+    assert f'name="revision" value="{document_store.revision("master-resume.md")}"' in master.text
+    assert 'action="/documents/import"' in master.text
+    assert 'action="/documents/save"' in master.text
+
+    grimoire = document_client.get("/documents?name=grimoire.md")
+    assert grimoire.status_code == 200
+    assert "Write plainly." in grimoire.text
+    assert 'name="document_name" value="grimoire.md"' in grimoire.text
+
+
+def test_document_workbench_renders_text_and_revision_from_one_read(
+    document_client, document_store, monkeypatch
+):
+    source = document_store.root / "master-resume.md"
+    old_text = document_store.read("master-resume.md")
+    old_revision = hashlib.sha256(old_text.encode()).hexdigest()
+    real_read = Path.read_bytes
+    reads = 0
+
+    def replace_after_read(path):
+        nonlocal reads
+        data = real_read(path)
+        if path == source:
+            reads += 1
+            if reads == 1:
+                source.write_text("# Replaced during render\n")
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", replace_after_read)
+    response = document_client.get("/documents")
+    assert response.status_code == 200
+    assert old_text.strip() in response.text
+    assert f'name="revision" value="{old_revision}"' in response.text
+    assert reads == 1
+
+
+def test_document_workbench_escapes_source_and_rejects_invalid_names(document_client, document_store):
+    source = "# Voice\n<script>alert(1)</script>\n"
+    (document_store.root / "grimoire.md").write_text(source)
+    html = document_client.get("/documents?name=grimoire.md").text
+    assert str(escape("<script>alert(1)</script>")) in html
+    assert "<script>alert(1)</script>" not in html
+    assert document_client.get("/documents?name=../secrets.md").status_code == 400
+
+
+def test_document_routes_require_configured_workspace(client):
+    assert client.get("/documents").status_code == 503
+    response = client.post("/documents/save", data={
+        "document_name": "master-resume.md", "text": "# Replaced", "revision": "irrelevant",
+    })
+    assert response.status_code == 503
+
+
+def test_document_import_previews_without_overwriting_and_saves_explicitly(document_client, document_store):
+    original = document_store.read("master-resume.md")
+    revision = document_store.revision("master-resume.md")
+    content = b"# Imported\n- Verify this claim\n"
+    response = document_client.post("/documents/import", data={
+        "document_name": "master-resume.md", "revision": revision,
+    }, files={"file": ("resume.md", content, "text/markdown")})
+    assert response.status_code == 200
+    assert "Review the imported text" in response.text
+    assert "# Imported\n- Verify this claim" in response.text
+    assert 'name="import_key"' in response.text
+    assert "Cancel import" in response.text
+    assert document_store.read("master-resume.md") == original
+    digest = hashlib.sha256(content).hexdigest()
+    assert (document_store.root / ".document-originals" / digest / "resume.md").read_bytes() == content
+
+    saved = document_client.post("/documents/save", data={
+        "document_name": "master-resume.md", "text": "# Imported\n- Checked claim\n",
+        "revision": revision, "import_key": digest,
+    }, follow_redirects=False)
+    assert saved.status_code == 303
+    assert saved.headers["location"] == "/documents?name=master-resume.md&saved=true"
+    assert document_store.read("master-resume.md") == "# Imported\n- Checked claim\n"
+    reloaded = document_client.get(saved.headers["location"])
+    assert "Saved. Review existing applications" in reloaded.text
+    assert "- Checked claim" in reloaded.text
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "expected", "warning"),
+    [
+        ("resume.docx", _docx('<w:p><w:pPr><w:pStyle w:val="ListBullet"/></w:pPr><w:r><w:t>Built 42 services</w:t></w:r></w:p>'), "- Built 42 services", None),
+        ("resume.pdf", _pdf("Casey 2023", ""), "Casey 2023", "Page 2 has no extractable text"),
+    ],
+    ids=["docx-bullets", "pdf-missing-page"],
+)
+def test_document_import_previews_docx_and_pdf(document_client, document_store, filename, content, expected, warning):
+    response = document_client.post("/documents/import", data={
+        "document_name": "grimoire.md", "revision": document_store.revision("grimoire.md"),
+    }, files={"file": (filename, content, "application/octet-stream")})
+    assert response.status_code == 200
+    assert expected in response.text
+    if warning:
+        assert warning in response.text
+    else:
+        assert "Check these parts" not in response.text
+    assert document_store.read("grimoire.md") == "# Voice\nWrite plainly.\n"
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "status", "error"),
+    [
+        ("resume.rtf", b"{\\rtf1 text}", 400, "Unsupported document type"),
+        ("resume.md", b"x" * (10 * 1024 * 1024 + 1), 400, "10 MiB size limit"),
+        ("../resume.md", b"# Unsafe name", 400, "Invalid original filename"),
+        ("", b"# No filename", 422, "UploadFile"),
+        ("large.md", b"x" * (2 * 1024 * 1024 + 1), 400, "editor limit"),
+    ],
+    ids=["unsupported", "too-large", "unsafe-filename", "empty-filename", "extracted-too-large"],
+)
+def test_document_import_rejects_invalid_files_without_changing_source(
+    document_client, document_store, filename, content, status, error
+):
+    response = document_client.post("/documents/import", data={
+        "document_name": "master-resume.md", "revision": document_store.revision("master-resume.md"),
+    }, files={"file": (filename, content, "application/octet-stream")})
+    assert response.status_code == status
+    assert error in response.text
+    assert document_store.read("master-resume.md") == "# Master\n- Original claim\n"
+
+
+def test_document_import_rejects_invalid_target(document_client):
+    response = document_client.post("/documents/import", data={
+        "document_name": "../grimoire.md", "revision": "irrelevant",
+    }, files={"file": ("resume.md", b"# Text", "text/markdown")})
+    assert response.status_code == 400
+
+
+def test_document_import_rejects_oversized_request_before_multipart_parsing(document_client):
+    response = document_client.post(
+        "/documents/import",
+        content=b"x" * (10 * 1024 * 1024 + 64 * 1024 + 1),
+        headers={"content-type": "multipart/form-data; boundary=missing", "content-length": "1"},
+    )
+    assert response.status_code == 413
+    assert "10 MiB" in response.text
+
+
+def test_upload_limit_counts_chunked_body_without_content_length():
+    messages = [
+        {"type": "http.request", "body": b"x" * (MAX_UPLOAD_REQUEST_BYTES // 2), "more_body": True},
+        {"type": "http.request", "body": b"x" * (MAX_UPLOAD_REQUEST_BYTES // 2 + 1), "more_body": False},
+    ]
+    sent = []
+
+    async def receive():
+        return messages.pop(0)
+
+    async def send(message):
+        sent.append(message)
+
+    async def downstream(scope, receive, send):
+        pytest.fail("Multipart parsing must not receive an oversized request")
+
+    scope = {"type": "http", "method": "POST", "path": "/documents/import", "headers": []}
+    asyncio.run(DocumentUploadLimit(downstream)(scope, receive, send))
+    assert sent[0]["status"] == 413
+
+
+def test_upload_limit_replays_all_chunks_once_and_passes_later_receive():
+    messages = [
+        {"type": "http.request", "body": b"first ", "more_body": True},
+        {"type": "http.request", "body": b"second", "more_body": False},
+        {"type": "http.disconnect"},
+    ]
+    sent = []
+
+    async def receive():
+        return messages.pop(0)
+
+    async def send(message):
+        sent.append(message)
+
+    async def downstream(scope, receive, send):
+        assert await receive() == {"type": "http.request", "body": b"first second", "more_body": False}
+        assert await receive() == {"type": "http.disconnect"}
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    scope = {"type": "http", "method": "POST", "path": "/documents/import", "headers": []}
+    asyncio.run(DocumentUploadLimit(downstream)(scope, receive, send))
+    assert sent[0]["status"] == 204
+
+
+def test_upload_limit_stops_when_client_disconnects():
+    sent = []
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        sent.append(message)
+
+    async def downstream(scope, receive, send):
+        pytest.fail("Disconnected upload must not reach the form parser")
+
+    scope = {"type": "http", "method": "POST", "path": "/documents/import", "headers": []}
+    asyncio.run(DocumentUploadLimit(downstream)(scope, receive, send))
+    assert sent == []
+
+
+def test_document_save_conflict_preserves_submitted_text(document_client, document_store):
+    revision = document_store.revision("master-resume.md")
+    document_store.save("master-resume.md", "# Another tab\n", revision)
+    response = document_client.post("/documents/save", data={
+        "document_name": "master-resume.md", "text": "# My unsaved claim\n", "revision": revision,
+    })
+    assert response.status_code == 409
+    assert "changed in another tab" in response.text
+    assert "Recover your unsaved changes" in response.text
+    assert "Reload saved document" in response.text
+    assert "Review the imported text" not in response.text
+    assert "# My unsaved claim" in response.text
+    assert document_store.read("master-resume.md") == "# Another tab\n"
+
+
+@pytest.mark.parametrize("text", ["  \n  ", "x" * (2 * 1024 * 1024 + 1)], ids=["whitespace", "too-large-edit"])
+def test_document_save_rejects_invalid_text_without_changing_source(document_client, document_store, text):
+    response = document_client.post("/documents/save", data={
+        "document_name": "grimoire.md", "text": text, "revision": document_store.revision("grimoire.md"),
+    })
+    assert response.status_code == 400
+    assert document_store.read("grimoire.md") == "# Voice\nWrite plainly.\n"
+
+
+def test_document_save_rejects_invalid_target(document_client, document_store):
+    response = document_client.post("/documents/save", data={
+        "document_name": "../grimoire.md", "text": "# Wrong target", "revision": "irrelevant",
+    })
+    assert response.status_code == 400
+    assert document_store.read("grimoire.md") == "# Voice\nWrite plainly.\n"
+
+
+@pytest.mark.parametrize("headers", [
+    {"origin": "https://other.example"},
+    {"sec-fetch-site": "cross-site"},
+], ids=["cross-origin", "cross-site"])
+def test_document_mutations_reject_cross_origin_requests(document_client, document_store, headers):
+    revision = document_store.revision("master-resume.md")
+    saved = document_client.post("/documents/save", data={
+        "document_name": "master-resume.md", "text": "# Replaced", "revision": revision,
+    }, headers=headers)
+    uploaded = document_client.post("/documents/import", data={
+        "document_name": "master-resume.md", "revision": revision,
+    }, files={"file": ("resume.md", b"# Imported", "text/markdown")}, headers=headers)
+    assert saved.status_code == uploaded.status_code == 403
+    assert document_store.read("master-resume.md") == "# Master\n- Original claim\n"
+
+
+def test_document_mutations_wait_for_generation(document_client, document_store, document_runs):
+    document_runs._status[SLUG] = RunStatus(state="running")
+    revision = document_store.revision("master-resume.md")
+    saved = document_client.post("/documents/save", data={
+        "document_name": "master-resume.md", "text": "# Replaced", "revision": revision,
+    })
+    uploaded = document_client.post("/documents/import", data={
+        "document_name": "master-resume.md", "revision": revision,
+    }, files={"file": ("resume.md", b"# Imported", "text/markdown")})
+    assert saved.status_code == uploaded.status_code == 409
+    assert "Wait for generation to finish" in saved.text
+    assert document_store.read("master-resume.md") == "# Master\n- Original claim\n"
 
 
 def test_entry_renders(client):

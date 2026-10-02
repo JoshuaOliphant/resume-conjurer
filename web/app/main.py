@@ -6,11 +6,13 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from threading import Lock
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import lint_results
@@ -20,7 +22,10 @@ from app.deps import (
     build_repository,
     build_verification,
     is_live,
+    workspace_root,
 )
+from app.document_routes import DocumentUploadLimit, document_router
+from app.document_store import DocumentStore
 from app.domain import support_check
 from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
 from app.rail import template_context
@@ -39,6 +44,7 @@ def create_app(
     *,
     live: bool,
     comp: CompositionPort | None = None,
+    documents: DocumentStore | None = None,
 ) -> FastAPI:
     """Build the FastAPI app over an injected repository, generation port, and run manager.
 
@@ -53,8 +59,11 @@ def create_app(
         await run_manager.aclose()
 
     app = FastAPI(title="Conjurer", lifespan=lifespan)
+    app.add_middleware(DocumentUploadLimit)
     app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
     templates = Jinja2Templates(directory=str(BASE / "templates"))
+    source_lock = Lock()
+    app.include_router(document_router(documents, templates, run_manager, SLUG, source_lock))
 
     def _not_generated_yet() -> bool:
         # Live only: a fresh workspace has no outline.json yet, so load_application would
@@ -78,7 +87,7 @@ def create_app(
             request,
             "entry.html",
             template_context(
-                request, "entry", app_data=app_data, master_resume_note=master_resume_note
+                request, "entry", app_data=app_data, master_resume_note=master_resume_note, documents_available=documents is not None
             ),
         )
 
@@ -91,9 +100,14 @@ def create_app(
             return RedirectResponse("/outline", status_code=303)
         form = await request.form()
         jd = str(form.get("jd", "")).strip()
-        if jd:
-            repo.save_jd(SLUG, jd)
-        run_manager.start(SLUG)
+        await run_in_threadpool(source_lock.acquire)
+        try:
+            if run_manager.status(SLUG).state != "running":
+                if jd:
+                    await run_in_threadpool(repo.save_jd, SLUG, jd)
+                run_manager.start(SLUG)
+        finally:
+            source_lock.release()
         return templates.TemplateResponse(
             request,
             "summoning.html",
@@ -268,4 +282,5 @@ _repo = build_repository()
 _gen = build_generation()
 _comp = build_composition()
 _run_manager = RunManager(repo=_repo, gen=_gen, verifier=build_verification())
-app = create_app(repo=_repo, gen=_gen, run_manager=_run_manager, live=is_live(), comp=_comp)
+app = create_app(repo=_repo, gen=_gen, run_manager=_run_manager, live=is_live(), comp=_comp,
+                 documents=DocumentStore(workspace_root()) if is_live() else None)
