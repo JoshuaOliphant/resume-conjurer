@@ -56,6 +56,34 @@ def _pdf(*pages: str) -> bytes:
     return output.getvalue()
 
 
+def _two_column_pdf() -> bytes:
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=600, height=800)
+    rows = [
+        (20, 760, "Experience"),
+        (20, 730, "Company: Acme | 2021-2024"),
+        (310, 730, "Company: Beta | 2020-2023"),
+        (20, 710, "Role: Engineer | 2021-2024"),
+        (310, 710, "Role: Analyst | 2020-2023"),
+        (20, 690, "- Reduced Acme cost 42%"),
+        (310, 690, "- Grew Beta revenue 12%"),
+    ]
+    stream = DecodedStreamObject()
+    stream.set_data("\n".join(
+        f"BT /F1 11 Tf 1 0 0 1 {x} {y} Tm ({value}) Tj ET" for x, y, value in rows
+    ).encode())
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    page[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({NameObject("/F1"): DictionaryObject({
+            NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        })}),
+    })
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
 @pytest.mark.parametrize("filename", ["resume.md", "resume.TXT"])
 def test_utf8_text_preserves_lines_and_numbers(filename: str) -> None:
     result = import_document(filename, b"\xef\xbb\xbf# Casey\n- Grew revenue 42% in 2023\n")
@@ -171,6 +199,12 @@ def test_missing_hierarchy_and_duplicate_role_targets_require_correction() -> No
     assert any("role dates" in need for need in reversed_dates.corrections)
     current_role = normalize_master_resume("## Experience\n### Acme -- Platform team\n**Engineer** -- 2021-Present\n- Saved 42%")
     assert current_role.ready
+    narrative_dates = normalize_master_resume(
+        "## Experience\n### Acme -- Platform team\n**Engineer** -- Joined 2021, shipped migration 2023\n- Saved 42%"
+    )
+    assert not narrative_dates.ready
+    assert "Joined 2021, shipped migration 2023" in narrative_dates.text
+    assert any("role dates" in need for need in narrative_dates.corrections)
     repeated = normalize_master_resume(
         "## Experience\n### Acme -- 2021-2022\n**Staff Engineer** -- 2021-2022\n- First 42%\n"
         "### Acme -- 2023-2024\n**Staff Engineer** -- 2023-2024\n- Second 12%\n"
@@ -214,6 +248,18 @@ def test_text_pdf_normalization_produces_stable_outline_target() -> None:
     assert "casey@example.com" in preview.text
     assert "Reduced cost 42%" in preview.text
     assert "## Skills\nPython, Go" in preview.text
+    assert any("reading order" in warning for warning in source.warnings)
+
+
+def test_two_column_pdf_requires_reading_order_review_before_use() -> None:
+    source = import_document("columns.pdf", _two_column_pdf())
+    assert "Company: Acme | 2021-2024 Company: Beta | 2020-2023" in source.text
+    assert "Role: Engineer | 2021-2024 Role: Analyst | 2020-2023" in source.text
+    assert any("reading order" in warning for warning in source.warnings)
+    preview = normalize_master_resume(source.text)
+    assert not preview.ready
+    assert any("multiple employer or role labels" in need for need in preview.corrections)
+    assert not normalize_master_resume(preview.text).ready
 
 
 @pytest.mark.parametrize("part", ["header1.xml", "footer1.xml"])
@@ -240,7 +286,10 @@ def test_pdf_extracts_pages_in_order_and_reports_image_only_page() -> None:
     assert PdfReader(BytesIO(content)).pages[0].extract_text().strip() == "Casey 2023"
     result = import_document("resume.pdf", content)
     assert result.text == "Casey 2023\n\nSaved 42%"
-    assert result.warnings == ("Page 2 has no extractable text; OCR was not performed.",)
+    assert result.warnings == (
+        "PDF reading order may differ from the visible layout. Check and correct it against the original file.",
+        "Page 2 has no extractable text; OCR was not performed.",
+    )
 
 
 def test_pdf_reports_images_on_pages_with_extractable_text() -> None:
@@ -259,7 +308,10 @@ def test_pdf_reports_images_on_pages_with_extractable_text() -> None:
     writer.write(contents)
     result = import_document("resume.pdf", contents.getvalue())
     assert result.text == "Visible typed header"
-    assert result.warnings == ("Page 1 contains images whose text was not imported; OCR was not performed.",)
+    assert result.warnings == (
+        "PDF reading order may differ from the visible layout. Check and correct it against the original file.",
+        "Page 1 contains images whose text was not imported; OCR was not performed.",
+    )
 
 
 @pytest.mark.parametrize(
