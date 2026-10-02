@@ -1,0 +1,94 @@
+[
+  {
+    "path": "plugins/conjurer/skills/conjurer/scripts/lint.py",
+    "sha256": "9cd3d2afa71e3ab804ead5eb067044dc5380993baad3e42e5ec6eebe863c6211"
+  },
+  {
+    "path": "plugins/conjurer/skills/conjurer/scripts/stitch.py",
+    "sha256": "1b48fbfe4d87b57ab6413e8e380db1f26c93c7a9927affab93f8fb3a923fdb00"
+  },
+  {
+    "path": "tests/test_composer.py",
+    "sha256": "b84eba104e376eebc15c6a2969412012b7bd9ddf78bcac770cc339275a9bd10d"
+  },
+  {
+    "path": "tests/test_export_docs.py",
+    "sha256": "516a1edc058ee04464dd42bae9ac90ece6d3817bb3a8d46e795f8db0d07440cb"
+  },
+  {
+    "path": "tests/test_extract_text.py",
+    "sha256": "6f4ee085d597a5b03bed4352005731eb040bb9d1d768fda6042c85fb1cf358ea"
+  },
+  {
+    "path": "tests/test_init_app.py",
+    "sha256": "cdf1a1f6f55e740fc17835daaabf9a3ee7479330ee1f471559648d66fd1d3748"
+  },
+  {
+    "path": "tests/test_lint.py",
+    "sha256": "617ab72e53763b98ecc7dd23e522f4898a7fe72a5126bb8e2187e33b7bcdb91e"
+  },
+  {
+    "path": "tests/test_new_workspace.py",
+    "sha256": "64e623b0d4eb93543c51f7f5b6b901433161b8a2a3b330f8448e64dc7938e545"
+  },
+  {
+    "path": "tests/test_stitch.py",
+    "sha256": "45a9739bad3207c2438186ec9b5608637cec00c73f8905ea6e7587bb8a9ad598"
+  },
+  {
+    "path": "web/app/adapters/composition.py",
+    "sha256": "ee978ab84d8cfb442063adf166d95a1c4fe01710f095f403e7a8c9b5503989f2"
+  },
+  {
+    "path": "web/app/adapters/generation_fake.py",
+    "sha256": "677410749fb2568178667fd80db4fb320af511a811d516674afb81dcdb825f46"
+  },
+  {
+    "path": "web/app/adapters/workspace_fake.py",
+    "sha256": "a537e02a3a243d54138b4cb00e940a2db83992d2c8ece76c80941750c4941482"
+  },
+  {
+    "path": "web/app/adapters/workspace_fs.py",
+    "sha256": "4ad53b77f0d3432bf4b5854470123304f0ad11d2d18ff04d875f796cae65ef99"
+  },
+  {
+    "path": "web/app/data.py",
+    "sha256": "b1dc191bbfcb05f258adb733edd6395619c72cfdbae0a650dbb63528af26d218"
+  },
+  {
+    "path": "web/app/deps.py",
+    "sha256": "2565e4c56fc4d2321c209298004d0bd7a13dcb0b7059266c429db4df36426604"
+  },
+  {
+    "path": "web/tests/test_generation.py",
+    "sha256": "cbbddf0a0f5ce83b1a2657e82d2e8898f136dc7f78a7d7f64c9a5ac9f17a98a6"
+  },
+  {
+    "path": "web/tests/test_generation_live.py",
+    "sha256": "7f40a2632409243ce1b077756be2613915e97d7c83aedcbd2f9b4854df0312a6"
+  },
+  {
+    "path": "web/tests/test_live_flow.py",
+    "sha256": "bee813e14a2aa1a1f708b2996dcce63b0f6f48da2988f9e29e3d30ba1a1d458b"
+  },
+  {
+    "path": "web/tests/test_ports.py",
+    "sha256": "aff1fe5e8318ccf240a90bffc7393750e98a423dfc08fc8137016ced2130e457"
+  },
+  {
+    "path": "web/tests/test_routes.py",
+    "sha256": "5e3be5430fc8c6ac23e2dbd7f67a604426fd48717023e9e87b2234883c4f4338"
+  },
+  {
+    "path": "web/tests/test_runs.py",
+    "sha256": "066a6c7269f3cc1dcaf940f8067227dcf969cd2d47c2d0a44ff34291cbbe5ee0"
+  },
+  {
+    "path": "web/tests/test_workspace_fake.py",
+    "sha256": "a9c8721290e9f1822ccd54398a088c2ed67ed680f1797f9b610c9b5b1a52765b"
+  },
+  {
+    "path": "web/tests/test_workspace_fs.py",
+    "sha256": "4dec9001e39c032247d834ec27fec1e1b882abc54608be3b89e836c641de7b77"
+  }
+]
