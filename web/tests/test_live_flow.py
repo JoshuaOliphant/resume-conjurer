@@ -996,20 +996,14 @@ def test_live_review_with_incomplete_picks_does_not_stitch_or_500(workspace):
 
 
 def test_live_export_reports_the_written_or_skipped_map(workspace):
-    import shutil as _shutil
-
     app = _prepare_picked_live_workspace(workspace)
     with TestClient(app) as c:
         _compose_live_documents(c)
         r = c.get("/export")
     assert r.status_code == 200
     assert "Exported files" in r.text
-    # The reported status matches the real environment: written iff pandoc is installed.
-    have_pandoc = _shutil.which("pandoc") is not None
-    if have_pandoc:
-        assert "written" in r.text
-    else:
-        assert "skipped" in r.text
+    assert r.text.count("written") == 4
+    assert "Professional" in r.text
 
 
 def test_live_export_downloads_the_stitched_markdown(workspace):
@@ -1040,12 +1034,13 @@ def test_live_export_downloads_written_formats_and_hides_skipped_artifacts(works
     app = _prepare_picked_live_workspace(workspace)
     app_dir = workspace / "applications" / SLUG
 
-    def export_artifacts(directory, formats):
-        (directory / "resume.pdf").write_bytes(b"real-pdf-artifact")
-        (directory / "resume.docx").write_bytes(b"older-artifact")
+    def export_artifacts(self, slug, formats=("pdf", "docx")):
+        assert slug == SLUG
+        (app_dir / "resume.pdf").write_bytes(b"real-pdf-artifact")
+        (app_dir / "resume.docx").write_bytes(b"older-artifact")
         return {"resume.pdf": "written", "resume.docx": "skipped: no exporter", "cover_letter.pdf": "written"}
 
-    monkeypatch.setattr("app.adapters.composition.export_app_dir", export_artifacts)
+    monkeypatch.setattr(ScriptCompositionPort, "export", export_artifacts)
     with TestClient(app) as client:
         _compose_live_documents(client)
         page = client.get("/export")

@@ -124,6 +124,10 @@ it, so do not bake further single-user assumptions into the domain model or rout
 
 `docs/final-documents.md` covers explicit composition, editable final Markdown, stale notices, and revision-bound exports.
 
+`web/EXPORT.md` covers Professional DOCX/PDF rendering, supported content, font licenses, and format limits.
+
+`knowledge/capture/daily/2026-10-02-product-22.md` records runtime findings and review lessons from the product implementation.
+
 `web/ONBOARDING.md` covers reviewed grimoire sources, bounded Claude drafting, local validation limits, and explicit acceptance.
 
 `PRODUCT.md` (audience, anti-references, design principles) and `DESIGN.md` (the oxblood-on-white

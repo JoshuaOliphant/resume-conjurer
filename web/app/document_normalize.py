@@ -17,7 +17,12 @@ SECTION_LINE = re.compile(r"^#{1,2}\s+(.+?)\s*$")
 COMPANY_LINE = re.compile(r"^(?:###\s+|Company:\s*)(.+?)(?:\s*(?:\||—|--)\s*(.+))?$", re.IGNORECASE)
 ROLE_LINE = re.compile(r"^(?:\*\*(.+?)\*\*|Role:\s*(.+?))(?:\s*(?:\||—|--)\s*(.+))?$", re.IGNORECASE)
 BULLET_LINE = re.compile(r"^(?:[-*•])\s+(.+)$")
-DATE_RANGE = re.compile(r"\b(?:19|20)\d{2}\b.*(?:\b(?:19|20)\d{2}\b|\bPresent\b|\bCurrent\b)", re.IGNORECASE)
+STRUCTURE_LABEL = re.compile(r"\b(?:Company|Role):", re.IGNORECASE)
+DATE_RANGE = re.compile(
+    r"\b(?P<start>(?:19|20)\d{2})\b\s*(?:-|–|—|to|through|until)\s*"
+    r"(?P<end>(?:19|20)\d{2}|Present|Current)\b",
+    re.IGNORECASE,
+)
 COMPANY_MARKER = "[enter employer context]"
 ROLE_MARKER = "[enter role dates]"
 
@@ -38,6 +43,14 @@ class NormalizedMaster:
     ready: bool
 
 
+def _valid_role_dates(period: str) -> bool:
+    match = DATE_RANGE.search(period)
+    if match is None:
+        return False
+    end = match.group("end")
+    return not end.isdigit() or int(end) >= int(match.group("start"))
+
+
 def normalize_master_resume(text: str) -> NormalizedMaster:
     lines = text.splitlines()
     normalized: list[str] = []
@@ -54,6 +67,9 @@ def normalize_master_resume(text: str) -> NormalizedMaster:
     for number, source in enumerate(lines, start=1):
         value = source.strip()
         result = source
+        labels = STRUCTURE_LABEL.findall(value)
+        if in_experience and (len(labels) > 1 or labels and value.startswith(("### ", "**"))):
+            corrections.append(f"Line {number}: multiple employer or role labels share one line; correct reading order.")
         if EXPERIENCE_LINE.fullmatch(value):
             result = "## Experience"
             in_experience = True
@@ -81,7 +97,7 @@ def normalize_master_resume(text: str) -> NormalizedMaster:
                 corrections.append(f"Line {number}: employer and role are ambiguous; distinguish the repeated role.")
             role_names.add(key)
             period = (match.group(3) or "").strip()
-            if ROLE_MARKER in period or not DATE_RANGE.search(period):
+            if ROLE_MARKER in period or not _valid_role_dates(period):
                 corrections.append(f"Line {number}: confirm complete role dates from your source or correct them yourself.")
                 if not period:
                     period = ROLE_MARKER

@@ -10,6 +10,9 @@ dependencies = [
     "python-multipart>=0.0.9",
     "claude-agent-sdk==0.2.163",
     "pypdf>=6.19.0",
+    "python-docx>=1.2.0,<2",
+    "reportlab>=5.0.1,<6",
+    "markdown-it-py>=4.0.0,<5",
 ]
 
 [dependency-groups]

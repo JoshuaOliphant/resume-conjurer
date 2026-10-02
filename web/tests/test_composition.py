@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 
 import pytest
+from docx import Document
+from pypdf import PdfReader
 
 from app.adapters.composition import ScriptCompositionPort
 from app.adapters.workspace_fs import FsWorkspaceRepository
@@ -102,20 +104,97 @@ def test_lint_clean_documents_return_no_checks(
     assert port.lint(SLUG) == []
 
 
-def test_export_returns_dict_and_handles_pandoc_presence(
-    repo: FsWorkspaceRepository, port: ScriptCompositionPort
+def test_export_writes_readable_documents_without_pandoc(
+    repo: FsWorkspaceRepository, port: ScriptCompositionPort, workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _prepare_picks(repo, SLUG)
     port.stitch(SLUG)
+    monkeypatch.setattr("export_docs.pandoc_available", lambda: False)
     results = port.export(SLUG)
-    assert isinstance(results, dict)
-    assert results  # something to export after stitch
-    have_pandoc = shutil.which("pandoc") is not None
-    for status in results.values():
-        if have_pandoc:
-            assert status == "written"
-        else:
-            assert status.startswith("skipped")
+    assert results == {name: "written" for name in (
+        "cover_letter.pdf", "cover_letter.docx", "resume.pdf", "resume.docx"
+    )}
+    app_dir = workspace / "applications" / SLUG
+    assert "billing platform migration" in "\n".join(
+        paragraph.text for paragraph in Document(str(app_dir / "resume.docx")).paragraphs
+    )
+    assert "billing platform migration" in "\n".join(
+        page.extract_text() for page in PdfReader(app_dir / "resume.pdf").pages
+    )
+
+
+def test_export_reports_source_and_format_failures(port: ScriptCompositionPort, workspace: Path) -> None:
+    app_dir = workspace / "applications" / SLUG
+    (app_dir / "cover_letter.md").write_bytes(b"\xff")
+    (app_dir / "resume.md").write_text("# Resume", encoding="utf-8")
+    results = port.export(SLUG, ("pdf", "html"))
+    assert results["cover_letter.pdf"].startswith("skipped: cannot read final document")
+    assert results["cover_letter.html"].startswith("skipped: cannot read final document")
+    assert results["resume.pdf"] == "written"
+    assert results["resume.html"] == "skipped: unsupported export format"
+    (app_dir / "resume.md").unlink()
+    (app_dir / "cover_letter.md").unlink()
+    assert port.export(SLUG) == {}
+
+
+def test_failed_export_preserves_previous_artifact(
+    port: ScriptCompositionPort, workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app_dir = workspace / "applications" / SLUG
+    (app_dir / "resume.md").write_text("# Resume", encoding="utf-8")
+    old_artifact = app_dir / "resume.pdf"
+    old_artifact.write_bytes(b"previous")
+
+    def failed_renderer(markdown: str, format_name: str, path: Path) -> None:
+        path.write_bytes(b"partial")
+        raise RuntimeError("render failed")
+
+    monkeypatch.setattr("app.adapters.composition.export_document", failed_renderer)
+    assert port.export(SLUG, ("pdf",)) == {"resume.pdf": "skipped: renderer failed (RuntimeError)"}
+    assert old_artifact.read_bytes() == b"previous"
+    assert list(app_dir.glob(".resume.*.pdf")) == []
+
+
+def test_failed_publish_preserves_previous_artifact(
+    port: ScriptCompositionPort, workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app_dir = workspace / "applications" / SLUG
+    (app_dir / "resume.md").write_text("# Resume", encoding="utf-8")
+    old_artifact = app_dir / "resume.docx"
+    old_artifact.write_bytes(b"previous")
+
+    def failed_replace(source: Path, target: Path) -> None:
+        raise OSError("publish failed")
+
+    monkeypatch.setattr("app.adapters.composition.os.replace", failed_replace)
+    assert port.export(SLUG, ("docx",)) == {"resume.docx": "skipped: publish failed"}
+    assert old_artifact.read_bytes() == b"previous"
+    assert list(app_dir.glob(".resume.*.docx")) == []
+
+
+def test_temporary_file_failure_is_reported(
+    port: ScriptCompositionPort, workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app_dir = workspace / "applications" / SLUG
+    (app_dir / "resume.md").write_text("# Resume", encoding="utf-8")
+    monkeypatch.setattr("app.adapters.composition.tempfile.mkstemp", lambda **kwargs: (_ for _ in ()).throw(OSError("disk full")))
+    assert port.export(SLUG, ("pdf",)) == {"resume.pdf": "skipped: disk full"}
+
+
+def test_temporary_file_cleanup_failure_is_reported(
+    port: ScriptCompositionPort, workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app_dir = workspace / "applications" / SLUG
+    (app_dir / "resume.md").write_text("# Resume", encoding="utf-8")
+    real_unlink = Path.unlink
+
+    def failed_unlink(path: Path, missing_ok: bool = False) -> None:
+        if path.name.startswith(".resume."):
+            raise OSError("cannot remove temporary file")
+        real_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", failed_unlink)
+    assert port.export(SLUG, ("pdf",)) == {"resume.pdf": "skipped: temporary export cleanup failed"}
 
 
 @pytest.mark.parametrize("filename", ["cover_letter.md", "resume.md", "cover_letter.pdf", "resume.docx"])
