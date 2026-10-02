@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Prepare master résumé · Conjurer{% endblock %}
+{% block main %}
+<div class="page documents">
+  <p class="page__eyebrow">Master résumé</p>
+  <h1 class="page__title">Review the structure before saving.</h1>
+  <p class="page__lede">The draft keeps your words in order and adds only the headings and markers the composer reads. Correct uncertain dates or hierarchy yourself. No claims are verified here.</p>
+
+  {% if error %}<p class="documents__error" role="alert">{{ error }}</p>{% endif %}
+  {% if normalization.ready and order_review_required %}<p role="status">{{ normalization.targets | length }} provisional composer slots found. Confirm the source reading order before accepting.</p>
+  {% elif normalization.ready %}<p role="status">{{ normalization.targets | length }} usable composer slots found.</p>
+  {% else %}<p role="status">Not ready for tailoring. The draft needs correction.</p>{% endif %}
+  {% if normalization.corrections %}
+  <section class="documents__warnings" aria-label="Corrections needed">
+    <h2>Correct before saving</h2>
+    <ul>{% for need in normalization.corrections %}<li>{{ need }}</li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+
+  {% if source_text %}
+  <section class="documents__preview" aria-label="Extracted source text">
+    <h2>Extracted text</h2>
+    <pre>{{ source_text }}</pre>
+  </section>
+  {% endif %}
+  {% if normalization.changes %}
+  <section class="documents__preview" aria-label="Source-linked formatting changes">
+    <h2>Formatting changes</h2>
+    <ol>{% for change in normalization.changes %}
+      <li><b>Source line {{ change.source_line }}</b><pre>{{ change.source }}</pre><pre>{{ change.normalized }}</pre></li>
+    {% endfor %}</ol>
+  </section>
+  {% endif %}
+  {% if error %}<p><a href="/documents?name=master-resume.md">Reload saved master resume</a> to compare with your draft. Copy your draft first.</p>{% endif %}
+
+  <form method="post" action="/documents/normalize/accept" hx-boost="false">
+    <input type="hidden" name="document_name" value="master-resume.md">
+    <input type="hidden" name="revision" value="{{ revision }}">
+    {% if review_token %}<input type="hidden" name="review_token" value="{{ review_token }}">{% endif %}
+    <label class="field__label" for="normalized-text">Reviewed master résumé</label>
+    <textarea class="textarea documents__editor" id="normalized-text" name="text" rows="24" required>{{ draft_text }}</textarea>
+    {% if order_review_required %}<label><input type="checkbox" name="order_corrected" value="true" required> I reviewed and corrected the reading order against the original file.</label>{% endif %}
+    <div class="actions"><button class="btn btn--primary" type="submit">Accept and save master résumé</button><a class="btn btn--quiet" href="/documents?name=master-resume.md">Cancel</a></div>
+  </form>
+</div>
+{% endblock %}

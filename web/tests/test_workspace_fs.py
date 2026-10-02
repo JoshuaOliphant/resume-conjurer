@@ -12,13 +12,20 @@ from typing import get_args
 import jsonschema
 import pytest
 
-from app.adapters.workspace_fs import FsWorkspaceRepository, resolve_citation
-from app.domain import Outline, OutlineUnit, Support, SupportVerdict, Unit, Variant, Evidence
-from app.metrics import CallMetrics, RunMetrics, StepMetrics
-from app.schemas import SUPPORT_SCHEMA
-
 import citations  # on sys.path once app.adapters.workspace_fs is imported
 import verify
+from app.adapters.workspace_fs import FsWorkspaceRepository, resolve_citation
+from app.domain import (
+    Evidence,
+    Outline,
+    OutlineUnit,
+    Support,
+    SupportVerdict,
+    Unit,
+    Variant,
+)
+from app.metrics import CallMetrics, RunMetrics, StepMetrics
+from app.schemas import SUPPORT_SCHEMA
 
 SLUG = "globex-staff-platform"
 FIXTURE_WORKSPACE = Path(__file__).parent / "fixtures" / "workspace"
@@ -783,3 +790,11 @@ def test_save_support_preserves_a_verifiers_fingerprint_for_an_edited_claim(repo
 
     assert repo.load_support(SLUG)[variant.id].fingerprint == checked_fingerprint
     assert repo.load_application(SLUG).units[0].variants[0].support is None
+
+
+def test_load_inputs_without_optional_evidence_keeps_resume_line_contract(repo, workspace):
+    (workspace / "applications" / SLUG / "evidence.md").unlink()
+    inputs = repo.load_inputs(SLUG)
+    assert inputs.evidence == ""
+    assert "master-resume.md L16" in inputs.evidence_pool
+    assert all(not key.startswith("evidence.md ") for key in inputs.evidence_pool)

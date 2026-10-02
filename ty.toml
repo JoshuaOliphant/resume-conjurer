@@ -1,0 +1,4 @@
+[environment]
+python-version = "3.12"
+python-platform = "all"
+extra-paths = ["web", "plugins/conjurer/skills/conjurer/scripts"]

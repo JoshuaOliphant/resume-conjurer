@@ -58,7 +58,12 @@ class FinalDocuments:
     def fingerprint(self) -> str:
         digest = hashlib.sha256()
         for name, path in zip(INPUT_NAMES, self._input_paths(), strict=True):
-            content = path.read_bytes()
+            try:
+                content = path.read_bytes()
+            except FileNotFoundError:
+                if name != "evidence.md":
+                    raise
+                content = b""
             digest.update(name.encode())
             digest.update(len(content).to_bytes(8, "big"))
             digest.update(content)
