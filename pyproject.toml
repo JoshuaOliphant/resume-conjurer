@@ -12,11 +12,11 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=plugins --cov-branch --cov-report=term-missing"
+addopts = "--cov=plugins --cov=scripts --cov-branch --cov-report=term-missing"
 
 [tool.coverage.run]
 branch = true
-source = ["plugins"]
+source = ["plugins", "scripts"]
 
 [tool.coverage.report]
 fail_under = 100

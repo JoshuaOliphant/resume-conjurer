@@ -1,0 +1,64 @@
+name: Offline checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: ${{ matrix.project.name }} tests and coverage
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - name: Plugin
+            directory: .
+          - name: Web
+            directory: web
+    defaults:
+      run:
+        working-directory: ${{ matrix.project.directory }}
+    env:
+      CLAUDE_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
+      TYPESAFE_API_KEY: ""
+      CONJURER_BACKEND: fake
+      CONJURER_WORKSPACE: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
+        with:
+          version: "0.11.8"
+          python-version: "3.12.7"
+          enable-cache: false
+      - run: uv sync --locked
+      - run: uv run --locked --offline pytest -q
+
+  static:
+    name: Pinned lint and types
+    runs-on: ubuntu-24.04
+    env:
+      CLAUDE_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
+      TYPESAFE_API_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
+        with:
+          version: "0.11.8"
+          python-version: "3.12.7"
+          enable-cache: false
+      - run: uv sync --locked --project web
+      - run: uv run --locked --offline python ../scripts/ci_lint.py
+        working-directory: web
+      - run: uvx --no-config --from ty==0.0.84 ty check --config-file ty.toml --python web/.venv --error-on-warning web scripts
