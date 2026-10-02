@@ -1,8 +1,10 @@
 # ABOUTME: Tests for the grimoire-checklist linter (regex style checks).
 # ABOUTME: Verifies each rule fires and clean text passes.
 from pathlib import Path
+import sys
 
 import lint
+import pytest
 
 
 def test_em_dash_flagged():
@@ -103,3 +105,30 @@ def test_lint_app_dir_routes_cover_letter_and_resume(tmp_path):
     assert all(f.file.name == "cover_letter.md" for f in length_findings), (
         "Length rule should only fire for cover_letter.md, not resume.md"
     )
+
+
+def test_lint_app_dir_accepts_missing_documents(tmp_path):
+    assert lint.lint_app_dir(tmp_path) == []
+    (tmp_path / "cover_letter.md").write_text("I just shipped it.")
+    assert [f.rule for f in lint.lint_app_dir(tmp_path)] == ["filler:just"]
+
+
+def test_short_cover_letter_has_no_length_finding():
+    findings = lint.lint_text("I led the migration.", Path("cover_letter.md"), is_cover_letter=True)
+    assert findings == []
+
+
+def test_lint_cli_reports_usage_clean_and_flagged_documents(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["lint.py"])
+    with pytest.raises(SystemExit, match="2"):
+        lint.main()
+    assert "usage: python3 lint.py" in capsys.readouterr().err
+
+    monkeypatch.setattr(sys, "argv", ["lint.py", str(tmp_path)])
+    lint.main()
+    assert capsys.readouterr().out == "No style issues found.\n"
+
+    (tmp_path / "resume.md").write_text("I just shipped it.\n")
+    with pytest.raises(SystemExit, match="1"):
+        lint.main()
+    assert capsys.readouterr().out == "resume.md:1\tfiller:just\tI just shipped it.\n"
