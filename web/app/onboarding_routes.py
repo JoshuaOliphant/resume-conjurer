@@ -20,6 +20,7 @@ from app.onboarding import (
     bounded_snippets,
     build_prompt,
     claim_ledger,
+    review_draft,
     reviewed_snippets,
     source_lines,
     source_questions,
@@ -207,6 +208,22 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
                 draft_store.save(state, revision)
             except ConflictError:
                 return render(request, state=state, revision=revision, status=409, error="Onboarding changed in another tab. Your edited draft remains below for recovery.")
+            except ValueError as exc:
+                return render(request, state=state, revision=revision, status=400, error=str(exc))
+        return RedirectResponse("/onboarding", status_code=303)
+
+    @router.post("/onboarding/review-draft")
+    def review_edited_draft(request: Request, revision: str = Form(...), draft: str = Form("")):
+        with source_lock:
+            source_store, draft_store = writable(request)
+            state, current = draft_store.read()
+            state["draft"] = draft
+            if current != revision or state["master_revision"] != source_store.revision("master-resume.md"):
+                return render(request, state=state, revision=revision, status=409,
+                              error="Sources or onboarding changed. Recover your draft and re-review sources before local draft review.")
+            try:
+                state["claims"] = review_draft(state, draft)
+                draft_store.save(state, revision)
             except ValueError as exc:
                 return render(request, state=state, revision=revision, status=400, error=str(exc))
         return RedirectResponse("/onboarding", status_code=303)

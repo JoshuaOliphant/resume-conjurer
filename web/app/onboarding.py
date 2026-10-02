@@ -168,6 +168,32 @@ def validate_proposal(payload: object, snippets: list[dict]) -> tuple[str, list[
     return "\n".join(lines) + "\n", claims
 
 
+def review_draft(state: dict, draft: str) -> list[dict]:
+    snippets = reviewed_snippets(state)
+    bounded_snippets(snippets)
+    lines = [line for line in draft.splitlines() if line.startswith("- ")]
+    bounded_snippets([{"text": line} for line in lines])
+    claims = []
+    for line in lines:
+        text = line.removeprefix("- ")
+        matches = [source for source in snippets if source["kind"] == "career fact" and text and text in source["text"]]
+        if len(matches) == 1:
+            source = matches[0]
+            claim = {"text": text, "source_id": source["id"], "quote": text, "revision": source["revision"],
+                     "kind": "fact", "status": delivery_status(source["text"]),
+                     "label": "user-attested" if source["id"].startswith("answer.") else "source-linked", "flags": []}
+        else:
+            preference = is_preference(text)
+            claim = {"text": text, "source_id": "Manual edit", "quote": "", "revision": "", "kind": "preference" if preference else "fact",
+                     "status": "unknown", "label": "user-attested" if preference else "needs review",
+                     "flags": [] if preference else ["Select one exact career source span for this sentence; voice samples and edit attestation cannot support it."]}
+        if any(previous["text"] == text for previous in claims):
+            claim["flags"].append("Duplicate sentence; review it.")
+            claim["label"] = "needs review"
+        claims.append(claim)
+    return claims
+
+
 def acceptance_questions(state: dict, draft: str, master_revision: str, attest_edits: bool) -> list[str]:
     questions = source_questions(reviewed_snippets(state))
     if not draft.strip():
@@ -175,11 +201,8 @@ def acceptance_questions(state: dict, draft: str, master_revision: str, attest_e
     if master_revision != state["master_revision"]:
         questions.append("The master resume changed. Re-review sources before accepting; your draft is retained.")
     for claim in claim_ledger(state, draft, master_revision):
-        if claim["source_id"] == "Manual edit":
-            if not attest_edits or not is_preference(claim["text"].removeprefix("- ")):
-                questions.extend(claim["flags"])
-        elif f"- {claim['text']}" in draft.splitlines():
-            questions.extend(claim["flags"])
+        questions.extend(claim["flags"])
+
     allowed_numbers = {number for source in reviewed_snippets(state) if source["kind"] == "career fact"
                        for number in NUMBERS.findall(source["text"])}
     if not set(NUMBERS.findall(draft)).issubset(allowed_numbers):
@@ -194,13 +217,14 @@ def acceptance_questions(state: dict, draft: str, master_revision: str, attest_e
 def claim_ledger(state: dict, draft: str, master_revision: str) -> list[dict]:
     sources = {source["id"]: source for source in reviewed_snippets(state)}
     ledger = []
+    current_lines = set(draft.splitlines())
     for claim in state["claims"]:
+        if f"- {claim['text']}" not in current_lines:
+            continue
         entry = {**claim, "flags": list(claim["flags"])}
         source = sources.get(claim["source_id"])
-        if source is None or source["revision"] != claim["revision"] or (claim["source_id"].startswith("master-resume.md ") and master_revision != state["master_revision"]):
+        if claim["source_id"] != "Manual edit" and (source is None or source["revision"] != claim["revision"] or (claim["source_id"].startswith("master-resume.md ") and master_revision != state["master_revision"])):
             entry["flags"].append("Source snapshot changed or was deselected; re-review this claim.")
-        if f"- {claim['text']}" not in draft.splitlines():
-            entry["flags"].append("Sentence edited or removed; its earlier support does not apply.")
         if entry["flags"]:
             entry["label"] = "needs review"
         ledger.append(entry)
@@ -208,7 +232,9 @@ def claim_ledger(state: dict, draft: str, master_revision: str) -> list[dict]:
     headings = {"# Grimoire", *(f"## {section}" for section in SECTIONS)}
     for line in draft.splitlines():
         if line.strip() and line not in headings and line not in known_lines:
-            ledger.append({"text": line, "source_id": "Manual edit", "quote": "", "revision": "",
-                           "kind": "fact", "status": "unknown", "label": "needs review",
-                           "flags": ["Manual edit: attest phrasing preferences; factual additions require a selected source and a reviewed draft."]})
+            text = line.removeprefix("- ")
+            preference = line.startswith("- ") and is_preference(text)
+            ledger.append({"text": text, "source_id": "Manual edit", "quote": "", "revision": "",
+                           "kind": "preference" if preference else "fact", "status": "unknown", "label": "user-attested" if preference else "needs review",
+                           "flags": [] if preference else ["Manual edit: factual additions require a selected source and explicit local draft review."]})
     return ledger

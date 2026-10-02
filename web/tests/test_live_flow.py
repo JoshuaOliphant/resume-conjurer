@@ -1270,7 +1270,7 @@ def test_onboarding_stale_acceptance_and_manual_fact_preserve_submitted_draft(on
     assert response.status_code == 422 and "master resume changed" in response.text
 
 
-@pytest.mark.parametrize("path", ["/onboarding/sources", "/onboarding/review", "/onboarding/draft", "/onboarding/edit", "/onboarding/accept"])
+@pytest.mark.parametrize("path", ["/onboarding/sources", "/onboarding/review", "/onboarding/draft", "/onboarding/edit", "/onboarding/accept", "/onboarding/review-draft"])
 def test_onboarding_mutations_refuse_cross_site_and_running_generation(onboarding_client, path):
     client, boundary, manager = onboarding_client
     data = {"kind": "career fact", "roles": "Roles", "examples": "Examples", "voice": "Voice", "revision": "irrelevant", "prompt_hash": "x", "draft": "Text"}
@@ -1425,3 +1425,46 @@ def test_onboarding_real_optional_formats_keep_extraction_warnings(onboarding_cl
         assert warning in page.text
         assert state["optional_sources"][0]["warnings"]
     assert not boundary.calls
+
+
+def test_onboarding_deliberate_local_review_repairs_model_status_without_another_call(onboarding_client, workspace):
+    sentence = "Built an internal service template adopted by 9 teams."
+    client, boundary, _ = onboarding_client
+    payload = _result().structured_output
+    payload["sections"][0]["items"][0].update(text=sentence, quote=sentence, kind="fact", source_id="answer.examples L1", status="implemented")
+    boundary.messages = [_result(payload=payload)]
+    assert _review_onboarding(client, workspace, examples=sentence).status_code == 303
+    assert _draft_onboarding(client, workspace).status_code == 303
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    assert state["claims"][0]["label"] == "needs review"
+    assert client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"], "draft": state["draft"]}).status_code == 422
+    response = client.post("/onboarding/review-draft", data={"revision": revision, "draft": state["draft"]}, follow_redirects=False)
+    assert response.status_code == 303
+    state, revision = store.read()
+    assert state["claims"][0]["status"] == "unknown"
+    assert state["claims"][0]["label"] == "user-attested" and state["claims"][0]["flags"] == []
+    assert client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"], "draft": state["draft"]}, follow_redirects=False).status_code == 303
+    assert sentence in DocumentStore(workspace).read("grimoire.md")
+    assert len(boundary.calls) == 1
+
+
+@pytest.mark.parametrize("problem", ["stale", "changed-master", "oversize"])
+def test_onboarding_local_review_preserves_submitted_draft_on_failed_guard(onboarding_client, workspace, problem):
+    client, boundary, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    _draft_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    draft = state["draft"] + "\n- User recovery text.\n"
+    if problem == "stale":
+        revision = "stale"
+    elif problem == "changed-master":
+        (workspace / "master-resume.md").write_text("Changed master source")
+    else:
+        draft += "- " + "x" * 8193
+    response = client.post("/onboarding/review-draft", data={"revision": revision, "draft": draft})
+    assert response.status_code == (400 if problem == "oversize" else 409)
+    assert "User recovery text" in response.text
+    assert store.read()[0]["draft"] == state["draft"]
+    assert len(boundary.calls) == 1
