@@ -165,6 +165,12 @@ def test_missing_hierarchy_and_duplicate_role_targets_require_correction() -> No
     assert "**Engineer** -- 2021" in partial_date.text
     assert not partial_date.ready
     assert any("role dates" in need for need in partial_date.corrections)
+    reversed_dates = normalize_master_resume("## Experience\n### Acme -- Platform team\n**Engineer** -- 2024-2021\n- Saved 42%")
+    assert "**Engineer** -- 2024-2021" in reversed_dates.text
+    assert not reversed_dates.ready
+    assert any("role dates" in need for need in reversed_dates.corrections)
+    current_role = normalize_master_resume("## Experience\n### Acme -- Platform team\n**Engineer** -- 2021-Present\n- Saved 42%")
+    assert current_role.ready
     repeated = normalize_master_resume(
         "## Experience\n### Acme -- 2021-2022\n**Staff Engineer** -- 2021-2022\n- First 42%\n"
         "### Acme -- 2023-2024\n**Staff Engineer** -- 2023-2024\n- Second 12%\n"
