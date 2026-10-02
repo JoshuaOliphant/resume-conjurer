@@ -38,6 +38,9 @@
       </ul>
     </div>
     {% endif %}
+    {% if normalization %}
+    <p role="status">{% if normalization.ready %}{{ normalization.targets | length }} usable composer slots found.{% elif normalization.targets %}Composer slots found, but the master resume needs correction before tailoring.{% else %}No usable composer slots found. The extracted text is readable but needs correction before tailoring.{% endif %}</p>
+    {% endif %}
   </section>
   {% endif %}
 
@@ -45,6 +48,7 @@
     <input type="hidden" name="document_name" value="{{ document_name }}">
     <input type="hidden" name="revision" value="{{ revision }}">
     {% if import_key %}<input type="hidden" name="import_key" value="{{ import_key }}">{% endif %}
+    {% if import_warnings %}<input type="hidden" name="order_review_required" value="true">{% endif %}
     <div class="field">
       <label class="field__label" for="document-text">{{ "Master résumé" if document_name == "master-resume.md" else "Grimoire" }} text</label>
       <span class="field__hint" id="document-hint">Changes are saved only when you choose Save. Keep claims tied to evidence you can check.</span>
@@ -52,6 +56,7 @@
     </div>
     <div class="actions">
       <button class="btn btn--primary" type="submit">{{ "Save imported text" if import_key and import_key != "recovery" else "Save changes" }}</button>
+      {% if document_name == "master-resume.md" %}<button class="btn btn--ghost" type="submit" formaction="/documents/normalize">Prepare master resume</button>{% endif %}
       {% if import_key %}<a class="btn btn--quiet" href="/documents?name={{ document_name | urlencode }}">{{ "Reload saved document" if import_key == "recovery" else "Cancel import" }}</a>{% endif %}
     </div>
   </form>

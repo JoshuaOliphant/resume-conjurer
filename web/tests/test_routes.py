@@ -6,19 +6,21 @@ import hashlib
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
+from markupsafe import escape
+from test_document_import import _docx, _pdf
+
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.scripts_path import ensure_scripts_on_path
 from app.adapters.verification_fake import NoVerificationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import EVIDENCE, _v, get_application
+from app.document_import import import_document
 from app.document_routes import MAX_UPLOAD_REQUEST_BYTES, DocumentUploadLimit
-from app.document_store import DocumentStore
+from app.document_store import ConflictError, DocumentStore
 from app.domain import Application, Frame, Support, Unit, Variant
 from app.main import SLUG, create_app
 from app.runs import RunManager, RunStatus
-from fastapi.testclient import TestClient
-from markupsafe import escape
-from test_document_import import _docx, _pdf
 
 ensure_scripts_on_path()
 
@@ -143,6 +145,8 @@ def test_document_import_previews_without_overwriting_and_saves_explicitly(docum
     assert "# Imported\n- Verify this claim" in response.text
     assert 'name="import_key"' in response.text
     assert "Cancel import" in response.text
+    assert "No usable composer slots" in response.text
+    assert "Prepare master resume" in response.text
     assert document_store.read("master-resume.md") == original
     digest = hashlib.sha256(content).hexdigest()
     assert (document_store.root / ".document-originals" / digest / "resume.md").read_bytes() == content
@@ -157,6 +161,160 @@ def test_document_import_previews_without_overwriting_and_saves_explicitly(docum
     reloaded = document_client.get(saved.headers["location"])
     assert "Saved. Review existing applications" in reloaded.text
     assert "- Checked claim" in reloaded.text
+
+
+def test_import_normalization_requires_correction_then_saves_reviewed_master(document_client, document_store):
+    content = _docx(
+        '<w:p><w:r><w:t>Casey | casey@example.com</w:t></w:r></w:p>'
+        '<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Experience</w:t></w:r></w:p>'
+        '<w:p><w:pPr><w:pStyle w:val="Heading3"/></w:pPr><w:r><w:t>Acme</w:t></w:r></w:p>'
+        '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Staff Engineer</w:t></w:r>'
+        '<w:r><w:t> | 2021-2024</w:t></w:r></w:p>'
+        '<w:p><w:pPr><w:pStyle w:val="ListBullet"/></w:pPr><w:r><w:t>Reduced cost 42%</w:t></w:r></w:p>'
+    )
+    extracted = import_document("resume.docx", content).text
+    before = document_store.read("master-resume.md")
+    revision = document_store.revision("master-resume.md")
+    imported = document_client.post("/documents/import", data={
+        "document_name": "master-resume.md", "revision": revision,
+    }, files={"file": ("resume.docx", content, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+    assert imported.status_code == 200
+    assert "needs correction" in imported.text
+    assert document_store.read("master-resume.md") == before
+    digest = hashlib.sha256(content).hexdigest()
+    assert (document_store.root / ".document-originals" / digest / "resume.docx").read_bytes() == content
+
+    preview = document_client.post("/documents/normalize", data={
+        "document_name": "master-resume.md", "revision": revision, "text": extracted,
+    })
+    assert preview.status_code == 200
+    assert "Source line 5" in preview.text
+    assert "### Acme -- [enter employer context]" in preview.text
+    assert "Reduced cost 42%" in preview.text
+    assert "employer context" in preview.text
+    assert document_store.read("master-resume.md") == before
+
+    normalized = extracted.replace("### Acme", "### Acme -- 2021-2024").replace("**Staff Engineer** |", "**Staff Engineer** --")
+    uncorrected = normalized.replace("### Acme -- 2021-2024", "### Acme -- [enter employer context]")
+    blocked = document_client.post("/documents/normalize/accept", data={
+        "document_name": "master-resume.md", "revision": revision,
+        "text": uncorrected,
+    })
+    assert blocked.status_code == 422
+    assert document_store.read("master-resume.md") == before
+    accepted = document_client.post("/documents/normalize/accept", data={
+        "document_name": "master-resume.md", "revision": revision, "text": normalized,
+    }, follow_redirects=False)
+    assert accepted.status_code == 303
+    assert document_store.read("master-resume.md") == normalized
+    assert revision in document_store.history("master-resume.md")
+
+
+def test_normalization_requires_explicit_reading_order_review_for_docx_table(document_client, document_store):
+    content = _docx(
+        '<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Experience</w:t></w:r></w:p>'
+        '<w:p><w:pPr><w:pStyle w:val="Heading3"/></w:pPr><w:r><w:t>Acme | 2021-2024</w:t></w:r></w:p>'
+        '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Engineer</w:t></w:r><w:r><w:t> | 2021-2024</w:t></w:r></w:p>'
+        '<w:p><w:pPr><w:pStyle w:val="ListBullet"/></w:pPr><w:r><w:t>Saved 42%</w:t></w:r></w:p>'
+        '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Training</w:t></w:r></w:p></w:tc>'
+        '<w:tc><w:p><w:r><w:t>Systems course</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
+    )
+    revision = document_store.revision("master-resume.md")
+    imported = document_client.post("/documents/import", data={
+        "document_name": "master-resume.md", "revision": revision,
+    }, files={"file": ("resume.docx", content)})
+    assert 'name="order_review_required" value="true"' in imported.text
+    source = import_document("resume.docx", content).text
+    preview = document_client.post("/documents/normalize", data={
+        "document_name": "master-resume.md", "revision": revision, "text": source,
+        "order_review_required": "true",
+    })
+    assert "reading order against the original file" in preview.text
+    reviewed = preview.text
+    assert "Training | Systems course" in reviewed
+    draft = source.replace("### Acme |", "### Acme --").replace("**Engineer** |", "**Engineer** --")
+    blocked = document_client.post("/documents/normalize/accept", data={
+        "document_name": "master-resume.md", "revision": revision, "text": draft,
+        "order_review_required": "true",
+    })
+    assert blocked.status_code == 422
+    assert "Review and correct the reading order" in blocked.text
+    assert document_store.read("master-resume.md") != draft
+    accepted = document_client.post("/documents/normalize/accept", data={
+        "document_name": "master-resume.md", "revision": revision, "text": draft,
+        "order_review_required": "true", "order_corrected": "true",
+    }, follow_redirects=False)
+    assert accepted.status_code == 303
+    assert "Training | Systems course" in document_store.read("master-resume.md")
+
+
+def test_normalized_acceptance_rejects_stale_revision_with_draft_recovery(document_client, document_store):
+    revision = document_store.revision("master-resume.md")
+    draft = "## Experience\n### Acme -- 2021-2024\n**Staff Engineer** -- 2021-2024\n- Reduced cost 42%\n"
+    document_store.save("master-resume.md", "# Newer source\n", revision)
+    for _ in range(2):
+        conflict = document_client.post("/documents/normalize/accept", data={
+            "document_name": "master-resume.md", "revision": revision, "text": draft,
+        })
+        assert conflict.status_code == 409
+        assert "Recover your unsaved normalized draft" in conflict.text
+        assert draft.strip() in conflict.text
+        assert f'name="revision" value="{revision}"' in conflict.text
+        assert document_store.read("master-resume.md") == "# Newer source\n"
+
+
+@pytest.mark.parametrize("path", ["/documents/normalize", "/documents/normalize/accept"], ids=["preview", "accept"])
+def test_normalization_only_accepts_master_resume(document_client, document_store, path):
+    response = document_client.post(path, data={
+        "document_name": "grimoire.md", "revision": document_store.revision("grimoire.md"),
+        "text": "## Experience\n### Acme -- 2021-2024\n**Engineer** -- 2021-2024\n- Saved 42%",
+    })
+    assert response.status_code == 400
+    assert document_store.read("grimoire.md") == "# Voice\nWrite plainly.\n"
+
+
+@pytest.mark.parametrize("path", ["/documents/normalize", "/documents/normalize/accept"], ids=["preview", "accept"])
+def test_normalization_rejects_text_over_editor_limit(document_client, document_store, monkeypatch, path):
+    import app.document_routes as routes
+
+    monkeypatch.setattr(routes, "MAX_SOURCE_BYTES", 30)
+    revision = document_store.revision("master-resume.md")
+    response = document_client.post(path, data={
+        "document_name": "master-resume.md", "revision": revision,
+        "text": "## Experience\n" + "x" * 31,
+    })
+    assert response.status_code == 400
+    assert "2 MiB editor limit" in response.text
+    assert document_store.revision("master-resume.md") == revision
+
+
+def test_normalized_acceptance_requires_exact_reviewed_structure(document_client, document_store):
+    draft = "## Experience\n### Acme | 2021-2024\n**Engineer** | 2021-2024\n- Saved 42%\n"
+    response = document_client.post("/documents/normalize/accept", data={
+        "document_name": "master-resume.md", "revision": document_store.revision("master-resume.md"), "text": draft,
+    })
+    assert response.status_code == 422
+    assert draft.strip() in response.text
+    assert document_store.read("master-resume.md") == "# Master\n- Original claim\n"
+
+
+@pytest.mark.parametrize("failure", [ConflictError("changed during save"), ValueError("immutable snapshot differs")],
+                         ids=["concurrent-revision", "invalid-storage"])
+def test_normalized_acceptance_preserves_draft_when_store_rejects(document_client, document_store, monkeypatch, failure):
+    draft = "## Experience\n### Acme -- 2021-2024\n**Engineer** -- 2021-2024\n- Saved 42%\n"
+    revision = document_store.revision("master-resume.md")
+
+    def reject_save(name, text, expected_revision):
+        raise failure
+
+    monkeypatch.setattr(document_store, "save", reject_save)
+    response = document_client.post("/documents/normalize/accept", data={
+        "document_name": "master-resume.md", "revision": revision, "text": draft,
+    })
+    assert response.status_code == (409 if isinstance(failure, ConflictError) else 400)
+    assert draft.strip() in response.text
+    assert f'name="revision" value="{revision}"' in response.text
+    assert document_store.read("master-resume.md") == "# Master\n- Original claim\n"
 
 
 @pytest.mark.parametrize(
@@ -326,7 +484,13 @@ def test_document_mutations_reject_cross_origin_requests(document_client, docume
     uploaded = document_client.post("/documents/import", data={
         "document_name": "master-resume.md", "revision": revision,
     }, files={"file": ("resume.md", b"# Imported", "text/markdown")}, headers=headers)
-    assert saved.status_code == uploaded.status_code == 403
+    prepared = document_client.post("/documents/normalize", data={
+        "document_name": "master-resume.md", "revision": revision, "text": "## Experience",
+    }, headers=headers)
+    accepted = document_client.post("/documents/normalize/accept", data={
+        "document_name": "master-resume.md", "revision": revision, "text": "## Experience",
+    }, headers=headers)
+    assert saved.status_code == uploaded.status_code == prepared.status_code == accepted.status_code == 403
     assert document_store.read("master-resume.md") == "# Master\n- Original claim\n"
 
 
@@ -339,7 +503,13 @@ def test_document_mutations_wait_for_generation(document_client, document_store,
     uploaded = document_client.post("/documents/import", data={
         "document_name": "master-resume.md", "revision": revision,
     }, files={"file": ("resume.md", b"# Imported", "text/markdown")})
-    assert saved.status_code == uploaded.status_code == 409
+    prepared = document_client.post("/documents/normalize", data={
+        "document_name": "master-resume.md", "revision": revision, "text": "## Experience",
+    })
+    accepted = document_client.post("/documents/normalize/accept", data={
+        "document_name": "master-resume.md", "revision": revision, "text": "## Experience",
+    })
+    assert saved.status_code == uploaded.status_code == prepared.status_code == accepted.status_code == 409
     assert "Wait for generation to finish" in saved.text
     assert document_store.read("master-resume.md") == "# Master\n- Original claim\n"
 

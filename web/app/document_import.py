@@ -70,13 +70,39 @@ def _read_docx(content: bytes) -> ImportedDocument:
                 parts.append("\n")
         return "".join(parts).strip()
 
+    def paragraph_markup(paragraph: ElementTree.Element) -> str:
+        parts: list[str] = []
+        bold_open = False
+        for run in paragraph.iter(f"{WORD_NS}r"):
+            properties = run.find(f"{WORD_NS}rPr")
+            marker = properties.find(f"{WORD_NS}b") if properties is not None else None
+            bold = marker is not None and marker.get(f"{WORD_NS}val", "true").lower() not in {"0", "false", "off"}
+            run_parts: list[str] = []
+            for node in run.iter():
+                if node.tag == f"{WORD_NS}t":
+                    run_parts.append(node.text or "")
+                elif node.tag == f"{WORD_NS}tab":
+                    run_parts.append("\t")
+                elif node.tag in {f"{WORD_NS}br", f"{WORD_NS}cr"}:
+                    run_parts.append("\n")
+            value = "".join(run_parts)
+            if not value:
+                continue
+            if bold != bold_open:
+                parts.append("**")
+                bold_open = bold
+            parts.append(value)
+        if bold_open:
+            parts.append("**")
+        return "".join(parts).strip()
+
     def formatted_paragraph(paragraph: ElementTree.Element) -> str:
         value = paragraph_text(paragraph)
         if not value:
             return ""
         properties = paragraph.find(f"{WORD_NS}pPr")
         if properties is None:
-            return value
+            return paragraph_markup(paragraph)
         style = properties.find(f"{WORD_NS}pStyle")
         style_name = style.get(f"{WORD_NS}val", "") if style is not None else ""
         if style_name.startswith("Heading") and style_name[7:].isdigit():
@@ -85,7 +111,7 @@ def _read_docx(content: bytes) -> ImportedDocument:
                 return f"{'#' * level} {value}"
         if style_name.startswith("List") or properties.find(f"{WORD_NS}numPr") is not None:
             return f"- {value}"
-        return value
+        return paragraph_markup(paragraph)
 
     for block in body:
         if block.tag == f"{WORD_NS}p":
