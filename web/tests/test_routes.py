@@ -298,6 +298,22 @@ def test_normalized_acceptance_requires_exact_reviewed_structure(document_client
     assert document_store.read("master-resume.md") == "# Master\n- Original claim\n"
 
 
+def test_normalized_acceptance_uses_browser_form_line_endings(document_client, document_store):
+    draft = "## Experience\n### Acme -- 2021-2024\n**Engineer** -- 2021-2024\n- Saved 42%\n"
+    revision = document_store.revision("master-resume.md")
+    preview = document_client.post("/documents/normalize", data={
+        "document_name": "master-resume.md", "revision": revision, "text": draft,
+    })
+    assert preview.status_code == 200
+    assert "1 usable composer slots found" in preview.text
+    accepted = document_client.post("/documents/normalize/accept", data={
+        "document_name": "master-resume.md", "revision": revision,
+        "text": draft.replace("\n", "\r\n"),
+    }, follow_redirects=False)
+    assert accepted.status_code == 303
+    assert document_store.read("master-resume.md") == draft
+
+
 def test_normalized_acceptance_preserves_draft_on_concurrent_filesystem_change(document_client, document_store, monkeypatch):
     draft = "## Experience\n### Acme -- 2021-2024\n**Engineer** -- 2021-2024\n- Saved 42%\n"
     revision = document_store.revision("master-resume.md")

@@ -134,14 +134,15 @@ def document_router(store: DocumentStore | None, templates: Jinja2Templates, run
             repository = writable(request)
             if document_name != "master-resume.md":
                 raise HTTPException(400, "Only the master resume can be normalized.")
-            normalization = normalize_master_resume(text)
+            reviewed_text = text.replace("\r\n", "\n").replace("\r", "\n")
+            normalization = normalize_master_resume(reviewed_text)
             if repository.revision(document_name) != revision:
                 return render_normalization(
                     request, "", revision, normalization, status=409,
                     error="This master resume changed in another tab. Recover your unsaved normalized draft before reloading the saved document.",
                     draft_text=text, order_review_required=order_review_required,
                 )
-            if len(text.encode("utf-8")) > MAX_SOURCE_BYTES:
+            if len(reviewed_text.encode("utf-8")) > MAX_SOURCE_BYTES:
                 return render_normalization(request, "", revision, normalization, status=400,
                                             error="Normalized text exceeds the 2 MiB editor limit.", draft_text=text,
                                             order_review_required=order_review_required)
@@ -149,12 +150,12 @@ def document_router(store: DocumentStore | None, templates: Jinja2Templates, run
                 return render_normalization(request, "", revision, normalization, status=422,
                                             error="Review and correct the reading order against the original file before accepting.",
                                             draft_text=text, order_review_required=True)
-            if normalization.corrections or normalization.text != text:
+            if normalization.corrections or normalization.text != reviewed_text:
                 return render_normalization(request, "", revision, normalization, status=422,
                                             error="Correct the listed structure and review the exact draft before accepting it.",
                                             draft_text=text, order_review_required=order_review_required)
             try:
-                repository.save(document_name, text, revision)
+                repository.save(document_name, reviewed_text, revision)
             except ConflictError:
                 return render_normalization(
                     request, "", revision, normalization, status=409,
