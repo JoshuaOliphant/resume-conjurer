@@ -44,10 +44,6 @@
     "sha256": "a537e02a3a243d54138b4cb00e940a2db83992d2c8ece76c80941750c4941482"
   },
   {
-    "path": "web/app/adapters/workspace_fs.py",
-    "sha256": "4ad53b77f0d3432bf4b5854470123304f0ad11d2d18ff04d875f796cae65ef99"
-  },
-  {
     "path": "web/app/data.py",
     "sha256": "b1dc191bbfcb05f258adb733edd6395619c72cfdbae0a650dbb63528af26d218"
   },
@@ -74,9 +70,5 @@
   {
     "path": "web/tests/test_workspace_fake.py",
     "sha256": "a9c8721290e9f1822ccd54398a088c2ed67ed680f1797f9b610c9b5b1a52765b"
-  },
-  {
-    "path": "web/tests/test_workspace_fs.py",
-    "sha256": "4dec9001e39c032247d834ec27fec1e1b882abc54608be3b89e836c641de7b77"
   }
 ]
