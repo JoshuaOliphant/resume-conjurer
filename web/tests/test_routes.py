@@ -6,6 +6,10 @@ import hashlib
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
+from markupsafe import escape
+from test_document_import import _docx, _pdf
+
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.scripts_path import ensure_scripts_on_path
 from app.adapters.verification_fake import NoVerificationPort
@@ -16,9 +20,6 @@ from app.document_store import DocumentStore
 from app.domain import Application, Frame, Support, Unit, Variant
 from app.main import SLUG, create_app
 from app.runs import RunManager, RunStatus
-from fastapi.testclient import TestClient
-from markupsafe import escape
-from test_document_import import _docx, _pdf
 
 ensure_scripts_on_path()
 
@@ -707,7 +708,7 @@ def test_curate_renders_zero_variant_unit_without_500(repo):
 def test_export_renders(client):
     r = client.get("/export")
     assert r.status_code == 200
-    assert "pandoc" in r.text
+    assert "Professional uses one reading column" in r.text
     assert "The bundled sample does not create downloadable files." in r.text
     assert 'href="#"' not in r.text
     assert "/export/download/" not in r.text
