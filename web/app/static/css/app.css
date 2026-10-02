@@ -538,6 +538,70 @@ kbd {
 .summon__hint { font-size: var(--text-sm); color: var(--muted); line-height: var(--lh-prose); }
 .summon--error .ground-note { margin-top: 0; }
 
+.documents__tabs {
+  display: flex;
+  gap: var(--space-5);
+  margin: var(--space-7) 0 var(--space-6);
+  border-bottom: 1px solid var(--line);
+}
+.documents__tabs a {
+  padding: 0 0 var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  border-bottom: 2px solid transparent;
+}
+.documents__tabs a[aria-current="page"] { color: var(--primary); border-color: var(--primary); }
+.documents__message, .documents__error {
+  margin-bottom: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+}
+.documents__message { color: var(--ink); background: var(--accent-soft); border: 1px solid var(--accent-edge); }
+.documents__error { color: var(--ink); background: var(--warn-soft); border: 1px solid var(--warn-edge); }
+.documents__editor {
+  min-height: 32rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--lh-prose);
+  tab-size: 2;
+}
+.documents__preview, .documents__import {
+  margin: var(--space-7) 0 var(--space-5);
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.documents__preview h2, .documents__import h2 { font-size: var(--text-lg); font-weight: 600; }
+.documents__preview > p, .documents__import > p {
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--lh-prose);
+}
+.documents__warnings { margin-top: var(--space-4); font-size: var(--text-sm); }
+.documents__warnings p { font-weight: 600; }
+.documents__warnings ul { margin: var(--space-2) 0 0; padding-left: var(--space-5); }
+.documents__file {
+  max-width: 100%;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.documents__file::file-selector-button {
+  margin-right: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.documents__import form { margin-top: var(--space-5); }
+
 /* --------------------------------------------------------------- Responsive */
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }

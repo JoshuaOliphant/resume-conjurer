@@ -4,19 +4,27 @@
 import asyncio
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.adapters.composition import ScriptCompositionPort
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.generation_sdk import SdkGenerationPort
 from app.adapters.verification_fake import FakeVerificationPort, NoVerificationPort
 from app.adapters.verification_jev import JevVerificationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.adapters.workspace_fs import FsWorkspaceRepository
-from app.adapters.composition import ScriptCompositionPort
-from app.deps import build_composition, build_generation, build_repository, build_verification
+from app.deps import (
+    build_composition,
+    build_generation,
+    build_repository,
+    build_verification,
+)
+from app.document_store import DocumentStore
 from app.domain import Evidence, Variant
 from app.main import create_app
 from app.runs import RunManager, RunStatus
@@ -82,6 +90,56 @@ def test_live_start_renders_the_progress_page(live_client):
     assert "Summoning" in r.text
     assert "drafting options from your evidence" in r.text
     assert "Nothing is invented" not in r.text
+
+
+def test_source_save_finishes_before_generation_can_start(workspace, monkeypatch):
+    repo = FsWorkspaceRepository(workspace)
+    gen = FakeGenerationPort()
+    manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
+    documents = DocumentStore(workspace)
+    revision = documents.revision("master-resume.md")
+    saving = Event()
+    release_save = Event()
+    start_called = Event()
+    real_save = documents.save
+    real_start = manager.start
+
+    def held_save(name, text, expected_revision):
+        saving.set()
+        assert release_save.wait(5)
+        return real_save(name, text, expected_revision)
+
+    def observed_start(slug):
+        start_called.set()
+        return real_start(slug)
+
+    monkeypatch.setattr(documents, "save", held_save)
+    monkeypatch.setattr(manager, "start", observed_start)
+    app = create_app(repo=repo, gen=gen, run_manager=manager, documents=documents, live=True)
+    with TestClient(app) as client, ThreadPoolExecutor(max_workers=2) as workers:
+        save = workers.submit(client.post, "/documents/save", data={
+            "document_name": "master-resume.md", "text": "# Saved before generation\n", "revision": revision,
+        }, follow_redirects=False)
+        assert saving.wait(5)
+        start = workers.submit(client.post, "/start", data={"jd": "New JD"})
+        try:
+            assert not start_called.wait(0.2)
+        finally:
+            release_save.set()
+        assert save.result(timeout=5).status_code == 303
+        assert start.result(timeout=5).status_code == 200
+        assert start_called.is_set()
+    assert documents.read("master-resume.md") == "# Saved before generation\n"
+
+
+def test_repeated_start_does_not_change_job_description_during_generation(live_client, workspace):
+    client, manager = live_client
+    jd_path = workspace / "applications" / SLUG / "jd.txt"
+    original = jd_path.read_text()
+    manager._status[SLUG] = RunStatus(state="running")
+    response = client.post("/start", data={"jd": "Later JD"})
+    assert response.status_code == 200
+    assert jd_path.read_text() == original
 
 
 def test_status_partial_running_keeps_polling(live_client):
@@ -316,8 +374,8 @@ def test_live_pre_generation_steps_redirect_home(live_client, path):
 def test_live_curate_renders_unverified_note_for_ungrounded_citation(workspace):
     # An ungrounded (unresolvable) citation must render a muted "unverified" note, never a
     # fabricated quote, on the curate screen.
-    from app.domain import Evidence, Unit, Variant
     from app.adapters.workspace_fs import FsWorkspaceRepository
+    from app.domain import Evidence, Unit, Variant
 
     repo = FsWorkspaceRepository(workspace)
     repo.save_outline(SLUG, _live_outline())

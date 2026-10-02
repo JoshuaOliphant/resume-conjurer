@@ -120,6 +120,8 @@ it, so do not bake further single-user assumptions into the domain model or rout
 
 ## Repo docs
 
+`docs/document-workbench.md` covers live source imports, manual editing, revision history, and local-workspace limits.
+
 `PRODUCT.md` (audience, anti-references, design principles) and `DESIGN.md` (the oxblood-on-white
 token system, implemented in `web/app/static/css/app.css`) constrain UI work; read them before
 touching templates or CSS. `specs/` and `.sdlc/` are artifacts of the autonomous-sdlc loop, not

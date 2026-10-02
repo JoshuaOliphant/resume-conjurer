@@ -9,6 +9,7 @@ dependencies = [
     "jinja2>=3.1.0",
     "python-multipart>=0.0.9",
     "claude-agent-sdk==0.2.163",
+    "pypdf>=6.19.0",
 ]
 
 [dependency-groups]
