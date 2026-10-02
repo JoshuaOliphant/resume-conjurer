@@ -6,10 +6,6 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-from markupsafe import escape
-from test_document_import import _docx, _pdf
-
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.scripts_path import ensure_scripts_on_path
 from app.adapters.verification_fake import NoVerificationPort
@@ -20,6 +16,9 @@ from app.document_store import DocumentStore
 from app.domain import Application, Frame, Support, Unit, Variant
 from app.main import SLUG, create_app
 from app.runs import RunManager, RunStatus
+from fastapi.testclient import TestClient
+from markupsafe import escape
+from test_document_import import _docx, _pdf
 
 ensure_scripts_on_path()
 
@@ -124,6 +123,12 @@ def test_document_routes_require_configured_workspace(client):
         "document_name": "master-resume.md", "text": "# Replaced", "revision": "irrelevant",
     })
     assert response.status_code == 503
+
+
+def test_final_routes_require_configured_workspace(client):
+    assert client.get("/finals").status_code == 503
+    assert client.post("/review/compose", data={}).status_code == 503
+    assert client.post("/finals/save", data={"document_name": "resume.md", "text": "x", "revision": "x"}).status_code == 503
 
 
 def test_document_import_previews_without_overwriting_and_saves_explicitly(document_client, document_store):
@@ -491,6 +496,9 @@ def test_last_pick_advances_to_review(client):
     units = get_application().units
     last = len(units) - 1
     last_unit = units[last]
+    page = client.get(f"/curate/{last}")
+    assert "Review your picks" in page.text
+    assert "Stitch the documents" not in page.text
     r = client.post(
         f"/curate/{last}",
         data={"variant_id": last_unit.variants[0].id},

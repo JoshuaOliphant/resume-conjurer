@@ -122,6 +122,8 @@ it, so do not bake further single-user assumptions into the domain model or rout
 
 `docs/document-workbench.md` covers live source imports, manual editing, revision history, and local-workspace limits.
 
+`docs/final-documents.md` covers explicit composition, editable final Markdown, stale notices, and revision-bound exports.
+
 `PRODUCT.md` (audience, anti-references, design principles) and `DESIGN.md` (the oxblood-on-white
 token system, implemented in `web/app/static/css/app.css`) constrain UI work; read them before
 touching templates or CSS. `specs/` and `.sdlc/` are artifacts of the autonomous-sdlc loop, not
