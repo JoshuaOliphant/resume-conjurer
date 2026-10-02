@@ -39,7 +39,7 @@
     </div>
     {% endif %}
     {% if normalization %}
-    <p role="status">{% if normalization.ready %}{{ normalization.targets | length }} usable composer slots found.{% elif normalization.targets %}Composer slots found, but the master resume needs correction before tailoring.{% else %}No usable composer slots found. The extracted text is readable but needs correction before tailoring.{% endif %}</p>
+    <p role="status">{% if normalization.ready and import_warnings %}{{ normalization.targets | length }} provisional composer slots found. Check and correct the import warnings before tailoring.{% elif normalization.ready %}{{ normalization.targets | length }} usable composer slots found.{% elif normalization.targets %}Composer slots found, but the master resume needs correction before tailoring.{% else %}No usable composer slots found. The extracted text is readable but needs correction before tailoring.{% endif %}</p>
     {% endif %}
   </section>
   {% endif %}
@@ -48,7 +48,6 @@
     <input type="hidden" name="document_name" value="{{ document_name }}">
     <input type="hidden" name="revision" value="{{ revision }}">
     {% if import_key %}<input type="hidden" name="import_key" value="{{ import_key }}">{% endif %}
-    {% if import_warnings %}<input type="hidden" name="order_review_required" value="true">{% endif %}
     <div class="field">
       <label class="field__label" for="document-text">{{ "Master résumé" if document_name == "master-resume.md" else "Grimoire" }} text</label>
       <span class="field__hint" id="document-hint">Changes are saved only when you choose Save. Keep claims tied to evidence you can check.</span>

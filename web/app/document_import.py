@@ -143,7 +143,7 @@ def _read_pdf(content: bytes) -> ImportedDocument:
         raise
     except (PyPdfError, ValueError, OSError, UnicodeError) as exc:
         raise DocumentImportError("PDF is corrupt or unreadable") from exc
-    warnings = []
+    warnings = ["PDF reading order may differ from the visible layout. Check and correct it against the original file."]
     for number, (text, has_images) in enumerate(zip(extracted, image_pages, strict=True), start=1):
         if not text.strip():
             warnings.append(f"Page {number} has no extractable text; OCR was not performed.")

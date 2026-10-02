@@ -7,7 +7,8 @@
   <p class="page__lede">The draft keeps your words in order and adds only the headings and markers the composer reads. Correct uncertain dates or hierarchy yourself. No claims are verified here.</p>
 
   {% if error %}<p class="documents__error" role="alert">{{ error }}</p>{% endif %}
-  {% if normalization.ready %}<p role="status">{{ normalization.targets | length }} usable composer slots found.</p>
+  {% if normalization.ready and order_review_required %}<p role="status">{{ normalization.targets | length }} provisional composer slots found. Confirm the source reading order before accepting.</p>
+  {% elif normalization.ready %}<p role="status">{{ normalization.targets | length }} usable composer slots found.</p>
   {% else %}<p role="status">Not ready for tailoring. The draft needs correction.</p>{% endif %}
   {% if normalization.corrections %}
   <section class="documents__warnings" aria-label="Corrections needed">
@@ -35,7 +36,7 @@
   <form method="post" action="/documents/normalize/accept" hx-boost="false">
     <input type="hidden" name="document_name" value="master-resume.md">
     <input type="hidden" name="revision" value="{{ revision }}">
-    {% if order_review_required %}<input type="hidden" name="order_review_required" value="true">{% endif %}
+    {% if review_token %}<input type="hidden" name="review_token" value="{{ review_token }}">{% endif %}
     <label class="field__label" for="normalized-text">Reviewed master résumé</label>
     <textarea class="textarea documents__editor" id="normalized-text" name="text" rows="24" required>{{ draft_text }}</textarea>
     {% if order_review_required %}<label><input type="checkbox" name="order_corrected" value="true" required> I reviewed and corrected the reading order against the original file.</label>{% endif %}

@@ -17,8 +17,12 @@ SECTION_LINE = re.compile(r"^#{1,2}\s+(.+?)\s*$")
 COMPANY_LINE = re.compile(r"^(?:###\s+|Company:\s*)(.+?)(?:\s*(?:\||—|--)\s*(.+))?$", re.IGNORECASE)
 ROLE_LINE = re.compile(r"^(?:\*\*(.+?)\*\*|Role:\s*(.+?))(?:\s*(?:\||—|--)\s*(.+))?$", re.IGNORECASE)
 BULLET_LINE = re.compile(r"^(?:[-*•])\s+(.+)$")
-YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
-CURRENT = re.compile(r"\b(?:Present|Current)\b", re.IGNORECASE)
+STRUCTURE_LABEL = re.compile(r"\b(?:Company|Role):", re.IGNORECASE)
+DATE_RANGE = re.compile(
+    r"\b(?P<start>(?:19|20)\d{2})\b\s*(?:-|–|—|to|through|until)\s*"
+    r"(?P<end>(?:19|20)\d{2}|Present|Current)\b",
+    re.IGNORECASE,
+)
 COMPANY_MARKER = "[enter employer context]"
 ROLE_MARKER = "[enter role dates]"
 
@@ -40,10 +44,11 @@ class NormalizedMaster:
 
 
 def _valid_role_dates(period: str) -> bool:
-    years = list(YEAR.finditer(period))
-    if len(years) >= 2:
-        return int(years[1].group()) >= int(years[0].group())
-    return bool(years and CURRENT.search(period, years[0].end()))
+    match = DATE_RANGE.search(period)
+    if match is None:
+        return False
+    end = match.group("end")
+    return not end.isdigit() or int(end) >= int(match.group("start"))
 
 
 def normalize_master_resume(text: str) -> NormalizedMaster:
@@ -62,6 +67,9 @@ def normalize_master_resume(text: str) -> NormalizedMaster:
     for number, source in enumerate(lines, start=1):
         value = source.strip()
         result = source
+        labels = STRUCTURE_LABEL.findall(value)
+        if in_experience and (len(labels) > 1 or labels and value.startswith(("### ", "**"))):
+            corrections.append(f"Line {number}: multiple employer or role labels share one line; correct reading order.")
         if EXPERIENCE_LINE.fullmatch(value):
             result = "## Experience"
             in_experience = True
