@@ -102,6 +102,7 @@ def test_malformed_claims_are_rejected(item, state):
     ({"text": "planned migration", "kind": "career fact"}, {"text": "shipped migration", "kind": "fact", "quote": "planned migration", "status": "shipped"}, "Delivery status"),
     ({"text": "the team implemented migration", "kind": "career fact"}, {"text": "I implemented migration", "quote": "the team implemented migration"}, "attribution"),
     ({"text": "2021-2024", "kind": "career fact"}, {"text": "2021 to 2024", "quote": "2021-2024"}, "Role dates"),
+    ({"text": "I have not shipped the release.", "kind": "career fact"}, {"text": "shipped the release.", "kind": "preference", "quote": "shipped the release."}, "Delivery status"),
     ({"text": "Built reliable services", "kind": "career fact"}, {"text": "Owned all services", "kind": "fact", "quote": "Built reliable services"}, "not an exact"),
     ({"text": "Exact words", "kind": "career fact"}, {"quote": "not present"}, "Invalid"),
     ({"text": "Exact words", "kind": "career fact"}, {"quote": ""}, "Invalid"),
@@ -229,6 +230,7 @@ def test_model_cannot_return_unbounded_claim_list(state):
 
 @pytest.mark.parametrize("source_kind,source_text,draft_text,status,label", [
     ("career fact", "Built a service.", "Built a service.", "unknown", "source-linked"),
+    ("career fact", "- Built a service.", "Built a service.", "unknown", "source-linked"),
     ("career fact", "Shipped a service.", "Shipped a service.", "shipped", "source-linked"),
     ("voice sample", "Grew revenue 80%.", "Grew revenue 80%.", "unknown", "needs review"),
     ("career fact", "Built a service.", "Owned every service.", "unknown", "needs review"),
@@ -249,3 +251,16 @@ def test_local_review_keeps_ambiguous_sources_duplicates_and_style_edits_honest(
     assert state["claims"][1]["label"] == "user-attested"
     assert state["claims"][2]["label"] == "needs review"
     assert any("Duplicate" in question for question in acceptance_questions(state, draft, "master-hash", True))
+
+
+@pytest.mark.parametrize("source_text,draft_text", [
+    ("I have not shipped the release.", "shipped the release."),
+    ("The team, not I, built the service.", "I, built the service."),
+])
+def test_local_review_rejects_clipped_negation_and_personal_attribution(state, source_text, draft_text):
+    state["selected"] = [{"id": "career", "text": source_text, "kind": "career fact", "revision": "source-hash"}]
+    draft = "# Grimoire\n\n## Identity\n- " + draft_text + "\n"
+    state["claims"] = review_draft(state, draft)
+    state["proposal"] = draft
+    assert state["claims"][0]["label"] == "needs review"
+    assert acceptance_questions(state, draft, "master-hash", True)

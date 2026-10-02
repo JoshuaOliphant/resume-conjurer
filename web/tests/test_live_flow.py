@@ -1468,3 +1468,27 @@ def test_onboarding_local_review_preserves_submitted_draft_on_failed_guard(onboa
     assert "User recovery text" in response.text
     assert store.read()[0]["draft"] == state["draft"]
     assert len(boundary.calls) == 1
+
+
+@pytest.mark.parametrize("source_text,clipped", [
+    ("I have not shipped the release.", "shipped the release."),
+    ("The team, not I, built the service.", "I, built the service."),
+])
+def test_onboarding_local_review_cannot_accept_clipped_fact(onboarding_client, workspace, source_text, clipped):
+    client, boundary, _ = onboarding_client
+    payload = _result().structured_output
+    payload["sections"][0]["items"][0].update(text=source_text, quote=source_text, kind="fact", source_id="answer.examples L1", status="unknown")
+    boundary.messages = [_result(payload=payload)]
+    _review_onboarding(client, workspace, examples=source_text)
+    _draft_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    original = DocumentStore(workspace).read("grimoire.md")
+    draft = state["draft"].replace(source_text, clipped)
+    assert client.post("/onboarding/review-draft", data={"revision": revision, "draft": draft}, follow_redirects=False).status_code == 303
+    state, revision = store.read()
+    assert state["claims"][0]["label"] == "needs review"
+    response = client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"], "draft": draft, "attest_edits": "true"})
+    assert response.status_code == 422 and "voice samples and edit attestation cannot support" in response.text
+    assert DocumentStore(workspace).read("grimoire.md") == original
+    assert len(boundary.calls) == 1

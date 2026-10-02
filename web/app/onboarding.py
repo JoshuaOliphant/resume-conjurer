@@ -151,14 +151,14 @@ def validate_proposal(payload: object, snippets: list[dict]) -> tuple[str, list[
                 flags.append("A voice sample cannot support a career accomplishment.")
             elif not set(NUMBERS.findall(item["text"])).issubset(NUMBERS.findall(item["quote"])):
                 flags.append("Numbers are absent from the exact cited quote.")
-            elif item["kind"] == "fact" and (item["status"] != delivery_status(source["text"])
+            elif (item["kind"] == "fact" or not is_preference(item["text"])) and (item["status"] != delivery_status(source["text"])
                                               or delivery_status(item["text"]) not in {"unknown", delivery_status(source["text"])}):
                 flags.append("Delivery status is absent or conflicts with the selected source.")
             elif ("team" in source["text"].lower() or re.search(r"\bwe\b", source["text"], re.I)) and re.search(r"\b(?:I|my|personally)\b", item["text"], re.I):
                 flags.append("Personal attribution needs review against the team source.")
             elif DATES.search(item["text"]) and item["text"] not in item["quote"]:
                 flags.append("Role dates do not match the exact cited quote.")
-            if (item["kind"] == "fact" or not is_preference(item["text"])) and source is not None and item["text"] not in source["text"]:
+            if (item["kind"] == "fact" or not is_preference(item["text"])) and source is not None and item["text"] != re.sub(r"^[-*+] ", "", source["text"].strip()):
                 flags.append("Factual wording is not an exact selected source span; semantic attribution needs review.")
             if any(claim["text"] == item["text"] for claim in claims):
                 flags.append("Duplicate proposed sentence; review it.")
@@ -176,7 +176,7 @@ def review_draft(state: dict, draft: str) -> list[dict]:
     claims = []
     for line in lines:
         text = line.removeprefix("- ")
-        matches = [source for source in snippets if source["kind"] == "career fact" and text and text in source["text"]]
+        matches = [source for source in snippets if source["kind"] == "career fact" and text == re.sub(r"^[-*+] ", "", source["text"].strip())]
         if len(matches) == 1:
             source = matches[0]
             claim = {"text": text, "source_id": source["id"], "quote": text, "revision": source["revision"],
