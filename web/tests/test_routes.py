@@ -877,7 +877,7 @@ def test_curate_renders_zero_variant_unit_without_500(repo):
 def test_export_renders(client):
     r = client.get("/export")
     assert r.status_code == 200
-    assert "pandoc" in r.text
+    assert "Professional uses one reading column" in r.text
     assert "The bundled sample does not create downloadable files." in r.text
     assert 'href="#"' not in r.text
     assert "/export/download/" not in r.text
