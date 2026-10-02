@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.document_import import MAX_DOCUMENT_BYTES, import_document
+from app.document_normalize import NormalizedMaster, normalize_master_resume
 from app.document_store import MAX_DOCUMENT_BYTES as MAX_SOURCE_BYTES
 from app.document_store import ConflictError, DocumentStore
 from app.rail import template_context
@@ -81,6 +82,15 @@ def document_router(store: DocumentStore | None, templates: Jinja2Templates, run
         context.update(extra)
         return templates.TemplateResponse(request, "documents.html", context, status_code=status)
 
+    def render_normalization(request: Request, source_text: str, revision: str,
+                             normalization: NormalizedMaster, *, status: int = 200, error: str = "",
+                             draft_text: str | None = None, order_review_required: bool = False):
+        context = template_context(request, "entry", source_text=source_text, revision=revision,
+                                   normalization=normalization, error=error,
+                                   draft_text=normalization.text if draft_text is None else draft_text,
+                                   order_review_required=order_review_required)
+        return templates.TemplateResponse(request, "normalize.html", context, status_code=status)
+
     @router.get("/documents")
     def documents(request: Request, name: str = "master-resume.md", saved: bool = False):
         message = "Saved. Review existing applications against any changed source before using them." if saved else ""
@@ -100,8 +110,62 @@ def document_router(store: DocumentStore | None, templates: Jinja2Templates, run
             return render(request, document_name, status=400, error=str(exc))
         finally:
             file.file.close()
-        context = template_context(request, "entry", document_name=document_name, document_text=repository.read(document_name), revision=revision, import_key=key, import_text=imported.text, import_warnings=imported.warnings)
+        normalization = normalize_master_resume(imported.text) if document_name == "master-resume.md" else None
+        context = template_context(request, "entry", document_name=document_name, document_text=repository.read(document_name), revision=revision, import_key=key, import_text=imported.text, import_warnings=imported.warnings, normalization=normalization)
         return templates.TemplateResponse(request, "documents.html", context)
+
+    @router.post("/documents/normalize")
+    def preview_normalized_master(request: Request, document_name: str = Form(...), text: str = Form(...),
+                                  revision: str = Form(...), order_review_required: bool = Form(False)):
+        writable(request)
+        if document_name != "master-resume.md":
+            raise HTTPException(400, "Only the master resume can be normalized.")
+        if len(text.encode("utf-8")) > MAX_SOURCE_BYTES:
+            raise HTTPException(400, "Reviewed text exceeds the 2 MiB editor limit.")
+        normalization = normalize_master_resume(text)
+        return render_normalization(request, text, revision, normalization,
+                                    order_review_required=order_review_required)
+
+    @router.post("/documents/normalize/accept")
+    def accept_normalized_master(request: Request, document_name: str = Form(...), text: str = Form(...),
+                                 revision: str = Form(...), order_review_required: bool = Form(False),
+                                 order_corrected: bool = Form(False)):
+        with source_lock:
+            repository = writable(request)
+            if document_name != "master-resume.md":
+                raise HTTPException(400, "Only the master resume can be normalized.")
+            normalization = normalize_master_resume(text)
+            if repository.revision(document_name) != revision:
+                return render_normalization(
+                    request, "", revision, normalization, status=409,
+                    error="This master resume changed in another tab. Recover your unsaved normalized draft before reloading the saved document.",
+                    draft_text=text, order_review_required=order_review_required,
+                )
+            if len(text.encode("utf-8")) > MAX_SOURCE_BYTES:
+                return render_normalization(request, "", revision, normalization, status=400,
+                                            error="Normalized text exceeds the 2 MiB editor limit.", draft_text=text,
+                                            order_review_required=order_review_required)
+            if order_review_required and not order_corrected:
+                return render_normalization(request, "", revision, normalization, status=422,
+                                            error="Review and correct the reading order against the original file before accepting.",
+                                            draft_text=text, order_review_required=True)
+            if normalization.corrections or normalization.text != text:
+                return render_normalization(request, "", revision, normalization, status=422,
+                                            error="Correct the listed structure and review the exact draft before accepting it.",
+                                            draft_text=text, order_review_required=order_review_required)
+            try:
+                repository.save(document_name, text, revision)
+            except ConflictError:
+                return render_normalization(
+                    request, "", revision, normalization, status=409,
+                    error="This master resume changed in another tab. Recover your unsaved normalized draft before reloading the saved document.",
+                    draft_text=text, order_review_required=order_review_required,
+                )
+            except ValueError as exc:
+                return render_normalization(request, "", revision, normalization, status=400,
+                                            error=str(exc), draft_text=text,
+                                            order_review_required=order_review_required)
+        return RedirectResponse("/documents?name=master-resume.md&saved=true", status_code=303)
 
     @router.post("/documents/save")
     def save(request: Request, document_name: str = Form(...), text: str = Form(...), revision: str = Form(...)):
