@@ -11,6 +11,7 @@ from app.onboarding import (
     claim_ledger,
     delivery_status,
     empty_state,
+    review_draft,
     reviewed_snippets,
     source_lines,
     source_questions,
@@ -144,8 +145,9 @@ def test_exact_factual_sentence_is_source_linked_and_stale_snapshots_are_uncheck
 def test_manual_edits_do_not_inherit_support_and_need_attestation(state):
     edited = state["draft"].replace("Use direct language.", "Use concise language.")
     ledger = claim_ledger(state, edited, "master-hash")
-    assert ledger[1]["label"] == "needs review"
+    assert all(entry["text"] != "Use direct language." for entry in ledger)
     assert ledger[-1]["source_id"] == "Manual edit"
+    assert ledger[-1]["label"] == "user-attested"
     assert acceptance_questions(state, edited, "master-hash", True) == []
     assert any("Attest" in question for question in acceptance_questions(state, edited, "master-hash", False))
     assert acceptance_questions(state, state["draft"].replace("\n", "\r\n"), "master-hash", False) == []
@@ -223,3 +225,27 @@ def test_model_cannot_return_unbounded_claim_list(state):
     payload["sections"][0]["items"] *= 33
     with pytest.raises(ValueError, match="too many"):
         validate_proposal(payload, reviewed_snippets(state))
+
+
+@pytest.mark.parametrize("source_kind,source_text,draft_text,status,label", [
+    ("career fact", "Built a service.", "Built a service.", "unknown", "source-linked"),
+    ("career fact", "Shipped a service.", "Shipped a service.", "shipped", "source-linked"),
+    ("voice sample", "Grew revenue 80%.", "Grew revenue 80%.", "unknown", "needs review"),
+    ("career fact", "Built a service.", "Owned every service.", "unknown", "needs review"),
+])
+def test_local_draft_review_binds_only_exact_selected_career_spans(state, source_kind, source_text, draft_text, status, label):
+    state["selected"] = [{"id": "source", "text": source_text, "kind": source_kind, "revision": "source-hash"}]
+    claims = review_draft(state, "# Grimoire\n\n## Identity\n- " + draft_text + "\n")
+    assert claims[0]["status"] == status and claims[0]["label"] == label
+    assert claims[0]["source_id"] == ("source" if label == "source-linked" else "Manual edit")
+
+
+def test_local_review_keeps_ambiguous_sources_duplicates_and_style_edits_honest(state):
+    state["selected"] = [{"id": "a", "text": "Built a service.", "kind": "career fact", "revision": "a"},
+                         {"id": "b", "text": "Built a service.", "kind": "career fact", "revision": "b"}]
+    draft = "# Grimoire\n- Built a service.\n- Use concise language.\n- Use concise language.\n"
+    state["claims"] = review_draft(state, draft)
+    assert state["claims"][0]["label"] == "needs review"
+    assert state["claims"][1]["label"] == "user-attested"
+    assert state["claims"][2]["label"] == "needs review"
+    assert any("Duplicate" in question for question in acceptance_questions(state, draft, "master-hash", True))
