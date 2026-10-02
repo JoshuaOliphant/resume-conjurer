@@ -76,10 +76,6 @@
     "sha256": "aff1fe5e8318ccf240a90bffc7393750e98a423dfc08fc8137016ced2130e457"
   },
   {
-    "path": "web/tests/test_routes.py",
-    "sha256": "5e3be5430fc8c6ac23e2dbd7f67a604426fd48717023e9e87b2234883c4f4338"
-  },
-  {
     "path": "web/tests/test_runs.py",
     "sha256": "066a6c7269f3cc1dcaf940f8067227dcf969cd2d47c2d0a44ff34291cbbe5ee0"
   },
