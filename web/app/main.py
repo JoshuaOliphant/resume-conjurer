@@ -9,11 +9,12 @@ from pathlib import Path
 from threading import Lock
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
+from app.adapters.finals_fs import FinalDocuments
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import lint_results
 from app.deps import (
@@ -25,8 +26,8 @@ from app.deps import (
     workspace_root,
 )
 from app.document_routes import DocumentUploadLimit, document_router
-from app.document_store import DocumentStore
-from app.domain import support_check
+from app.document_store import ConflictError, DocumentStore
+from app.domain import SUPPORT_CHECK_LABEL, LintCheck, support_check
 from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
 from app.rail import template_context
 from app.runs import RunManager
@@ -45,12 +46,12 @@ def create_app(
     live: bool,
     comp: CompositionPort | None = None,
     documents: DocumentStore | None = None,
+    finals: FinalDocuments | None = None,
 ) -> FastAPI:
     """Build the FastAPI app over an injected repository, generation port, and run manager.
 
-    ``comp`` is the deterministic composition port (stitch/lint/export). When present (live
-    config) /review stitches+lints the real workspace docs and /export runs export_docs; when
-    None (fake config) /review uses the in-memory lint and /export shows the static template.
+    ``comp`` handles deterministic lint and export in live configuration. ``finals`` owns
+    explicit composition and editable Markdown; the fake configuration renders sample picks.
     """
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -64,6 +65,14 @@ def create_app(
     templates = Jinja2Templates(directory=str(BASE / "templates"))
     source_lock = Lock()
     app.include_router(document_router(documents, templates, run_manager, SLUG, source_lock))
+
+    def require_mutation(request: Request) -> None:
+        origin = request.headers.get("origin")
+        expected = f"{request.url.scheme}://{request.url.netloc}"
+        if request.headers.get("sec-fetch-site") == "cross-site" or (origin and origin != expected):
+            raise HTTPException(403, "Document changes must come from this application.")
+        if run_manager.status(SLUG).state == "running":
+            raise HTTPException(409, "Wait for generation to finish before changing final documents.")
 
     def _not_generated_yet() -> bool:
         # Live only: a fresh workspace has no outline.json yet, so load_application would
@@ -173,25 +182,23 @@ def create_app(
         )
 
     @app.post("/curate/{idx}")
-    def curate_pick(idx: int, variant_id: str = Form(...)):
-        data = repo.load_application(SLUG)
-        units = data.units
-        if not 0 <= idx < len(units):
-            raise HTTPException(status_code=404, detail="No such line to curate.")
-        unit = units[idx]
-        # Only store a variant that actually belongs to this unit. Rejecting an
-        # unknown id here is what keeps the review screen from later attributing
-        # content to the user that they never chose.
-        if variant_id not in unit.variant_ids:
-            raise HTTPException(status_code=422, detail="That variant isn't an option for this line.")
-        repo.set_pick(SLUG, unit.id, variant_id)
+    def curate_pick(request: Request, idx: int, variant_id: str = Form(...)):
+        with source_lock:
+            require_mutation(request)
+            data = repo.load_application(SLUG)
+            units = data.units
+            if not 0 <= idx < len(units):
+                raise HTTPException(status_code=404, detail="No such line to curate.")
+            unit = units[idx]
+            if variant_id not in unit.variant_ids:
+                raise HTTPException(status_code=422, detail="That variant isn't an option for this line.")
+            repo.set_pick(SLUG, unit.id, variant_id)
         nxt = idx + 1
         if nxt >= len(units):
             return RedirectResponse("/review", status_code=303)
         return RedirectResponse(f"/curate/{nxt}", status_code=303)
 
-    @app.get("/review", response_class=HTMLResponse)
-    def review(request: Request):
+    def render_review(request: Request, *, error: str = "", status: int = 200):
         if _not_generated_yet():
             return RedirectResponse("/", status_code=303)
         data = repo.load_application(SLUG)
@@ -211,16 +218,15 @@ def create_app(
         # its variants — not merely that the store has enough entries.
         complete = all(picks.get(u.id) in u.variant_ids for u in data.units)
         cover_text = "\n\n".join(v.text for (_, v) in cover)
-        if comp is not None and complete:
-            # Live, and every line is picked: stitch the picked variants into real
-            # cover_letter.md / resume.md, then run the grimoire linter over those stitched
-            # docs (the real check, not in-memory). stitch requires one pick per unit, so we
-            # only run it when complete; otherwise we show the in-memory lint + the incomplete
-            # banner rather than 500-ing on a half-curated workspace.
-            comp.stitch(SLUG)
+        final = finals.state() if finals is not None else None
+        if comp is not None and final is not None and final.complete:
             lint = comp.lint(SLUG)
         else:
             lint = lint_results(cover_text)
+        if final is not None and final.complete and (final.edited or final.stale):
+            support = LintCheck(SUPPORT_CHECK_LABEL, "Final text or its sources changed. Claim support is unchecked for this document.", False)
+        else:
+            support = support_check(chosen)
         return templates.TemplateResponse(
             request,
             "review.html",
@@ -231,11 +237,78 @@ def create_app(
                 cover=cover,
                 bullets=bullets,
                 lint=lint,
-                support=support_check(chosen),
+                support=support,
                 complete=complete,
+                final=final,
+                error=error,
                 run_metrics=run_manager.metrics(SLUG),
             ),
+            status_code=status,
         )
+
+    @app.get("/review", response_class=HTMLResponse)
+    def review(request: Request):
+        with source_lock:
+            return render_review(request)
+
+    @app.post("/review/compose", response_class=HTMLResponse)
+    def compose(request: Request, cover_revision: str = Form(""), resume_revision: str = Form("")):
+        if finals is None or comp is None:
+            raise HTTPException(503, "Final documents require a configured workspace.")
+        with source_lock:
+            require_mutation(request)
+            data = repo.load_application(SLUG)
+            picks = repo.get_picks(SLUG)
+            if not all(picks.get(unit.id) in unit.variant_ids for unit in data.units):
+                return render_review(request, error="Choose every line before composing.", status=409)
+            try:
+                finals.compose(cover_revision, resume_revision)
+            except ConflictError as exc:
+                return render_review(request, error=str(exc), status=409)
+            except (OSError, ValueError, RuntimeError) as exc:
+                return render_review(request, error=f"Could not compose final documents: {exc}", status=503)
+        return RedirectResponse("/review", status_code=303)
+
+    def render_final_editor(request: Request, name: str, *, error: str = "", recovery_text: str = "",
+                            submitted_revision: str | None = None, saved: bool = False, status: int = 200):
+        if finals is None:
+            raise HTTPException(503, "Final documents require a configured workspace.")
+        try:
+            text, revision = finals.store.read_with_revision(name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not revision:
+            raise HTTPException(409, "Compose final documents before editing them.")
+        return templates.TemplateResponse(
+            request, "final_editor.html",
+            template_context(request, "review", document_name=name, document_text=text,
+                             revision=revision if submitted_revision is None else submitted_revision,
+                             error=error, recovery_text=recovery_text, saved=saved),
+            status_code=status,
+        )
+
+    @app.get("/finals", response_class=HTMLResponse)
+    def final_editor(request: Request, name: str = "resume.md", saved: bool = False):
+        return render_final_editor(request, name, saved=saved)
+
+    @app.post("/finals/save", response_class=HTMLResponse)
+    def save_final(request: Request, document_name: str = Form(...), text: str = Form(...), revision: str = Form("")):
+        if finals is None:
+            raise HTTPException(503, "Final documents require a configured workspace.")
+        with source_lock:
+            require_mutation(request)
+            try:
+                if not finals.store.revision(document_name):
+                    raise ConflictError("Compose final documents before editing them.")
+                finals.save(document_name, text, revision)
+            except ConflictError:
+                return render_final_editor(request, document_name,
+                                           error="This final document changed in another tab. Copy your edits before reloading the saved version to compare them.",
+                                           recovery_text=text, submitted_revision=revision, status=409)
+            except ValueError as exc:
+                return render_final_editor(request, document_name, error=str(exc), recovery_text=text,
+                                           submitted_revision=revision, status=400)
+        return RedirectResponse(f"/finals?name={document_name}&saved=true", status_code=303)
 
     @app.get("/export", response_class=HTMLResponse)
     def export(request: Request):
@@ -244,15 +317,22 @@ def create_app(
         exported = None
         downloads = {}
         if comp is not None:
-            exported = comp.export(SLUG, ("pdf", "docx"))
-            for extension in ("pdf", "docx", "md"):
-                downloads[extension] = []
-                for document, label in (("cover_letter", "Cover letter"), ("resume", "Resume")):
-                    filename = f"{document}.{extension}"
-                    if extension != "md" and exported.get(filename) != "written":
-                        continue
-                    if comp.download(SLUG, filename) is not None:
-                        downloads[extension].append((filename, label))
+            with source_lock:
+                if run_manager.status(SLUG).state == "running":
+                    raise HTTPException(409, "Wait for generation to finish before exporting final documents.")
+                if finals is not None and finals.state().complete:
+                    exported = comp.export(SLUG, ("pdf", "docx"))
+                    finals.record_exports(exported)
+                else:
+                    exported = {}
+                for extension in ("pdf", "docx", "md"):
+                    downloads[extension] = []
+                    for document, label in (("cover_letter", "Cover letter"), ("resume", "Resume")):
+                        filename = f"{document}.{extension}"
+                        if extension != "md" and exported.get(filename) != "written":
+                            continue
+                        if comp.download(SLUG, filename) is not None:
+                            downloads[extension].append((filename, label))
         return templates.TemplateResponse(
             request,
             "export.html",
@@ -261,10 +341,19 @@ def create_app(
 
     @app.get("/export/download/{filename}")
     def download(filename: str):
-        artifact = comp.download(SLUG, filename) if comp is not None else None
-        if artifact is None:
-            raise HTTPException(status_code=404, detail="No such exported file.")
-        return FileResponse(artifact, filename=filename)
+        with source_lock:
+            if run_manager.status(SLUG).state == "running":
+                raise HTTPException(409, "Wait for generation to finish before downloading final documents.")
+            artifact = comp.download(SLUG, filename) if comp is not None else None
+            if artifact is None or finals is None or not finals.can_download(filename):
+                raise HTTPException(status_code=404, detail="No such exported file.")
+            content = artifact.read_bytes()
+        media_type = {
+            ".md": "text/markdown",
+            ".pdf": "application/pdf",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }[artifact.suffix]
+        return Response(content, media_type=media_type, headers={"content-disposition": f'attachment; filename="{filename}"'})
 
     @app.post("/reset")
     def reset():
@@ -283,4 +372,5 @@ _gen = build_generation()
 _comp = build_composition()
 _run_manager = RunManager(repo=_repo, gen=_gen, verifier=build_verification())
 app = create_app(repo=_repo, gen=_gen, run_manager=_run_manager, live=is_live(), comp=_comp,
-                 documents=DocumentStore(workspace_root()) if is_live() else None)
+                 documents=DocumentStore(workspace_root()) if is_live() else None,
+                 finals=FinalDocuments(workspace_root(), SLUG) if is_live() else None)

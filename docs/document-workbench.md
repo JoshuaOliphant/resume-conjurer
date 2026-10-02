@@ -10,7 +10,7 @@ Saves use content revisions to reject stale tabs. Previous content is stored und
 
 Source saves and generation starts share a process-local lock; edits are refused while generation is running. Changing sources does not silently regenerate existing applications. Review existing application claims against updated evidence before using them. Existing claim/source fingerprints omit stale support judgments when their checked content differs.
 
-This is a local, single-workspace tool. The save lock coordinates threads within one store instance; use one server process. Multi-process and external-writer coordination, per-user identity, source isolation, final-document editing, templates, and guided grimoire onboarding are subsequent work. Do not expose this server as a multi-user service.
+This is a local, single-workspace tool. The save lock coordinates threads within one store instance; use one server process. Multi-process and external-writer coordination, per-user identity, source isolation, templates, and guided grimoire onboarding are subsequent work. Final-document editing is described in `final-documents.md`. Do not expose this server as a multi-user service.
 
 Uploaded files are limited to 10 MiB; the total upload request is capped at 10 MiB plus 64 KiB of multipart overhead before parsing. Editable source text is limited to 2 MiB. Extraction errors, invalid names, oversized data, and stale revisions preserve the current source. Source-writing forms reject cross-origin browser requests.
 

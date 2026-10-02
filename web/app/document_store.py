@@ -41,12 +41,13 @@ class ConflictError(ValueError):
 
 
 class DocumentStore:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, names: frozenset[str] = DOCUMENT_NAMES) -> None:
         self.root = root
+        self.names = names
         self._lock = Lock()
 
     def _document_path(self, name: str) -> Path:
-        if name not in DOCUMENT_NAMES:
+        if name not in self.names:
             raise ValueError(f"Invalid document name: {name}")
         return self.root / name
 

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Edit final document · Conjurer{% endblock %}
+{% block main %}
+<div class="page documents">
+  <p class="page__eyebrow">Final document</p>
+  <h1 class="page__title">Edit your {{ "résumé" if document_name == "resume.md" else "cover letter" }}.</h1>
+  <p class="page__lede">These edits stay in this application. Rebuilding from your picks replaces this final text after you confirm the current revision.</p>
+  {% if saved %}<p class="documents__message" role="status">Saved final text.</p>{% endif %}
+  {% if error %}<p class="documents__error" role="alert">{{ error }}</p>{% endif %}
+  {% if recovery_text %}<section role="note"><h2>Recover your unsaved changes</h2><p>Your submitted text is below. Copy it before you reload and compare the current version. <a href="/finals?name={{ document_name }}">Reload saved document</a></p></section>{% endif %}
+  <form method="post" action="/finals/save" hx-boost="false">
+    <input type="hidden" name="document_name" value="{{ document_name }}">
+    <input type="hidden" name="revision" value="{{ revision }}">
+    <label class="field__label" for="final-text">{{ "Résumé" if document_name == "resume.md" else "Cover letter" }} text</label>
+    <textarea class="textarea documents__editor" id="final-text" name="text" rows="24" required>{{ recovery_text if recovery_text else document_text }}</textarea>
+    <div class="actions"><button class="btn btn--primary" type="submit">Save final text</button><a class="btn btn--quiet" href="/review">Back to review</a></div>
+  </form>
+</div>
+{% endblock %}
