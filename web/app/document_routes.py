@@ -116,9 +116,9 @@ def document_router(store: DocumentStore | None, templates: Jinja2Templates, run
         finally:
             file.file.close()
         normalization = normalize_master_resume(imported.text) if document_name == "master-resume.md" else None
-        if document_name == "master-resume.md":
+        if document_name == "master-resume.md" and imported.warnings:
             with source_lock:
-                warning_revision = revision if imported.warnings else None
+                warning_revision = revision
         context = template_context(request, "entry", document_name=document_name, document_text=repository.read(document_name), revision=revision, import_key=key, import_text=imported.text, import_warnings=imported.warnings, normalization=normalization)
         return templates.TemplateResponse(request, "documents.html", context)
 
