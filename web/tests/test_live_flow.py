@@ -1579,3 +1579,50 @@ def test_onboarding_grimoire_publication_failure_preserves_source_and_saved_draf
     assert "Use concise language." in response.text
     assert (workspace / "grimoire.md").read_bytes() == original
     assert store.read() == (state, revision)
+
+
+def test_missing_optional_evidence_composes_and_tracks_later_source_additions(workspace):
+    _prepare_picked_live_workspace(workspace)
+    finals = FinalDocuments(workspace, SLUG)
+    evidence = finals.app_dir / "evidence.md"
+    evidence.unlink()
+
+    composed = finals.compose("", "")
+
+    assert composed.complete
+    assert not composed.stale
+    assert "I led the billing migration end to end." in composed.cover_text
+    assert "Led the billing platform migration to event-driven services." in composed.resume_text
+    absent_fingerprint = finals.fingerprint()
+    evidence.write_text("")
+    assert finals.fingerprint() == absent_fingerprint
+    assert not finals.state().stale
+
+    evidence.write_text("- Observed an additional billing result.\n")
+    assert finals.fingerprint() != absent_fingerprint
+    assert finals.state().stale
+    assert finals.state().resume_text == composed.resume_text
+
+
+def test_unreadable_optional_evidence_does_not_become_empty_input(workspace):
+    _prepare_picked_live_workspace(workspace)
+    finals = FinalDocuments(workspace, SLUG)
+    evidence = finals.app_dir / "evidence.md"
+    evidence.unlink()
+    evidence.mkdir()
+
+    with pytest.raises(IsADirectoryError):
+        finals.compose("", "")
+
+    assert not finals.state().complete
+
+
+def test_missing_required_source_still_refuses_composition(workspace):
+    _prepare_picked_live_workspace(workspace)
+    finals = FinalDocuments(workspace, SLUG)
+    (workspace / "master-resume.md").unlink()
+
+    with pytest.raises(FileNotFoundError):
+        finals.compose("", "")
+
+    assert not finals.state().complete
