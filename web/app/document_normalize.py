@@ -17,7 +17,8 @@ SECTION_LINE = re.compile(r"^#{1,2}\s+(.+?)\s*$")
 COMPANY_LINE = re.compile(r"^(?:###\s+|Company:\s*)(.+?)(?:\s*(?:\||—|--)\s*(.+))?$", re.IGNORECASE)
 ROLE_LINE = re.compile(r"^(?:\*\*(.+?)\*\*|Role:\s*(.+?))(?:\s*(?:\||—|--)\s*(.+))?$", re.IGNORECASE)
 BULLET_LINE = re.compile(r"^(?:[-*•])\s+(.+)$")
-DATE_RANGE = re.compile(r"\b(?:19|20)\d{2}\b.*(?:\b(?:19|20)\d{2}\b|\bPresent\b|\bCurrent\b)", re.IGNORECASE)
+YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
+CURRENT = re.compile(r"\b(?:Present|Current)\b", re.IGNORECASE)
 COMPANY_MARKER = "[enter employer context]"
 ROLE_MARKER = "[enter role dates]"
 
@@ -36,6 +37,13 @@ class NormalizedMaster:
     corrections: tuple[str, ...]
     targets: tuple[str, ...]
     ready: bool
+
+
+def _valid_role_dates(period: str) -> bool:
+    years = list(YEAR.finditer(period))
+    if len(years) >= 2:
+        return int(years[1].group()) >= int(years[0].group())
+    return bool(years and CURRENT.search(period, years[0].end()))
 
 
 def normalize_master_resume(text: str) -> NormalizedMaster:
@@ -81,7 +89,7 @@ def normalize_master_resume(text: str) -> NormalizedMaster:
                 corrections.append(f"Line {number}: employer and role are ambiguous; distinguish the repeated role.")
             role_names.add(key)
             period = (match.group(3) or "").strip()
-            if ROLE_MARKER in period or not DATE_RANGE.search(period):
+            if ROLE_MARKER in period or not _valid_role_dates(period):
                 corrections.append(f"Line {number}: confirm complete role dates from your source or correct them yourself.")
                 if not period:
                     period = ROLE_MARKER

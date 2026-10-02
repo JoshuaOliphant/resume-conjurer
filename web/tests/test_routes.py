@@ -17,7 +17,7 @@ from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import EVIDENCE, _v, get_application
 from app.document_import import import_document
 from app.document_routes import MAX_UPLOAD_REQUEST_BYTES, DocumentUploadLimit
-from app.document_store import ConflictError, DocumentStore
+from app.document_store import DocumentStore
 from app.domain import Application, Frame, Support, Unit, Variant
 from app.main import SLUG, create_app
 from app.runs import RunManager, RunStatus
@@ -298,20 +298,43 @@ def test_normalized_acceptance_requires_exact_reviewed_structure(document_client
     assert document_store.read("master-resume.md") == "# Master\n- Original claim\n"
 
 
-@pytest.mark.parametrize("failure", [ConflictError("changed during save"), ValueError("immutable snapshot differs")],
-                         ids=["concurrent-revision", "invalid-storage"])
-def test_normalized_acceptance_preserves_draft_when_store_rejects(document_client, document_store, monkeypatch, failure):
+def test_normalized_acceptance_preserves_draft_on_concurrent_filesystem_change(document_client, document_store, monkeypatch):
     draft = "## Experience\n### Acme -- 2021-2024\n**Engineer** -- 2021-2024\n- Saved 42%\n"
     revision = document_store.revision("master-resume.md")
+    source = document_store.root / "master-resume.md"
+    read_bytes = Path.read_bytes
+    replaced = False
 
-    def reject_save(name, text, expected_revision):
-        raise failure
+    def concurrent_read(path):
+        nonlocal replaced
+        content = read_bytes(path)
+        if path == source and not replaced:
+            replaced = True
+            source.write_text("# Newer source\n")
+        return content
 
-    monkeypatch.setattr(document_store, "save", reject_save)
+    monkeypatch.setattr(Path, "read_bytes", concurrent_read)
     response = document_client.post("/documents/normalize/accept", data={
         "document_name": "master-resume.md", "revision": revision, "text": draft,
     })
-    assert response.status_code == (409 if isinstance(failure, ConflictError) else 400)
+    assert response.status_code == 409
+    assert draft.strip() in response.text
+    assert f'name="revision" value="{revision}"' in response.text
+    assert document_store.read("master-resume.md") == "# Newer source\n"
+
+
+def test_normalized_acceptance_preserves_draft_on_immutable_snapshot_conflict(document_client, document_store):
+    draft = "## Experience\n### Acme -- 2021-2024\n**Engineer** -- 2021-2024\n- Saved 42%\n"
+    revision = document_store.revision("master-resume.md")
+    digest = hashlib.sha256(draft.encode()).hexdigest()
+    snapshot = document_store.root / ".document-history" / "master-resume.md" / f"{digest}.md"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text("# Different immutable content\n")
+    response = document_client.post("/documents/normalize/accept", data={
+        "document_name": "master-resume.md", "revision": revision, "text": draft,
+    })
+    assert response.status_code == 400
+    assert "Existing immutable content differs" in response.text
     assert draft.strip() in response.text
     assert f'name="revision" value="{revision}"' in response.text
     assert document_store.read("master-resume.md") == "# Master\n- Original claim\n"
