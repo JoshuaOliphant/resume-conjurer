@@ -36,10 +36,6 @@
     "sha256": "45a9739bad3207c2438186ec9b5608637cec00c73f8905ea6e7587bb8a9ad598"
   },
   {
-    "path": "web/app/adapters/composition.py",
-    "sha256": "ee978ab84d8cfb442063adf166d95a1c4fe01710f095f403e7a8c9b5503989f2"
-  },
-  {
     "path": "web/app/adapters/generation_fake.py",
     "sha256": "677410749fb2568178667fd80db4fb320af511a811d516674afb81dcdb825f46"
   },
@@ -66,10 +62,6 @@
   {
     "path": "web/tests/test_generation_live.py",
     "sha256": "7f40a2632409243ce1b077756be2613915e97d7c83aedcbd2f9b4854df0312a6"
-  },
-  {
-    "path": "web/tests/test_live_flow.py",
-    "sha256": "bee813e14a2aa1a1f708b2996dcce63b0f6f48da2988f9e29e3d30ba1a1d458b"
   },
   {
     "path": "web/tests/test_ports.py",
