@@ -544,7 +544,8 @@ def test_document_import_rejects_oversized_request_before_multipart_parsing(docu
     assert "10 MiB" in response.text
 
 
-def test_upload_limit_counts_chunked_body_without_content_length():
+@pytest.mark.parametrize("path", ["/documents/import", "/onboarding/sources"])
+def test_upload_limit_counts_chunked_body_without_content_length(path):
     messages = [
         {"type": "http.request", "body": b"x" * (MAX_UPLOAD_REQUEST_BYTES // 2), "more_body": True},
         {"type": "http.request", "body": b"x" * (MAX_UPLOAD_REQUEST_BYTES // 2 + 1), "more_body": False},
@@ -560,7 +561,7 @@ def test_upload_limit_counts_chunked_body_without_content_length():
     async def downstream(scope, receive, send):
         pytest.fail("Multipart parsing must not receive an oversized request")
 
-    scope = {"type": "http", "method": "POST", "path": "/documents/import", "headers": []}
+    scope = {"type": "http", "method": "POST", "path": path, "headers": []}
     asyncio.run(DocumentUploadLimit(downstream)(scope, receive, send))
     assert sent[0]["status"] == 413
 

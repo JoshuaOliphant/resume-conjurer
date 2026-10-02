@@ -43,8 +43,13 @@ from app.metrics import RunMetrics
 ensure_scripts_on_path()
 
 import citations  # noqa: E402
-from stitch import PICK_LINE_RE, UNIT_MARKER_RE, VARIANT_HEADER_RE, parse_variants_md  # noqa: E402
 import verify  # noqa: E402
+from stitch import (  # noqa: E402
+    PICK_LINE_RE,
+    UNIT_MARKER_RE,
+    VARIANT_HEADER_RE,
+    parse_variants_md,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +140,10 @@ class FsWorkspaceRepository:
         master_resume = (self.root / "master-resume.md").read_text()
         grimoire = (self.root / "grimoire.md").read_text()
         jd = (app_dir / "jd.txt").read_text()
-        evidence = (app_dir / "evidence.md").read_text()
+        try:
+            evidence = (app_dir / "evidence.md").read_text()
+        except FileNotFoundError:
+            evidence = ""
 
         evidence_pool = {
             key: Evidence(id=key, text=line, source=key)

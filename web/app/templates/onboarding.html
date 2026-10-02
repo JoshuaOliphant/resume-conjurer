@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Build your grimoire · Conjurer{% endblock %}
+{% block main %}
+<div class="page documents">
+  <h1 class="page__title">Build a grimoire you can edit.</h1>
+  <p class="page__lede">Start with your resume and three short answers. Optional sources teach voice or add context. Nothing goes to Claude until you review the exact text and choose Draft with Claude.</p>
+  <p><a href="/documents">Your source documents</a></p>
+  {% if saved %}<p role="status">Grimoire saved. <a href="/documents?name=grimoire.md">Read the accepted grimoire</a>. Career additions still belong in your master resume or application evidence before generation.</p>{% endif %}
+  {% if error %}<p class="documents__error" role="alert">{{ error }}</p>{% endif %}
+  {% if questions %}<section class="documents__warnings"><h2>Review questions</h2><ul>{% for question in questions %}<li>{{ question }}</li>{% endfor %}</ul></section>{% endif %}
+
+  <form method="post" action="/onboarding/review" hx-boost="false">
+    <input type="hidden" name="revision" value="{{ revision }}">
+    <div class="field"><label class="field__label" for="roles">Target roles and ownership</label><textarea class="textarea" id="roles" name="roles" rows="3" required>{{ state.answers.roles }}</textarea></div>
+    <div class="field"><label class="field__label" for="examples">Two or three examples you value</label><p>What did you personally do, when, and was each result planned, implemented, shipped, or observed? Your answer is an attestation.</p><textarea class="textarea" id="examples" name="examples" rows="5" required>{{ state.answers.examples }}</textarea></div>
+    <div class="field"><label class="field__label" for="voice">Phrasing you like and dislike</label><textarea class="textarea" id="voice" name="voice" rows="3" required>{{ state.answers.voice }}</textarea></div>
+    <h2>Select exact excerpts</h2><p>Choose only lines you want Claude to receive. A voice sample cannot support an accomplishment.</p>
+    {% for source in available %}<div class="field"><label><input type="checkbox" name="source_ids" value="{{ source.id }}"{% if source.id in selected_ids %} checked{% endif %}> {{ source.id }} · {{ source.kind }}</label><pre>{{ source.text }}</pre><small>{{ source.filename }} · source SHA-256 {{ source.revision }}{% if source.original_hash %} · original SHA-256 {{ source.original_hash }}{% endif %}</small>{% if source.warnings %}<ul>{% for warning in source.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>{% endif %}</div>{% endfor %}
+    <button class="btn btn--primary" type="submit">Save answers and review selections</button>
+  </form>
+
+  {% for source in state.optional_sources %}<form method="post" action="/onboarding/sources/remove" hx-boost="false"><input type="hidden" name="revision" value="{{ revision }}"><input type="hidden" name="original_hash" value="{{ source.original_hash }}"><button class="btn btn--quiet" type="submit">Remove {{ source.filename }} from onboarding</button></form>{% endfor %}
+  <details><summary>Add an optional writing sample or career source</summary>
+    <form method="post" action="/onboarding/sources" enctype="multipart/form-data" hx-boost="false">
+      <input type="hidden" name="revision" value="{{ revision }}">
+      <div class="field"><label for="source-kind">How should this source be used?</label><select id="source-kind" name="kind" required><option value="voice sample">Voice sample</option><option value="career fact">Career fact</option></select></div>
+      <div class="field"><label for="source-file">One text, DOCX, or text PDF file</label><input id="source-file" type="file" name="file" accept=".md,.txt,.docx,.pdf"></div>
+      <div class="field"><label for="source-paste">Or paste one source</label><textarea class="textarea" id="source-paste" name="pasted" rows="4"></textarea></div>
+      <button class="btn btn--ghost" type="submit">Import for local review</button>
+    </form>
+  </details>
+
+  <section class="documents__preview"><h2>Exact text to send to Claude</h2><p>Destination: Claude through the Claude Agent SDK. One tool-free request, at most 3 turns and $0.10, with a 90-second timeout. The full request is below; uploaded originals and unselected lines stay local.</p><pre id="claude-payload">{{ prompt }}</pre></section>
+  <form method="post" action="/onboarding/draft" hx-boost="false"><input type="hidden" name="revision" value="{{ revision }}"><input type="hidden" name="prompt_hash" value="{{ prompt_hash }}"><button class="btn btn--primary" type="submit">Draft with Claude</button></form>
+
+  {% if state.metrics %}<p>Actual draft call: {{ state.metrics.elapsed_ms }} ms · input {{ state.metrics.input_tokens }} tokens · output {{ state.metrics.output_tokens }} tokens · billed cost {% if state.metrics.cost_usd is not none %}${{ state.metrics.cost_usd }}{% else %}unavailable{% endif %}.</p>{% endif %}
+  {% if state.proposal %}<details><summary>Latest proposed draft</summary><pre>{{ state.proposal }}</pre><form method="post" action="/onboarding/edit" hx-boost="false"><input type="hidden" name="revision" value="{{ revision }}"><input type="hidden" name="use_proposal" value="true"><button class="btn btn--ghost" type="submit">Use this proposal in the editor</button></form></details>{% endif %}
+  {% if state.draft or state.claims %}
+  <h2>Your editable draft</h2><p>Source-linked and user-attested do not mean verified. Manual edits receive no earlier support judgment.</p>
+  <form method="post" action="/onboarding/edit" hx-boost="false">
+    <input type="hidden" name="revision" value="{{ revision }}"><input type="hidden" name="grimoire_revision" value="{{ state.grimoire_revision }}">
+    <label class="field__label" for="grimoire-draft">Grimoire draft</label><textarea class="textarea documents__editor" id="grimoire-draft" name="draft" rows="24">{{ state.draft }}</textarea>
+    <label><input type="checkbox" name="attest_edits" value="true"> I attest my manual edits. They are not independently verified.</label>
+    <div class="actions"><button class="btn btn--ghost" type="submit">Save draft locally</button><button class="btn btn--primary" type="submit" formaction="/onboarding/accept">Accept grimoire</button><button class="btn btn--quiet" type="submit" name="discard" value="true">Discard draft</button></div>
+  </form>
+  <section><h2>Claim ledger</h2>{% for claim in ledger %}<details><summary>{{ claim.label }} · {{ claim.status }} · {{ claim.text }}</summary><p>{{ claim.source_id }} · source revision {{ claim.revision }}</p><blockquote>{{ claim.quote }}</blockquote>{% if claim.flags %}<ul>{% for flag in claim.flags %}<li>{{ flag }}</li>{% endfor %}</ul>{% endif %}</details>{% endfor %}</section>
+  {% endif %}
+</div>
+{% endblock %}

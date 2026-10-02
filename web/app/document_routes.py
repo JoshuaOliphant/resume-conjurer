@@ -26,7 +26,7 @@ class DocumentUploadLimit:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope.get("method") != "POST" or scope.get("path") != "/documents/import":
+        if scope.get("method") != "POST" or scope.get("path") not in {"/documents/import", "/onboarding/sources"}:
             await self.app(scope, receive, send)
             return
 
