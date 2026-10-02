@@ -241,11 +241,17 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
             if questions:
                 return render(request, state=state, revision=revision, status=422, error="Resolve the review questions before accepting. " + " ".join(questions))
             try:
-                source_store.save("grimoire.md", draft, grimoire_revision)
+                state["grimoire_revision"] = source_store.save("grimoire.md", draft, grimoire_revision)
             except ConflictError:
                 return render(request, state=state, revision=revision, status=409, error="The grimoire changed in another tab. Recover your submitted draft before reloading.")
-            except ValueError as exc:
+            except (ValueError, OSError) as exc:
                 return render(request, state=state, revision=revision, status=400, error=str(exc))
+            state["claims"] = claim_ledger(state, draft, source_store.revision("master-resume.md"))
+            try:
+                draft_store.save(state, revision)
+            except (ValueError, OSError) as exc:
+                return render(request, state=state, revision=revision, status=409 if isinstance(exc, ConflictError) else 400,
+                              error=f"The grimoire was saved, but its onboarding draft could not be saved: {exc}. Recover your submitted draft below before reloading.")
         return RedirectResponse("/onboarding?saved=true", status_code=303)
 
     return router

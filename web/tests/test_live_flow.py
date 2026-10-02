@@ -1492,3 +1492,90 @@ def test_onboarding_local_review_cannot_accept_clipped_fact(onboarding_client, w
     assert response.status_code == 422 and "voice samples and edit attestation cannot support" in response.text
     assert DocumentStore(workspace).read("grimoire.md") == original
     assert len(boundary.calls) == 1
+
+
+def test_onboarding_direct_acceptance_persists_edited_draft_ledger_and_current_revision(onboarding_client, workspace):
+    client, boundary, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    _draft_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    edited = state["draft"].replace("Use direct language.", "Use concise language.").replace("- Avoid hype.\n", "").replace("\n", "\r\n")
+    response = client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"],
+                           "draft": edited, "attest_edits": "true"}, follow_redirects=False)
+    assert response.status_code == 303
+    accepted, current = store.read()
+    documents = DocumentStore(workspace)
+    assert accepted["draft"] == documents.read("grimoire.md") == edited
+    assert accepted["grimoire_revision"] == documents.revision("grimoire.md")
+    assert accepted["proposal"] == state["proposal"]
+    assert {claim["text"] for claim in accepted["claims"]} == {
+        line.removeprefix("- ") for line in edited.splitlines() if line.startswith("- ")
+    }
+    page = client.get("/onboarding?saved=true")
+    assert "Grimoire saved" in page.text
+    assert 'value="' + accepted["grimoire_revision"] + '"' in page.text
+    revised = edited.replace("Use concise language.", "Use clear language.")
+    assert client.post("/onboarding/accept", data={"revision": current, "grimoire_revision": accepted["grimoire_revision"],
+                       "draft": revised, "attest_edits": "true"}, follow_redirects=False).status_code == 303
+    assert store.read()[0]["draft"] == documents.read("grimoire.md") == revised
+    assert len(boundary.calls) == 1
+
+
+@pytest.mark.parametrize("failure", ["conflict", "history", "write"])
+def test_onboarding_state_failure_after_acceptance_preserves_grimoire_and_recovers_draft(onboarding_client, workspace, monkeypatch, failure):
+    client, boundary, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    _draft_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    edited = state["draft"].replace("Use direct language.", "Use concise language.")
+    replace = os.replace
+
+    def fail_onboarding_write(source, target):
+        if Path(target).name == "onboarding.json" and failure == "write":
+            raise OSError("onboarding publication failed")
+        replace(source, target)
+        if Path(target).name == "grimoire.md":
+            if failure == "conflict":
+                competing = {**state, "draft": "Newer onboarding draft"}
+                OnboardingStore(workspace).save(competing, revision)
+            elif failure == "history":
+                (workspace / ".document-history" / "onboarding.json" / f"{revision}.md").write_bytes(b"Corrupt onboarding history")
+
+    monkeypatch.setattr(os, "replace", fail_onboarding_write)
+    response = client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"],
+                           "draft": edited, "attest_edits": "true"}, follow_redirects=False)
+    assert response.status_code == (409 if failure == "conflict" else 400)
+    assert "The grimoire was saved, but its onboarding draft could not be saved" in response.text
+    assert "Use concise language." in response.text
+    assert "Grimoire saved." not in response.text
+    documents = DocumentStore(workspace)
+    assert documents.read("grimoire.md") == edited
+    assert state["grimoire_revision"] in documents.history("grimoire.md")
+    assert store.read()[0]["draft"] == ("Newer onboarding draft" if failure == "conflict" else state["draft"])
+    assert len(boundary.calls) == 1
+
+
+def test_onboarding_grimoire_publication_failure_preserves_source_and_saved_draft(onboarding_client, workspace, monkeypatch):
+    client, _, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    _draft_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    original = (workspace / "grimoire.md").read_bytes()
+    edited = state["draft"].replace("Use direct language.", "Use concise language.")
+    replace = os.replace
+
+    def fail_grimoire_write(source, target):
+        if Path(target).name == "grimoire.md":
+            raise OSError("grimoire publication failed")
+        replace(source, target)
+
+    monkeypatch.setattr(os, "replace", fail_grimoire_write)
+    response = client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"],
+                           "draft": edited, "attest_edits": "true"}, follow_redirects=False)
+    assert response.status_code == 400 and "grimoire publication failed" in response.text
+    assert "Use concise language." in response.text
+    assert (workspace / "grimoire.md").read_bytes() == original
+    assert store.read() == (state, revision)
