@@ -31,7 +31,7 @@ jobs:
       CONJURER_BACKEND: fake
       CONJURER_WORKSPACE: ""
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
@@ -50,7 +50,7 @@ jobs:
       ANTHROPIC_API_KEY: ""
       TYPESAFE_API_KEY: ""
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
