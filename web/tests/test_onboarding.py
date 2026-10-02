@@ -264,3 +264,41 @@ def test_local_review_rejects_clipped_negation_and_personal_attribution(state, s
     state["proposal"] = draft
     assert state["claims"][0]["label"] == "needs review"
     assert acceptance_questions(state, draft, "master-hash", True)
+
+
+@pytest.mark.parametrize("suffix", [
+    "私は会社の最高経営責任者です",
+    "Я руководил компанией",
+    "language\u0301",
+])
+def test_model_preferences_cannot_hide_unsupported_unicode_wording(state, suffix):
+    payload = _payload()
+    text = f"Use concise language {suffix}"
+    payload["sections"][0]["items"][0].update(
+        text=text, source_id="answer.voice L1", quote="Use direct language.",
+    )
+    draft, claims = validate_proposal(payload, reviewed_snippets(state))
+    state.update(draft=draft, proposal=draft, claims=claims)
+    assert claims[0]["label"] == "needs review"
+    assert acceptance_questions(state, draft, "master-hash", False)
+
+
+@pytest.mark.parametrize("suffix", [
+    "私は会社の最高経営責任者です",
+    "Я руководил компанией",
+    "language\u0301",
+])
+def test_manual_preferences_require_review_for_unsupported_unicode_wording(state, suffix):
+    draft = state["draft"] + f"\n- Use concise language {suffix}\n"
+    assert claim_ledger(state, draft, "master-hash")[-1]["label"] == "needs review"
+    assert acceptance_questions(state, draft, "master-hash", True)
+    state["claims"] = review_draft(state, draft)
+    assert state["claims"][-1]["label"] == "needs review"
+    assert acceptance_questions(state, draft, "master-hash", True)
+
+
+def test_supported_style_punctuation_survives_local_review(state):
+    draft = state["draft"] + "\n- Use concise language; avoid hype (and jargon).\n"
+    state["claims"] = review_draft(state, draft)
+    assert state["claims"][-1]["label"] == "user-attested"
+    assert acceptance_questions(state, draft, "master-hash", True) == []

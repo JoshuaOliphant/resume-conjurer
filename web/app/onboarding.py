@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from itertools import combinations
 
 from app.adapters.scripts_path import ensure_scripts_on_path
@@ -32,7 +33,11 @@ def bounded_snippets(snippets: list[dict]) -> None:
 
 
 def is_preference(text: str) -> bool:
-    words = re.findall(r"[a-z]+", text.lower())
+    word_text = "".join(
+        character if character.isalnum() or character == "_" or unicodedata.category(character).startswith("M") else " "
+        for character in text.lower()
+    )
+    words = word_text.split()
     vocabulary = set("use avoid prefer keep lead write seek target do not i like dislike want direct concise clear calm grounded short plain simple active positive concrete specific honest language phrasing tone voice sentences sentence words word verbs verb bullet bullets letter letters claims claim outcomes outcome with by and the a an to my no hype jargon exaggeration passive long paragraphs paragraph staff principal senior software platform engineer engineering roles role ownership leadership level technical management manager director".split())
     sentence = text.strip().rstrip(".!?")
     return (bool(PREFERENCE.match(sentence)) and bool(words) and set(words).issubset(vocabulary)
