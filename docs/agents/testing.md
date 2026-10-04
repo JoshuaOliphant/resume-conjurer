@@ -23,15 +23,53 @@ its own suite.
 
 | Gate | Command | Status |
 |---|---|---|
-| Plugin suite and coverage | `uv run pytest -q` | passing (100% line and branch, enforced by `fail_under` in root `pyproject.toml`) |
-| Web suite and coverage | `cd web && uv run pytest -q` | passing (100% line and branch, enforced by `fail_under` in `web/pyproject.toml`) |
-| Lint | `uvx ruff check .` | passing |
-| Types | `cd web && uvx ty check` | passing |
+| Plugin and CI tooling coverage | `uv run --locked --offline pytest -q` | 100% line and branch, enforced by root `pyproject.toml` |
+| Web suite and coverage | `uv run --locked --offline pytest -q` from `web/` | 100% line and branch, enforced by `web/pyproject.toml` |
+| Lint regressions | `uv run --locked python scripts/ci_lint.py` | pinned Ruff; exact existing import-block exceptions only |
+| Types | `uvx --no-config --from ty==0.0.84 ty check --config-file ty.toml --python web/.venv --error-on-warning web scripts` from root | pinned Ty and explicit configuration |
 
 Not gates: `ruff format` has never been applied (26 files would be reformatted) and there is no
-formatter config. `ty check` from the repo root reports unresolved imports because it doesn't see
-the web venv or the scripts `sys.path` insert; only `web/` configures ty. There is no CI, so
-these gates are only as green as the last local run.
+formatter config. The type gate supplies the web environment and the plugin script search path
+explicitly; an unconfigured root `ty check` is not equivalent.
+
+## Offline CI
+
+`.github/workflows/checks.yml` runs on pull requests, main pushes, and manual dispatch. Independent
+Plugin and Web matrix jobs each install their own lockfile with `uv sync --locked`, then run pytest
+offline. A separate job runs lint and types. Tool versions are uv 0.11.8, Ruff 0.12.11, Ty 0.0.84,
+and CPython 3.12.7; dependency versions come from the two existing lockfiles.
+
+No job consumes Claude or TypeSafe secrets, invokes semantic lint, uploads artifacts, or reads an
+external career workspace. Tests use temporary synthetic files and localhost HTTP fixtures.
+The web tests retain their default `not live` selection. Real API checks remain an explicit local
+`uv run --locked pytest -m live` from `web/`, with separately authorized credentials/data.
+This workflow does not change branch protection.
+
+The clean Python 3.11.10 baseline at `d485a0d` passes the plugin suite but fails three pre-existing
+web metrics assertions on the exact sum of floating-point costs. CPython 3.12.7 passes both suites;
+the CI runtime matches that measured baseline. Supporting the older interpreter's float-sum
+behavior requires separate product/test work, not a CI-only silent assertion change.
+
+## Lint profile and existing debt
+
+`ruff.toml` enables E4/E7/E9/F/I, fixes Python and source-directory classification, and is always
+passed explicitly. `uvx --no-config` prevents uv configuration discovery. Ruff and Ty configuration
+paths are explicit so ambient user rule sets cannot change the gates. To sort a touched file,
+run `uvx --no-config --from ruff==0.12.11 ruff check --config ruff.toml --fix <path>` from root;
+use an absolute config path when running from another directory.
+
+At `d485a0d`, the selected core E4/E7/E9/F rules have no findings. The explicit import profile
+has 23 existing I001 blocks, recorded in `scripts/lint-baseline.json`. Each exception is tied
+to the exact file and SHA-256 of the reported source block, not a whole-file ignore. Changed
+blocks and additional unsorted blocks fail. Unused baseline entries are counted in the gate output;
+remove entries for fixed blocks during integration so the reviewed baseline cannot accumulate silently.
+Do not regenerate the baseline to admit new findings. A broader ambient profile previously
+reported 49 findings; it is not claimed clean or silently adopted. Unrelated lint cleanup stays
+outside the product slices.
+
+`tests/test_ci_lint.py` covers unchanged debt, changed/new blocks, a core finding that cannot be
+baselined, clean output, tool failure, and malformed output. The repository lint gate also runs
+against real Ruff; prove it detects a planted unsorted block before relying on it.
 
 ## Coverage
 

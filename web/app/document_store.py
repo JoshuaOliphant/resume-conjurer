@@ -127,3 +127,19 @@ class DocumentStore:
         directory.mkdir(parents=True, exist_ok=True)
         _write_immutable(directory / filename, content)
         return revision
+
+    def purge_original(self, original_hash: str) -> bool:
+        """Remove an uploaded original file and its directory.
+
+        Returns True if the original was found and removed, False if it did not
+        exist. Use this when a user explicitly removes a source to honor data
+        deletion requests.
+        """
+        if not original_hash or "/" in original_hash or "\\" in original_hash:
+            return False
+        directory = self.root / ".document-originals" / original_hash
+        if not directory.is_dir():
+            return False
+        import shutil
+        shutil.rmtree(directory)
+        return True

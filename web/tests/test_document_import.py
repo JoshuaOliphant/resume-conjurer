@@ -15,7 +15,14 @@ from pypdf.generic import (
     NumberObject,
 )
 
+from app.adapters.scripts_path import ensure_scripts_on_path
 from app.document_import import DocumentImportError, import_document
+from app.document_normalize import normalize_master_resume
+from app.schemas import outline_schema_for_resume_units
+
+ensure_scripts_on_path()
+
+from composer import compose_resume, resume_unit_ids  # noqa: E402
 
 
 def _docx(body: str, extra: dict[str, bytes] | None = None) -> bytes:
@@ -36,13 +43,42 @@ def _pdf(*pages: str) -> bytes:
         page = writer.add_blank_page(width=300, height=300)
         if value:
             stream = DecodedStreamObject()
-            stream.set_data(f"BT /F1 12 Tf 20 250 Td ({value}) Tj ET".encode())
+            rows = " 0 -16 Td ".join(f"({line}) Tj" for line in value.splitlines())
+            stream.set_data(f"BT /F1 12 Tf 20 250 Td {rows} ET".encode())
             page[NameObject("/Contents")] = writer._add_object(stream)
             page[NameObject("/Resources")] = DictionaryObject(
                 {NameObject("/Font"): DictionaryObject({NameObject("/F1"): DictionaryObject(
                     {NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"), NameObject("/BaseFont"): NameObject("/Helvetica")}
                 )})}
             )
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
+def _two_column_pdf() -> bytes:
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=600, height=800)
+    rows = [
+        (20, 760, "Experience"),
+        (20, 730, "Company: Acme | 2021-2024"),
+        (310, 730, "Company: Beta | 2020-2023"),
+        (20, 710, "Role: Engineer | 2021-2024"),
+        (310, 710, "Role: Analyst | 2020-2023"),
+        (20, 690, "- Reduced Acme cost 42%"),
+        (310, 690, "- Grew Beta revenue 12%"),
+    ]
+    stream = DecodedStreamObject()
+    stream.set_data("\n".join(
+        f"BT /F1 11 Tf 1 0 0 1 {x} {y} Tm ({value}) Tj ET" for x, y, value in rows
+    ).encode())
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    page[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({NameObject("/F1"): DictionaryObject({
+            NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        })}),
+    })
     output = BytesIO()
     writer.write(output)
     return output.getvalue()
@@ -87,6 +123,145 @@ def test_docx_preserves_tabs_and_line_breaks_within_a_paragraph() -> None:
     assert result.warnings == ()
 
 
+def test_docx_preserves_bold_role_title_for_reviewed_normalization() -> None:
+    result = import_document("resume.docx", _docx(
+        '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Staff </w:t></w:r>'
+        '<w:r><w:rPr><w:b/></w:rPr><w:t>Engineer</w:t></w:r>'
+        '<w:r><w:t> | 2021-2024</w:t></w:r></w:p>'
+    ))
+    assert result.text == "**Staff Engineer** | 2021-2024"
+    edge = import_document("resume.docx", _docx(
+        '<w:p><w:r/><w:r><w:rPr><w:b/></w:rPr><w:t>Entirely bold</w:t></w:r></w:p>'
+        '<w:p><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Not bold</w:t></w:r></w:p>'
+    ))
+    assert edge.text == "**Entirely bold**\n\nNot bold"
+
+
+def test_reviewed_docx_normalization_keeps_facts_and_produces_real_composer_slot() -> None:
+    source = import_document("resume.docx", _docx(
+        '<w:p><w:r><w:t>Casey | casey@example.com</w:t></w:r></w:p>'
+        '<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Experience</w:t></w:r></w:p>'
+        '<w:p><w:pPr><w:pStyle w:val="Heading3"/></w:pPr><w:r><w:t>Acme | 2021-2024</w:t></w:r></w:p>'
+        '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Staff Engineer</w:t></w:r>'
+        '<w:r><w:t> | 2021-2024</w:t></w:r></w:p>'
+        '<w:p><w:pPr><w:pStyle w:val="ListBullet"/></w:pPr><w:r><w:t>Reduced cost 42% in 2023</w:t></w:r></w:p>'
+        '<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Skills</w:t></w:r></w:p>'
+        '<w:p><w:r><w:t>Python, Go</w:t></w:r></w:p>'
+    ))
+    preview = normalize_master_resume(source.text)
+    assert preview.ready
+    assert preview.corrections == ()
+    assert preview.targets == ("resume.acme.staff_engineer.bullet_1",)
+    assert preview.targets == resume_unit_ids(preview.text)
+    assert "Casey | casey@example.com" in preview.text
+    assert "### Acme -- 2021-2024" in preview.text
+    assert "**Staff Engineer** -- 2021-2024" in preview.text
+    assert "- Reduced cost 42% in 2023" in preview.text
+    assert preview.text.index("2021-2024") < preview.text.index("Reduced cost 42%") < preview.text.index("## Skills")
+    assert "Python, Go" in preview.text
+    assert [(change.source_line, change.source, change.normalized) for change in preview.changes] == [
+        (5, "### Acme | 2021-2024", "### Acme -- 2021-2024"),
+        (7, "**Staff Engineer** | 2021-2024", "**Staff Engineer** -- 2021-2024"),
+    ]
+    tailored = compose_resume(preview.text, [(preview.targets[0], "- Reduced cost 43% in 2024")])
+    assert "- Reduced cost 43% in 2024" in tailored
+    assert "- Reduced cost 42% in 2023" not in tailored
+    schema = outline_schema_for_resume_units(preview.targets)
+    assert schema["properties"]["resume_units"]["items"]["properties"]["unit_id"]["enum"] == list(preview.targets)
+
+
+def test_missing_company_context_requires_correction_even_with_a_role_slot() -> None:
+    source = "Casey | casey@example.com\n\n## Experience\n\n### Acme\n\n**Staff Engineer** | 2021-2024\n\n- Reduced cost 42%\n"
+    preview = normalize_master_resume(source)
+    assert not preview.ready
+    assert "[enter employer context]" in preview.text
+    assert any("employer context" in need for need in preview.corrections)
+    assert "Reduced cost 42%" in preview.text
+    assert "Casey | casey@example.com" in preview.text
+
+
+def test_missing_hierarchy_and_duplicate_role_targets_require_correction() -> None:
+    ambiguous = normalize_master_resume("Experience\nAcme | 2021-2024\nStaff Engineer | 2021-2024\n- Reduced cost 42%")
+    assert not ambiguous.ready
+    assert any("hierarchy" in need for need in ambiguous.corrections)
+    orphan_role = normalize_master_resume("## Experience\n**Staff Engineer**\n- Reduced cost 42%")
+    assert not orphan_role.ready
+    assert "**Staff Engineer** -- [enter role dates]" in orphan_role.text
+    assert any("role hierarchy" in need for need in orphan_role.corrections)
+    assert any("role dates" in need for need in orphan_role.corrections)
+    partial_date = normalize_master_resume("## Experience\n### Acme -- Platform team\n**Engineer** -- 2021\n- Saved 42%")
+    assert "**Engineer** -- 2021" in partial_date.text
+    assert not partial_date.ready
+    assert any("role dates" in need for need in partial_date.corrections)
+    reversed_dates = normalize_master_resume("## Experience\n### Acme -- Platform team\n**Engineer** -- 2024-2021\n- Saved 42%")
+    assert "**Engineer** -- 2024-2021" in reversed_dates.text
+    assert not reversed_dates.ready
+    assert any("role dates" in need for need in reversed_dates.corrections)
+    current_role = normalize_master_resume("## Experience\n### Acme -- Platform team\n**Engineer** -- 2021-Present\n- Saved 42%")
+    assert current_role.ready
+    narrative_dates = normalize_master_resume(
+        "## Experience\n### Acme -- Platform team\n**Engineer** -- Joined 2021, shipped migration 2023\n- Saved 42%"
+    )
+    assert not narrative_dates.ready
+    assert "Joined 2021, shipped migration 2023" in narrative_dates.text
+    assert any("role dates" in need for need in narrative_dates.corrections)
+    repeated = normalize_master_resume(
+        "## Experience\n### Acme -- 2021-2022\n**Staff Engineer** -- 2021-2022\n- First 42%\n"
+        "### Acme -- 2023-2024\n**Staff Engineer** -- 2023-2024\n- Second 12%\n"
+    )
+    assert not repeated.ready
+    assert repeated.targets == ()
+    assert any("ambiguous" in need for need in repeated.corrections)
+    alias_collision = normalize_master_resume(
+        "## Experience\n### Acme -- 2021-2022\n**Engineer** -- 2021-2022\n- First 42%\n"
+        "### Acme Corp -- 2023-2024\n**Engineer** -- 2023-2024\n- Second 12%\n"
+        "## Skills\n- Python\n- Go\n"
+    )
+    assert not alias_collision.ready
+    assert any("unambiguous composer target" in need for need in alias_collision.corrections)
+
+
+def test_existing_master_keeps_factual_context_and_optional_sections() -> None:
+    source = (
+        "# Jordan\n\n## Experience\n\n### Acme — Staff Engineer\n\n"
+        "**Platform** — 2021 to 2024\n- Built 42 services.\n\n"
+        "## Education\nNorthwest University, 2019\n"
+    )
+    preview = normalize_master_resume(source)
+    assert preview.ready
+    assert "### Acme -- Staff Engineer" in preview.text
+    assert "**Platform** -- 2021 to 2024" in preview.text
+    assert "Built 42 services." in preview.text
+    assert "## Education\nNorthwest University, 2019" in preview.text
+    assert preview.targets == ("resume.acme.platform.bullet_1",)
+
+
+def test_text_pdf_normalization_produces_stable_outline_target() -> None:
+    source = import_document("resume.pdf", _pdf(
+        "Casey | casey@example.com\nExperience\nCompany: Acme | 2021-2024\n"
+        "Role: Staff Engineer | 2021-2024\n- Reduced cost 42%\n## Skills\nPython, Go"
+    ))
+    preview = normalize_master_resume(source.text)
+    assert preview.ready
+    assert preview.targets == ("resume.acme.staff_engineer.bullet_1",)
+    assert preview.targets == resume_unit_ids(preview.text)
+    assert "casey@example.com" in preview.text
+    assert "Reduced cost 42%" in preview.text
+    assert "## Skills\nPython, Go" in preview.text
+    assert any("reading order" in warning for warning in source.warnings)
+
+
+def test_two_column_pdf_requires_reading_order_review_before_use() -> None:
+    source = import_document("columns.pdf", _two_column_pdf())
+    assert "Company: Acme | 2021-2024 Company: Beta | 2020-2023" in source.text
+    assert "Role: Engineer | 2021-2024 Role: Analyst | 2020-2023" in source.text
+    assert any("reading order" in warning for warning in source.warnings)
+    preview = normalize_master_resume(source.text)
+    assert not preview.ready
+    assert any("multiple employer or role labels" in need for need in preview.corrections)
+    assert not normalize_master_resume(preview.text).ready
+
+
 @pytest.mark.parametrize("part", ["header1.xml", "footer1.xml"])
 def test_docx_reports_unimported_header_or_footer(part: str) -> None:
     result = import_document("resume.docx", _docx(
@@ -111,7 +286,10 @@ def test_pdf_extracts_pages_in_order_and_reports_image_only_page() -> None:
     assert PdfReader(BytesIO(content)).pages[0].extract_text().strip() == "Casey 2023"
     result = import_document("resume.pdf", content)
     assert result.text == "Casey 2023\n\nSaved 42%"
-    assert result.warnings == ("Page 2 has no extractable text; OCR was not performed.",)
+    assert result.warnings == (
+        "PDF reading order may differ from the visible layout. Check and correct it against the original file.",
+        "Page 2 has no extractable text; OCR was not performed.",
+    )
 
 
 def test_pdf_reports_images_on_pages_with_extractable_text() -> None:
@@ -130,7 +308,10 @@ def test_pdf_reports_images_on_pages_with_extractable_text() -> None:
     writer.write(contents)
     result = import_document("resume.pdf", contents.getvalue())
     assert result.text == "Visible typed header"
-    assert result.warnings == ("Page 1 contains images whose text was not imported; OCR was not performed.",)
+    assert result.warnings == (
+        "PDF reading order may differ from the visible layout. Check and correct it against the original file.",
+        "Page 1 contains images whose text was not imported; OCR was not performed.",
+    )
 
 
 @pytest.mark.parametrize(
@@ -193,3 +374,22 @@ def test_rejects_password_encrypted_pdf() -> None:
     writer.write(output)
     with pytest.raises(DocumentImportError, match="Password-encrypted"):
         import_document("resume.pdf", output.getvalue())
+
+
+def test_normalize_handles_runtime_error_from_experience_lines(monkeypatch) -> None:
+    """The second resume_unit_ids call (for experience_lines) is wrapped in try/except."""
+    call_count = 0
+
+    def failing_on_second_call(text: str):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("Simulated failure on experience lines")
+        return ("resume.summary.bullet_1",)
+
+    monkeypatch.setattr("app.document_normalize.resume_unit_ids", failing_on_second_call)
+    valid_resume = "## Experience\n\n### Acme -- 2020-2024\n\n**Engineer** -- 2020-2024\n\n- Did something\n"
+    result = normalize_master_resume(valid_resume)
+    assert call_count == 2
+    assert result.targets == ("resume.summary.bullet_1",)
+    assert not result.ready

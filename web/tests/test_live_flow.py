@@ -2,6 +2,7 @@
 # ABOUTME: Exercises POST /start (live), the status partial's render branches, and the env composition.
 
 import asyncio
+import hashlib
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
@@ -9,6 +10,11 @@ from pathlib import Path
 from threading import Event
 
 import pytest
+from fastapi.testclient import TestClient
+from test_document_import import _docx, _pdf
+from test_onboarding import ANSWERS
+from test_onboarding_sdk import SdkBoundary, _result
+
 from app.adapters.composition import ScriptCompositionPort
 from app.adapters.finals_fs import FinalDocuments
 from app.adapters.generation_fake import FakeGenerationPort
@@ -26,8 +32,28 @@ from app.deps import (
 from app.document_store import ConflictError, DocumentStore
 from app.domain import Evidence, Variant
 from app.main import create_app
+from app.onboarding import build_prompt, empty_state
+from app.onboarding_sdk import OnboardingSdk
+from app.onboarding_store import OnboardingStore
 from app.runs import RunManager, RunStatus
-from fastapi.testclient import TestClient
+
+
+class SameOriginClient(TestClient):
+    """TestClient that adds sec-fetch-site: same-origin to all POST requests.
+
+    Modern browsers send this header for same-origin form submissions, and the
+    cross-origin protection requires it. Test clients normally omit it, so this
+    wrapper ensures test POST requests pass the same-origin check.
+
+    When the test explicitly passes headers (even empty dict), the default is not
+    applied, allowing cross-origin rejection tests.
+    """
+
+    def post(self, *args, headers=None, **kwargs):
+        if headers is not None:
+            return super().post(*args, headers=headers, **kwargs)
+        return super().post(*args, headers={"sec-fetch-site": "same-origin"}, **kwargs)
+
 
 SLUG = "globex-staff-platform"
 FIXTURE = Path(__file__).parent / "fixtures" / "workspace"
@@ -76,7 +102,7 @@ def live_client(workspace):
     gen = FakeGenerationPort()
     manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         yield c, manager
 
 
@@ -93,11 +119,12 @@ def test_live_start_renders_the_progress_page(live_client):
 
 
 def test_source_save_finishes_before_generation_can_start(workspace, monkeypatch):
+    """Use grimoire.md to test save/generation concurrency without master resume validation."""
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
     manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
     documents = DocumentStore(workspace)
-    revision = documents.revision("master-resume.md")
+    revision = documents.revision("grimoire.md")
     saving = Event()
     release_save = Event()
     start_called = Event()
@@ -116,9 +143,9 @@ def test_source_save_finishes_before_generation_can_start(workspace, monkeypatch
     monkeypatch.setattr(documents, "save", held_save)
     monkeypatch.setattr(manager, "start", observed_start)
     app = create_app(repo=repo, gen=gen, run_manager=manager, documents=documents, live=True)
-    with TestClient(app) as client, ThreadPoolExecutor(max_workers=2) as workers:
+    with SameOriginClient(app) as client, ThreadPoolExecutor(max_workers=2) as workers:
         save = workers.submit(client.post, "/documents/save", data={
-            "document_name": "master-resume.md", "text": "# Saved before generation\n", "revision": revision,
+            "document_name": "grimoire.md", "text": "# Saved before generation\n", "revision": revision,
         }, follow_redirects=False)
         assert saving.wait(5)
         start = workers.submit(client.post, "/start", data={"jd": "New JD"})
@@ -129,7 +156,7 @@ def test_source_save_finishes_before_generation_can_start(workspace, monkeypatch
         assert save.result(timeout=5).status_code == 303
         assert start.result(timeout=5).status_code == 200
         assert start_called.is_set()
-    assert documents.read("master-resume.md") == "# Saved before generation\n"
+    assert documents.read("grimoire.md") == "# Saved before generation\n"
 
 
 def test_repeated_start_does_not_change_job_description_during_generation(live_client, workspace):
@@ -192,7 +219,7 @@ def test_live_outline_renders_from_persisted_workspace(workspace):
     assert manager.status(SLUG).state == "done"
 
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         r = c.get("/outline")
     assert r.status_code == 200
     assert "Globex" in r.text
@@ -222,7 +249,7 @@ def _ran_live_app(workspace):
 
 def test_metrics_endpoint_returns_run_metrics_after_a_run(workspace):
     app, manager = _ran_live_app(workspace)
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         r = c.get("/metrics")
     assert r.status_code == 200
     body = r.json()
@@ -241,7 +268,7 @@ def test_metrics_endpoint_is_empty_before_any_run(live_client):
 
 def test_review_shows_the_run_summary_line(workspace):
     app, _ = _ran_live_app(workspace)
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         r = c.get("/review")
     assert r.status_code == 200
     assert "This résumé" in r.text
@@ -259,7 +286,7 @@ def test_review_omits_the_summary_when_no_run(live_client):
     repo = FakeWorkspaceRepository()
     gen = FakeGenerationPort()
     app = _create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=False)
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         r = c.get("/review")
     assert r.status_code == 200
     assert "This résumé" not in r.text
@@ -403,7 +430,7 @@ def test_live_curate_renders_unverified_note_for_ungrounded_citation(workspace):
     )
     gen = FakeGenerationPort()
     app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=True)
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         r = c.get("/curate/0")
     assert r.status_code == 200
     assert "Unverified citation:" in r.text
@@ -464,13 +491,14 @@ def _prepare_picked_live_workspace(workspace):
 
 
 def _compose_live_documents(client):
-    response = client.post("/review/compose", data={"cover_revision": "", "resume_revision": ""}, follow_redirects=False)
+    response = client.post("/review/compose", data={"cover_revision": "", "resume_revision": ""},
+                           headers={"sec-fetch-site": "same-origin"}, follow_redirects=False)
     assert response.status_code == 303
 
 
 def test_live_review_stitches_and_lints_the_real_docs(workspace):
     app = _prepare_picked_live_workspace(workspace)
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         r = c.get("/review")
         assert 'action="/review/compose"' in r.text
         assert not (workspace / "applications" / SLUG / "cover_letter.md").exists()
@@ -496,7 +524,7 @@ def test_live_review_get_preserves_manual_final_documents(workspace):
     app_dir = workspace / "applications" / SLUG
     (app_dir / "cover_letter.md").write_text("Manual letter with a careful claim.\n")
     (app_dir / "resume.md").write_text("# Manual résumé\n- Verified result: 42%.\n")
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         response = client.get("/review")
     assert response.status_code == 200
     assert (app_dir / "cover_letter.md").read_text() == "Manual letter with a careful claim.\n"
@@ -531,7 +559,7 @@ def test_review_waits_for_both_final_documents_during_compose(workspace, monkeyp
         return response
 
     monkeypatch.setattr(finals.store, "save", hold_after_cover_write)
-    with TestClient(app) as client, ThreadPoolExecutor(max_workers=2) as workers:
+    with SameOriginClient(app) as client, ThreadPoolExecutor(max_workers=2) as workers:
         compose = workers.submit(client.post, "/review/compose", data={"cover_revision": "", "resume_revision": ""},
                                  follow_redirects=False)
         assert cover_written.wait(5)
@@ -556,7 +584,7 @@ def test_final_edit_survives_review_export_and_reload_without_changing_sources(w
     master_before = (workspace / "master-resume.md").read_bytes()
     variants_before = (app_dir / "variants.md").read_bytes()
     finals = FinalDocuments(workspace, SLUG)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         _compose_live_documents(client)
         original = finals.state()
         editor = client.get("/finals?name=resume.md")
@@ -584,7 +612,7 @@ def test_final_edit_survives_review_export_and_reload_without_changing_sources(w
 def test_final_edit_invalidates_older_derived_downloads(workspace):
     app = _prepare_picked_live_workspace(workspace)
     finals = FinalDocuments(workspace, SLUG)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         _compose_live_documents(client)
         for extension in ("pdf", "docx"):
             (finals.app_dir / f"resume.{extension}").write_bytes(b"older export")
@@ -600,7 +628,7 @@ def test_final_edit_invalidates_older_derived_downloads(workspace):
 def test_source_change_marks_final_stale_until_explicit_rebuild(workspace):
     app = _prepare_picked_live_workspace(workspace)
     finals = FinalDocuments(workspace, SLUG)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         _compose_live_documents(client)
         old = finals.state()
         (workspace / "master-resume.md").write_text((workspace / "master-resume.md").read_text() + "\n- Added source fact.\n")
@@ -626,7 +654,7 @@ def test_changed_pick_marks_saved_final_stale_without_changing_it(workspace):
     app = _prepare_picked_live_workspace(workspace)
     finals = FinalDocuments(workspace, SLUG)
     repo = FsWorkspaceRepository(workspace)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         _compose_live_documents(client)
         before = finals.state()
         units = repo.load_application(SLUG).units
@@ -647,7 +675,7 @@ def test_changed_pick_marks_saved_final_stale_without_changing_it(workspace):
 def test_final_save_conflict_recovers_submitted_text_and_rejects_invalid_name(workspace):
     app = _prepare_picked_live_workspace(workspace)
     finals = FinalDocuments(workspace, SLUG)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         assert client.get("/finals?name=../master-resume.md").status_code == 400
         assert client.get("/finals?name=resume.md").status_code == 409
         _compose_live_documents(client)
@@ -671,7 +699,7 @@ def test_final_save_conflict_recovers_submitted_text_and_rejects_invalid_name(wo
 def test_final_compose_rejects_stale_revisions_without_replacing_saved_docs(workspace):
     app = _prepare_picked_live_workspace(workspace)
     finals = FinalDocuments(workspace, SLUG)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         _compose_live_documents(client)
         old = finals.state()
         finals.save("cover_letter.md", "Manual cover.\n", old.cover_revision)
@@ -763,7 +791,7 @@ def test_unreadable_composition_metadata_and_missing_source_mark_finals_stale(wo
     before = finals.state()
     (finals.app_dir / ".final-composition.json").write_text(metadata)
     assert finals.state().stale
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         review = client.get("/review")
         assert review.status_code == 200
         assert "Composition record is invalid" in review.text
@@ -777,7 +805,7 @@ def test_unreadable_composition_metadata_and_missing_source_mark_finals_stale(wo
 def test_composition_metadata_directory_preserves_saved_finals_and_shows_recovery(workspace):
     app = _prepare_picked_live_workspace(workspace)
     finals = FinalDocuments(workspace, SLUG)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         _compose_live_documents(client)
         before = finals.state()
         path = finals.app_dir / ".final-composition.json"
@@ -796,7 +824,7 @@ def test_composition_metadata_directory_preserves_saved_finals_and_shows_recover
 def test_non_utf8_composition_record_preserves_saved_finals(workspace):
     app = _prepare_picked_live_workspace(workspace)
     finals = FinalDocuments(workspace, SLUG)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         _compose_live_documents(client)
         saved = finals.state().resume_text
         (finals.app_dir / ".final-composition.json").write_bytes(b"\xff")
@@ -815,7 +843,7 @@ def test_compose_failure_reports_error_without_creating_final_documents(workspac
         raise OSError("staged write failed")
 
     monkeypatch.setattr(final_module, "stitch_app_dir", fail_stitch)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         response = client.post("/review/compose", data={}, follow_redirects=False)
     assert response.status_code == 503
     assert "staged write failed" in response.text
@@ -825,7 +853,7 @@ def test_compose_failure_reports_error_without_creating_final_documents(workspac
 def test_final_save_rejects_empty_text_without_changing_saved_document(workspace):
     app = _prepare_picked_live_workspace(workspace)
     finals = FinalDocuments(workspace, SLUG)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         missing = client.post("/finals/save", data={"document_name": "resume.md", "text": "Draft",
                                                     "revision": ""})
         assert missing.status_code == 409
@@ -839,15 +867,44 @@ def test_final_save_rejects_empty_text_without_changing_saved_document(workspace
         assert finals.state().resume_revision == revision
 
 
+def test_final_mutations_allow_same_site_requests(workspace):
+    app = _prepare_picked_live_workspace(workspace)
+    finals = FinalDocuments(workspace, SLUG)
+    with SameOriginClient(app) as client:
+        response = client.post("/review/compose", data={"cover_revision": "", "resume_revision": ""},
+                               headers={"sec-fetch-site": "same-site"}, follow_redirects=False)
+        assert response.status_code == 303
+        state = finals.state()
+        response = client.post("/finals/save", data={"document_name": "resume.md", "text": "Draft\n", "revision": state.resume_revision},
+                               headers={"sec-fetch-site": "same-site"}, follow_redirects=False)
+        assert response.status_code == 303
+
+
+def test_final_mutations_allow_matching_origin_without_fetch_site(workspace):
+    app = _prepare_picked_live_workspace(workspace)
+    finals = FinalDocuments(workspace, SLUG)
+    with SameOriginClient(app) as client:
+        _compose_live_documents(client)
+        state = finals.state()
+        response = client.post("/finals/save", data={"document_name": "resume.md", "text": "Origin match\n", "revision": state.resume_revision},
+                               headers={"origin": "http://testserver"}, follow_redirects=False)
+        assert response.status_code == 303
+
+
 @pytest.mark.parametrize("path", ["/review/compose", "/finals/save"])
-@pytest.mark.parametrize("headers", [{"origin": "https://other.example"}, {"sec-fetch-site": "cross-site"}])
+@pytest.mark.parametrize("headers", [
+    {"origin": "https://other.example"},
+    {"sec-fetch-site": "cross-site"},
+    {"sec-fetch-site": "none"},
+    {},
+])
 def test_final_mutations_reject_cross_origin_requests(workspace, path, headers):
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
     manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True,
                      comp=ScriptCompositionPort(workspace), finals=FinalDocuments(workspace, SLUG))
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         response = client.post(path, data={"document_name": "resume.md", "text": "Draft", "revision": ""}, headers=headers)
     assert response.status_code == 403
 
@@ -860,7 +917,7 @@ def test_final_mutations_wait_for_generation(workspace, path):
     manager._status[SLUG] = RunStatus(state="running")
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True,
                      comp=ScriptCompositionPort(workspace), finals=FinalDocuments(workspace, SLUG))
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         response = client.post(path, data={"document_name": "resume.md", "text": "Draft", "revision": "",
                                            "variant_id": "cover_letter.opening#1"})
     assert response.status_code == 409
@@ -876,7 +933,7 @@ def test_export_waits_for_generation_before_reading_saved_finals(workspace, path
     manager._status[SLUG] = RunStatus(state="running")
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True,
                      comp=ScriptCompositionPort(workspace), finals=FinalDocuments(workspace, SLUG))
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         response = client.get(path)
     assert response.status_code == 409
     assert "Wait for generation" in response.text
@@ -910,7 +967,7 @@ def test_real_jev_verdict_persists_and_reaches_live_curate_and_review(workspace)
     hydrated = repo.load_application(SLUG).units[1].variants[0]
     assert hydrated.support == verdicts[variant.id]
 
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         curate = client.get("/curate/1")
         review = client.get("/review")
     for response in (curate, review):
@@ -925,7 +982,7 @@ def test_unreadable_support_does_not_block_live_pages(workspace, caplog, route):
     app = _prepare_picked_live_workspace(workspace)
     (workspace / "applications" / SLUG / "support.json").mkdir()
 
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         response = client.get(route)
 
     assert response.status_code == 200
@@ -976,7 +1033,7 @@ def test_live_review_with_incomplete_picks_does_not_stitch_or_500(workspace):
         repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=True, comp=comp,
         finals=FinalDocuments(workspace, SLUG),
     )
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         r = c.get("/review")
         incomplete = c.post("/review/compose", data={}, follow_redirects=False)
     assert r.status_code == 200
@@ -988,25 +1045,19 @@ def test_live_review_with_incomplete_picks_does_not_stitch_or_500(workspace):
 
 
 def test_live_export_reports_the_written_or_skipped_map(workspace):
-    import shutil as _shutil
-
     app = _prepare_picked_live_workspace(workspace)
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         _compose_live_documents(c)
         r = c.get("/export")
     assert r.status_code == 200
     assert "Exported files" in r.text
-    # The reported status matches the real environment: written iff pandoc is installed.
-    have_pandoc = _shutil.which("pandoc") is not None
-    if have_pandoc:
-        assert "written" in r.text
-    else:
-        assert "skipped" in r.text
+    assert r.text.count("written") == 4
+    assert "Professional" in r.text
 
 
 def test_live_export_downloads_the_stitched_markdown(workspace):
     app = _prepare_picked_live_workspace(workspace)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         _compose_live_documents(client)
         page = client.get("/export")
         assert "Plain text from your saved documents." in page.text
@@ -1021,7 +1072,7 @@ def test_live_export_downloads_the_stitched_markdown(workspace):
 
 def test_live_export_without_documents_has_no_download_links(workspace):
     app = _prepare_picked_live_workspace(workspace)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         page = client.get("/export")
         assert "/export/download/" not in page.text
         assert "No Markdown files available." in page.text
@@ -1032,13 +1083,14 @@ def test_live_export_downloads_written_formats_and_hides_skipped_artifacts(works
     app = _prepare_picked_live_workspace(workspace)
     app_dir = workspace / "applications" / SLUG
 
-    def export_artifacts(directory, formats):
-        (directory / "resume.pdf").write_bytes(b"real-pdf-artifact")
-        (directory / "resume.docx").write_bytes(b"older-artifact")
+    def export_artifacts(self, slug, formats=("pdf", "docx")):
+        assert slug == SLUG
+        (app_dir / "resume.pdf").write_bytes(b"real-pdf-artifact")
+        (app_dir / "resume.docx").write_bytes(b"older-artifact")
         return {"resume.pdf": "written", "resume.docx": "skipped: no exporter", "cover_letter.pdf": "written"}
 
-    monkeypatch.setattr("app.adapters.composition.export_app_dir", export_artifacts)
-    with TestClient(app) as client:
+    monkeypatch.setattr(ScriptCompositionPort, "export", export_artifacts)
+    with SameOriginClient(app) as client:
         _compose_live_documents(client)
         page = client.get("/export")
         assert 'href="/export/download/resume.pdf"' in page.text
@@ -1055,7 +1107,7 @@ def test_live_export_downloads_written_formats_and_hides_skipped_artifacts(works
 def test_live_download_rejects_workspace_sources(workspace, filename):
     app = _prepare_picked_live_workspace(workspace)
     assert not FinalDocuments(workspace, SLUG).can_download(filename)
-    with TestClient(app) as client:
+    with SameOriginClient(app) as client:
         assert client.get(f"/export/download/{filename}").status_code == 404
 
 
@@ -1094,7 +1146,7 @@ def test_live_start_writes_the_pasted_jd_to_the_workspace(workspace):
     gen = FakeGenerationPort()
     manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         r = c.post("/start", data={"jd": "Widget Wrangler at Globex. Unique-JD-Marker-42."})
     assert r.status_code == 200
     jd_txt = (workspace / "applications" / SLUG / "jd.txt").read_text()
@@ -1108,7 +1160,626 @@ def test_live_start_with_blank_jd_keeps_the_existing_jd(workspace):
     gen = FakeGenerationPort()
     manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
     app = create_app(repo=repo, gen=gen, run_manager=manager, live=True)
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         r = c.post("/start", data={"jd": "   "})  # whitespace-only -> not written
     assert r.status_code == 200
     assert jd_path.read_text() == original
+
+
+@pytest.fixture
+def onboarding_client(workspace):
+
+    boundary = SdkBoundary()
+    repo = FsWorkspaceRepository(workspace)
+    gen = FakeGenerationPort()
+    manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
+    app = create_app(repo=repo, gen=gen, run_manager=manager, documents=DocumentStore(workspace),
+                     onboarding=OnboardingSdk(boundary), live=True)
+    with SameOriginClient(app) as client:
+        yield client, boundary, manager
+
+
+def _review_onboarding(client, workspace, **changes):
+
+    _, revision = OnboardingStore(workspace).read()
+    data = {"revision": revision, **ANSWERS, **changes}
+    return client.post("/onboarding/review", data=data, follow_redirects=False)
+
+
+def _draft_onboarding(client, workspace):
+
+
+    state, revision = OnboardingStore(workspace).read()
+    return client.post("/onboarding/draft", data={"revision": revision,
+                       "prompt_hash": hashlib.sha256(build_prompt(state).encode()).hexdigest()}, follow_redirects=False)
+
+
+def test_onboarding_resume_only_review_draft_edit_accept_history_reload(onboarding_client, workspace):
+
+    client, boundary, _ = onboarding_client
+    documents = DocumentStore(workspace)
+    original = {path: path.read_bytes() for path in workspace.rglob("*") if path.is_file()}
+    original_grimoire = documents.revision("grimoire.md")
+    assert client.get("/onboarding").status_code == 200
+    assert not boundary.calls
+    assert _review_onboarding(client, workspace).status_code == 303
+    page = client.get("/onboarding")
+    assert "Destination: Claude" in page.text and "Seek Staff Engineer ownership" in page.text
+    assert not boundary.calls
+    assert _draft_onboarding(client, workspace).status_code == 303
+    assert len(boundary.calls) == 1
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    edited = state["draft"].replace("Use direct language.", "Use concise language.")
+    assert client.post("/onboarding/edit", data={"revision": revision, "draft": edited}, follow_redirects=False).status_code == 303
+    state, revision = store.read()
+    assert client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"],
+                        "draft": edited, "attest_edits": "true"}, follow_redirects=False).status_code == 303
+    assert documents.read("grimoire.md") == edited
+    assert original_grimoire in documents.history("grimoire.md")
+    assert "Grimoire saved" in client.get("/onboarding?saved=true").text
+    assert client.get("/onboarding").status_code == 200
+    for path, content in original.items():
+        if path.name != "grimoire.md":
+            assert path.read_bytes() == content
+    assert len(boundary.calls) == 1
+
+
+@pytest.mark.parametrize("kind,filename,content,error", [
+    ("career fact", "note.txt", b"Observed a shipped release.", None),
+    ("voice sample", "voice.txt", b"Use direct language.", None),
+    ("unknown", "note.txt", b"Content", "Tag the source"),
+    ("career fact", "note.exe", b"Content", "Supported"),
+    ("career fact", "note.txt", b"", "no readable text"),
+    ("career fact", "note.txt", b"x" * 65537, "64 KiB"),
+])
+def test_onboarding_optional_sources_keep_originals_and_do_not_call_model(onboarding_client, workspace, kind, filename, content, error):
+
+    client, boundary, _ = onboarding_client
+    before = DocumentStore(workspace).read("grimoire.md")
+    response = client.post("/onboarding/sources", data={"kind": kind}, files={"file": (filename, content)}, follow_redirects=False)
+    assert response.status_code == (303 if error is None else 400)
+    if error is not None:
+        assert error.lower() in response.text.lower()
+    else:
+        state, _ = OnboardingStore(workspace).read()
+        assert state["optional_sources"][0]["kind"] == kind
+        assert state["optional_sources"][0]["text"] == content.decode()
+        assert list((workspace / ".document-originals").rglob("*"))
+    assert DocumentStore(workspace).read("grimoire.md") == before
+    assert not boundary.calls
+
+
+def test_onboarding_invalid_selections_missing_answers_and_stale_review_preserve_draft(onboarding_client, workspace):
+
+    client, boundary, _ = onboarding_client
+    for change, error in [({"roles": " "}, "Answer all"), ({"source_ids": ["missing"]}, "no longer exists")]:
+        response = _review_onboarding(client, workspace, **change)
+        assert response.status_code == 400 and error in response.text
+    assert _review_onboarding(client, workspace).status_code == 303
+    assert _review_onboarding(client, workspace, revision="stale").status_code == 409
+    assert "submitted answers" in client.post("/onboarding/review", data={"revision": "stale", "roles": "My unsaved roles", "examples": "My examples", "voice": "My voice"}).text
+    state, _ = OnboardingStore(workspace).read()
+    assert state["answers"]["roles"] != "My unsaved roles"
+    assert not boundary.calls
+
+
+def test_onboarding_unprepared_master_redirects_and_blocks_review(onboarding_client, workspace):
+    client, boundary, _ = onboarding_client
+    (workspace / "master-resume.md").write_text("# Empty resume\n")
+    assert client.get("/onboarding", follow_redirects=False).status_code == 303
+    assert _review_onboarding(client, workspace).status_code == 400
+    assert not boundary.calls
+
+
+def test_onboarding_stale_snapshot_and_prompt_never_send(onboarding_client, workspace):
+
+    client, boundary, _ = onboarding_client
+    assert _review_onboarding(client, workspace).status_code == 303
+    state, revision = OnboardingStore(workspace).read()
+    assert client.post("/onboarding/draft", data={"revision": revision, "prompt_hash": "unreviewed"}).status_code == 409
+    assert client.post("/onboarding/draft", data={"revision": "stale", "prompt_hash": "unreviewed"}).status_code == 409
+    (workspace / "master-resume.md").write_text("# Changed resume\n")
+    assert _draft_onboarding(client, workspace).status_code == 409
+    assert not boundary.calls
+
+
+@pytest.mark.parametrize("messages", [[], ["malformed"]])
+def test_onboarding_failed_call_keeps_answers_and_existing_draft(onboarding_client, workspace, messages):
+
+    client, boundary, _ = onboarding_client
+    assert _review_onboarding(client, workspace).status_code == 303
+    assert _draft_onboarding(client, workspace).status_code == 303
+    before = OnboardingStore(workspace).read()
+    boundary.messages = [] if not messages else [_result(payload={"bad": True})]
+    response = _draft_onboarding(client, workspace)
+    assert response.status_code == 400 and "Draft failed" in response.text
+    assert OnboardingStore(workspace).read() == before
+
+
+def test_onboarding_stale_acceptance_and_manual_fact_preserve_submitted_draft(onboarding_client, workspace):
+
+    client, _, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    _draft_onboarding(client, workspace)
+    state, revision = OnboardingStore(workspace).read()
+    draft = state["draft"] + "\n- I owned all the projects.\n"
+    data = {"revision": revision, "grimoire_revision": state["grimoire_revision"], "draft": draft, "attest_edits": "true"}
+    response = client.post("/onboarding/accept", data=data)
+    assert response.status_code == 422 and "I owned all the projects" in response.text
+    response = client.post("/onboarding/accept", data={**data, "revision": "stale"})
+    assert response.status_code == 409 and "I owned all the projects" in response.text
+    documents = DocumentStore(workspace)
+    documents.save("grimoire.md", "# Newest grimoire\n", state["grimoire_revision"])
+    response = client.post("/onboarding/accept", data={**data, "draft": state["draft"]})
+    assert response.status_code == 409
+    assert documents.read("grimoire.md") == "# Newest grimoire\n"
+    documents.save("master-resume.md", documents.read("master-resume.md") + "\nChanged source\n", documents.revision("master-resume.md"))
+    response = client.post("/onboarding/accept", data={**data, "draft": state["draft"]})
+    assert response.status_code == 422 and "master resume changed" in response.text
+
+
+def test_onboarding_mutations_allow_matching_origin_without_fetch_site(onboarding_client, workspace):
+    client, boundary, _ = onboarding_client
+    store = OnboardingStore(workspace)
+    response = client.post("/onboarding/sources", data={"kind": "voice sample", "pasted": "Test origin match"},
+                           headers={"origin": "http://testserver"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert store.read()[0]["optional_sources"]
+
+
+@pytest.mark.parametrize("path", ["/onboarding/sources", "/onboarding/review", "/onboarding/draft", "/onboarding/edit", "/onboarding/accept", "/onboarding/review-draft"])
+def test_onboarding_mutations_refuse_cross_site_and_running_generation(onboarding_client, path):
+    client, boundary, manager = onboarding_client
+    data = {"kind": "career fact", "roles": "Roles", "examples": "Examples", "voice": "Voice", "revision": "irrelevant", "prompt_hash": "x", "draft": "Text"}
+    assert client.post(path, data=data, headers={"origin": "https://hostile.example"}).status_code == 403
+    assert client.post(path, data=data, headers={"sec-fetch-site": "cross-site"}).status_code == 403
+    assert client.post(path, data=data, headers={"sec-fetch-site": "none"}).status_code == 403
+    assert client.post(path, data=data, headers={}).status_code == 403
+    manager._status[SLUG] = RunStatus(state="running")
+    assert client.post(path, data=data, headers={"sec-fetch-site": "same-origin"}).status_code == 409
+    assert client.post(path, data=data, headers={"sec-fetch-site": "same-site"}).status_code == 409
+    assert not boundary.calls
+
+
+def test_onboarding_requires_workspace(live_client):
+    client, _ = live_client
+    assert client.get("/onboarding").status_code == 503
+
+
+def test_onboarding_paste_source_stale_source_and_invalid_upload_combination(onboarding_client, workspace):
+
+    client, boundary, _ = onboarding_client
+    response = client.post("/onboarding/sources", data={"kind": "voice sample", "pasted": "Use calm language."}, follow_redirects=False)
+    assert response.status_code == 303
+    state, revision = OnboardingStore(workspace).read()
+    assert state["optional_sources"][0]["filename"] == "pasted.txt"
+    assert client.post("/onboarding/sources", data={"kind": "career fact", "pasted": "New"}).status_code == 409
+    response = client.post("/onboarding/sources", data={"revision": revision, "kind": "career fact", "pasted": "New"}, files={"file": ("note.txt", b"Also new")})
+    assert response.status_code == 400 and "one file or paste" in response.text
+    assert not boundary.calls
+
+
+def test_onboarding_edit_recovery_use_proposal_discard_and_size_limit(onboarding_client, workspace):
+
+    client, boundary, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    _draft_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    assert client.post("/onboarding/edit", data={"revision": "stale", "draft": "My unsaved draft"}).status_code == 409
+    response = client.post("/onboarding/edit", data={"revision": revision, "draft": "x" * (2 * 1024 * 1024 + 1)})
+    assert response.status_code == 400 and "2 MiB" in response.text
+    assert client.post("/onboarding/edit", data={"revision": revision, "use_proposal": "true"}, follow_redirects=False).status_code == 303
+    state, revision = store.read()
+    assert state["draft"] == state["proposal"]
+    assert client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"], "draft": " "}).status_code == 422
+    assert client.post("/onboarding/edit", data={"revision": revision, "discard": "true", "draft": state["draft"]}, follow_redirects=False).status_code == 303
+    assert store.read()[0]["draft"] == store.read()[0]["proposal"] == ""
+    assert len(boundary.calls) == 1
+
+
+def test_onboarding_overlarge_sources_and_answers_return_actionable_local_error(onboarding_client, workspace):
+
+    client, boundary, _ = onboarding_client
+    response = _review_onboarding(client, workspace, examples="x" * 8193)
+    assert response.status_code == 400 and "8 KiB" in response.text
+    store = OnboardingStore(workspace)
+    state = empty_state()
+    state["answers"]["examples"] = "x" * 8193
+    store.save(state, "")
+    assert client.get("/onboarding").status_code == 400
+    response = client.post("/onboarding/draft", data={"revision": store.read()[1], "prompt_hash": "anything"})
+    assert response.status_code == 400
+    assert not boundary.calls
+
+
+def test_onboarding_missing_answers_never_draft(onboarding_client, workspace):
+
+    client, boundary, _ = onboarding_client
+    state = empty_state()
+    state["master_revision"] = DocumentStore(workspace).revision("master-resume.md")
+    OnboardingStore(workspace).save(state, "")
+    response = _draft_onboarding(client, workspace)
+    assert response.status_code == 400 and "Complete the answers" in response.text
+    assert not boundary.calls
+
+
+def test_onboarding_draft_preserves_edits_and_marks_intervening_source_change(onboarding_client, workspace):
+
+    client, boundary, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    _draft_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    edited = state["draft"].replace("Use direct language.", "Use concise language.")
+    client.post("/onboarding/edit", data={"revision": revision, "draft": edited})
+    boundary.before_result = lambda: (workspace / "master-resume.md").write_text("# Changed during draft\n")
+    response = _draft_onboarding(client, workspace)
+    assert response.status_code == 409 and "proposal is retained" in response.text
+    assert store.read()[0]["draft"] == edited
+
+
+def test_onboarding_draft_state_race_keeps_newest_and_shows_proposal(onboarding_client, workspace):
+
+    client, boundary, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    def external_edit():
+        state["draft"] = "Newer draft"
+        store.save(state, revision)
+    boundary.before_result = external_edit
+    response = _draft_onboarding(client, workspace)
+    assert response.status_code == 409 and "Recover the proposal" in response.text
+    assert store.read()[0]["draft"] == "Newer draft"
+
+
+def test_onboarding_draft_failure_preserves_state_and_hides_exception_details(onboarding_client, workspace):
+    client, boundary, _ = onboarding_client
+    review_response = _review_onboarding(client, workspace)
+    assert review_response.status_code == 303
+    store = OnboardingStore(workspace)
+    original_state, revision = store.read()
+    assert revision
+
+    def raise_after_result():
+        raise RuntimeError("Internal error with /secret/path details")
+
+    boundary.before_result = raise_after_result
+    response = _draft_onboarding(client, workspace)
+    assert response.status_code == 400
+    assert "Draft failed" in response.text
+    assert "recover it below" in response.text
+    assert "secret" not in response.text
+    assert "Internal error" not in response.text
+    assert "RuntimeError" not in response.text
+    assert store.read()[0]["draft"] == original_state["draft"]
+
+
+def test_onboarding_allows_large_source_listing_and_can_remove_old_source(onboarding_client, workspace):
+    client, boundary, _ = onboarding_client
+    store = OnboardingStore(workspace)
+    response = client.post("/onboarding/sources", data={"kind": "voice sample", "pasted": "line\n" * 100}, follow_redirects=False)
+    assert response.status_code == 303
+    assert store.read()[0]["optional_sources"]
+    state, current = store.read()
+    state["optional_sources"].append({"text": "another source", "revision": "old", "kind": "voice sample", "filename": "old.txt", "original_hash": "old", "warnings": []})
+    revision = store.save(state, current)
+    page = client.get("/onboarding")
+    assert page.status_code == 200
+    assert client.post("/onboarding/sources/remove", data={"revision": "stale", "original_hash": "old"}).status_code == 409
+    state, revision = store.read()
+    assert client.post("/onboarding/sources/remove", data={"revision": revision, "original_hash": "old"}, follow_redirects=False).status_code == 303
+    assert len(store.read()[0]["optional_sources"]) == 1
+    assert client.get("/onboarding").status_code == 200
+    assert not boundary.calls
+
+
+def test_remove_source_with_purge_deletes_original_file(onboarding_client, workspace):
+    client, _, _ = onboarding_client
+    content = b"Sensitive personal career data"
+    original_hash = hashlib.sha256(content).hexdigest()
+    original_dir = workspace / ".document-originals" / original_hash
+    original_dir.mkdir(parents=True)
+    (original_dir / "career.txt").write_bytes(content)
+    state = empty_state()
+    state["optional_sources"] = [{"text": "fact", "revision": "rev", "kind": "career fact",
+                                   "filename": "career.txt", "original_hash": original_hash, "warnings": []}]
+    store = OnboardingStore(workspace)
+    revision = store.save(state, "")
+    assert original_dir.is_dir()
+
+    response = client.post("/onboarding/sources/remove", data={
+        "revision": revision, "original_hash": original_hash, "purge": "on",
+    }, follow_redirects=False)
+    assert response.status_code == 303
+    assert not original_dir.exists()
+    assert store.read()[0]["optional_sources"] == []
+
+
+def test_duplicate_source_at_cap_replaces_instead_of_rejecting(onboarding_client, workspace):
+    client, _, _ = onboarding_client
+    store = OnboardingStore(workspace)
+    state = empty_state()
+    duplicate_text = "This exact text will be re-uploaded"
+    duplicate_hash = hashlib.sha256(duplicate_text.encode()).hexdigest()
+    state["optional_sources"] = [
+        {"text": f"source {i}", "revision": f"rev{i}", "kind": "career fact",
+         "filename": f"file{i}.txt", "original_hash": f"hash{i}", "warnings": []}
+        for i in range(15)
+    ] + [{"text": duplicate_text, "revision": "rev15", "kind": "career fact",
+          "filename": "file15.txt", "original_hash": duplicate_hash, "warnings": []}]
+    revision = store.save(state, "")
+    response = client.post("/onboarding/sources", data={
+        "revision": revision, "kind": "voice sample", "pasted": duplicate_text,
+    }, follow_redirects=False)
+    assert response.status_code == 303
+    updated = store.read()[0]["optional_sources"]
+    assert len(updated) == 16
+    replaced = next(s for s in updated if s["original_hash"] == duplicate_hash)
+    assert replaced["kind"] == "voice sample"
+
+
+def test_new_source_at_cap_is_rejected(onboarding_client, workspace):
+    """Non-duplicate source at cap should be rejected with 400."""
+    client, _, _ = onboarding_client
+    store = OnboardingStore(workspace)
+    state = empty_state()
+    state["optional_sources"] = [
+        {"text": f"source {i}", "revision": f"rev{i}", "kind": "career fact",
+         "filename": f"file{i}.txt", "original_hash": f"hash{i}", "warnings": []}
+        for i in range(16)
+    ]
+    revision = store.save(state, "")
+    response = client.post("/onboarding/sources", data={
+        "revision": revision, "kind": "voice sample", "pasted": "brand new text not in sources",
+    })
+    assert response.status_code == 400
+    assert "At most 16" in response.text
+    assert len(store.read()[0]["optional_sources"]) == 16
+
+
+def test_add_source_with_overlong_filename_returns_400(onboarding_client, workspace):
+    client, _, _ = onboarding_client
+    store = OnboardingStore(workspace)
+    _, revision = store.read()
+    response = client.post("/onboarding/sources", data={
+        "revision": revision, "kind": "career fact",
+    }, files={"file": ("x" * 300 + ".txt", b"content")})
+    assert response.status_code == 400
+    assert "original" in response.text.lower() or "filename" in response.text.lower() or "error" in response.text.lower()
+
+
+def test_onboarding_corrupt_history_failure_does_not_publish_grimoire(onboarding_client, workspace):
+
+    client, _, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    _draft_onboarding(client, workspace)
+    state, revision = OnboardingStore(workspace).read()
+    original = (workspace / "grimoire.md").read_bytes()
+    digest = hashlib.sha256(state["draft"].encode()).hexdigest()
+    history = workspace / ".document-history" / "grimoire.md"
+    history.mkdir(parents=True)
+    (history / f"{digest}.md").write_bytes(b"Corrupt immutable history")
+    response = client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"], "draft": state["draft"]})
+    assert response.status_code == 400 and "immutable" in response.text.lower()
+    assert (workspace / "grimoire.md").read_bytes() == original
+
+
+@pytest.mark.parametrize("filename,content,warning", [
+    ("note.docx", _docx('<w:p><w:r><w:t>Use clear language.</w:t></w:r></w:p>'), None),
+    ("note.pdf", _pdf("Source text", ""), "Page 2 has no extractable text"),
+])
+def test_onboarding_real_optional_formats_keep_extraction_warnings(onboarding_client, workspace, filename, content, warning):
+    client, boundary, _ = onboarding_client
+    response = client.post("/onboarding/sources", data={"kind": "voice sample"}, files={"file": (filename, content)}, follow_redirects=False)
+    assert response.status_code == 303
+    state, _ = OnboardingStore(workspace).read()
+    assert state["optional_sources"][0]["filename"] == filename
+    if warning:
+        page = client.get("/onboarding")
+        assert warning in page.text
+        assert state["optional_sources"][0]["warnings"]
+    assert not boundary.calls
+
+
+def test_onboarding_deliberate_local_review_repairs_model_status_without_another_call(onboarding_client, workspace):
+    sentence = "Built an internal service template adopted by 9 teams."
+    client, boundary, _ = onboarding_client
+    payload = _result().structured_output
+    payload["sections"][0]["items"][0].update(text=sentence, quote=sentence, kind="fact", source_id="answer.examples L1", status="implemented")
+    boundary.messages = [_result(payload=payload)]
+    assert _review_onboarding(client, workspace, examples=sentence).status_code == 303
+    assert _draft_onboarding(client, workspace).status_code == 303
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    assert state["claims"][0]["label"] == "needs review"
+    assert client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"], "draft": state["draft"]}).status_code == 422
+    response = client.post("/onboarding/review-draft", data={"revision": revision, "draft": state["draft"]}, follow_redirects=False)
+    assert response.status_code == 303
+    state, revision = store.read()
+    assert state["claims"][0]["status"] == "unknown"
+    assert state["claims"][0]["label"] == "user-attested" and state["claims"][0]["flags"] == []
+    assert client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"], "draft": state["draft"]}, follow_redirects=False).status_code == 303
+    assert sentence in DocumentStore(workspace).read("grimoire.md")
+    assert len(boundary.calls) == 1
+
+
+@pytest.mark.parametrize("problem", ["stale", "changed-master", "oversize"])
+def test_onboarding_local_review_preserves_submitted_draft_on_failed_guard(onboarding_client, workspace, problem):
+    client, boundary, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    _draft_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    draft = state["draft"] + "\n- User recovery text.\n"
+    if problem == "stale":
+        revision = "stale"
+    elif problem == "changed-master":
+        (workspace / "master-resume.md").write_text("Changed master source")
+    else:
+        draft += "- " + "x" * 8193
+    response = client.post("/onboarding/review-draft", data={"revision": revision, "draft": draft})
+    assert response.status_code == (400 if problem == "oversize" else 409)
+    assert "User recovery text" in response.text
+    assert store.read()[0]["draft"] == state["draft"]
+    assert len(boundary.calls) == 1
+
+
+@pytest.mark.parametrize("source_text,clipped", [
+    ("I have not shipped the release.", "shipped the release."),
+    ("The team, not I, built the service.", "I, built the service."),
+])
+def test_onboarding_local_review_cannot_accept_clipped_fact(onboarding_client, workspace, source_text, clipped):
+    client, boundary, _ = onboarding_client
+    payload = _result().structured_output
+    payload["sections"][0]["items"][0].update(text=source_text, quote=source_text, kind="fact", source_id="answer.examples L1", status="unknown")
+    boundary.messages = [_result(payload=payload)]
+    _review_onboarding(client, workspace, examples=source_text)
+    _draft_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    original = DocumentStore(workspace).read("grimoire.md")
+    draft = state["draft"].replace(source_text, clipped)
+    assert client.post("/onboarding/review-draft", data={"revision": revision, "draft": draft}, follow_redirects=False).status_code == 303
+    state, revision = store.read()
+    assert state["claims"][0]["label"] == "needs review"
+    response = client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"], "draft": draft, "attest_edits": "true"})
+    assert response.status_code == 422 and "voice samples and edit attestation cannot support" in response.text
+    assert DocumentStore(workspace).read("grimoire.md") == original
+    assert len(boundary.calls) == 1
+
+
+def test_onboarding_direct_acceptance_persists_edited_draft_ledger_and_current_revision(onboarding_client, workspace):
+    client, boundary, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    _draft_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    edited = state["draft"].replace("Use direct language.", "Use concise language.").replace("- Avoid hype.\n", "").replace("\n", "\r\n")
+    response = client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"],
+                           "draft": edited, "attest_edits": "true"}, follow_redirects=False)
+    assert response.status_code == 303
+    accepted, current = store.read()
+    documents = DocumentStore(workspace)
+    assert accepted["draft"] == documents.read("grimoire.md") == edited
+    assert accepted["grimoire_revision"] == documents.revision("grimoire.md")
+    assert accepted["proposal"] == state["proposal"]
+    assert {claim["text"] for claim in accepted["claims"]} == {
+        line.removeprefix("- ") for line in edited.splitlines() if line.startswith("- ")
+    }
+    page = client.get("/onboarding?saved=true")
+    assert "Grimoire saved" in page.text
+    assert 'value="' + accepted["grimoire_revision"] + '"' in page.text
+    revised = edited.replace("Use concise language.", "Use clear language.")
+    assert client.post("/onboarding/accept", data={"revision": current, "grimoire_revision": accepted["grimoire_revision"],
+                       "draft": revised, "attest_edits": "true"}, follow_redirects=False).status_code == 303
+    assert store.read()[0]["draft"] == documents.read("grimoire.md") == revised
+    assert len(boundary.calls) == 1
+
+
+@pytest.mark.parametrize("failure", ["conflict", "history", "write"])
+def test_onboarding_state_failure_after_acceptance_preserves_grimoire_and_recovers_draft(onboarding_client, workspace, monkeypatch, failure):
+    client, boundary, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    _draft_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    edited = state["draft"].replace("Use direct language.", "Use concise language.")
+    replace = os.replace
+
+    def fail_onboarding_write(source, target):
+        if Path(target).name == "onboarding.json" and failure == "write":
+            raise OSError("onboarding publication failed")
+        replace(source, target)
+        if Path(target).name == "grimoire.md":
+            if failure == "conflict":
+                competing = {**state, "draft": "Newer onboarding draft"}
+                OnboardingStore(workspace).save(competing, revision)
+            elif failure == "history":
+                (workspace / ".document-history" / "onboarding.json" / f"{revision}.md").write_bytes(b"Corrupt onboarding history")
+
+    monkeypatch.setattr(os, "replace", fail_onboarding_write)
+    response = client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"],
+                           "draft": edited, "attest_edits": "true"}, follow_redirects=False)
+    assert response.status_code == (409 if failure == "conflict" else 400)
+    assert "The grimoire was saved, but its onboarding draft could not be saved" in response.text
+    assert "Use concise language." in response.text
+    assert "Grimoire saved." not in response.text
+    documents = DocumentStore(workspace)
+    assert documents.read("grimoire.md") == edited
+    assert state["grimoire_revision"] in documents.history("grimoire.md")
+    assert store.read()[0]["draft"] == ("Newer onboarding draft" if failure == "conflict" else state["draft"])
+    assert len(boundary.calls) == 1
+
+
+def test_onboarding_grimoire_publication_failure_preserves_source_and_saved_draft(onboarding_client, workspace, monkeypatch):
+    client, _, _ = onboarding_client
+    _review_onboarding(client, workspace)
+    _draft_onboarding(client, workspace)
+    store = OnboardingStore(workspace)
+    state, revision = store.read()
+    original = (workspace / "grimoire.md").read_bytes()
+    edited = state["draft"].replace("Use direct language.", "Use concise language.")
+    replace = os.replace
+
+    def fail_grimoire_write(source, target):
+        if Path(target).name == "grimoire.md":
+            raise OSError("grimoire publication failed")
+        replace(source, target)
+
+    monkeypatch.setattr(os, "replace", fail_grimoire_write)
+    response = client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"],
+                           "draft": edited, "attest_edits": "true"}, follow_redirects=False)
+    assert response.status_code == 400 and "grimoire publication failed" in response.text
+    assert "Use concise language." in response.text
+    assert (workspace / "grimoire.md").read_bytes() == original
+    assert store.read() == (state, revision)
+
+
+def test_missing_optional_evidence_composes_and_tracks_later_source_additions(workspace):
+    _prepare_picked_live_workspace(workspace)
+    finals = FinalDocuments(workspace, SLUG)
+    evidence = finals.app_dir / "evidence.md"
+    evidence.unlink()
+
+    composed = finals.compose("", "")
+
+    assert composed.complete
+    assert not composed.stale
+    assert "I led the billing migration end to end." in composed.cover_text
+    assert "Led the billing platform migration to event-driven services." in composed.resume_text
+    absent_fingerprint = finals.fingerprint()
+    evidence.write_text("")
+    assert finals.fingerprint() == absent_fingerprint
+    assert not finals.state().stale
+
+    evidence.write_text("- Observed an additional billing result.\n")
+    assert finals.fingerprint() != absent_fingerprint
+    assert finals.state().stale
+    assert finals.state().resume_text == composed.resume_text
+
+
+def test_unreadable_optional_evidence_does_not_become_empty_input(workspace):
+    _prepare_picked_live_workspace(workspace)
+    finals = FinalDocuments(workspace, SLUG)
+    evidence = finals.app_dir / "evidence.md"
+    evidence.unlink()
+    evidence.mkdir()
+
+    with pytest.raises(IsADirectoryError):
+        finals.compose("", "")
+
+    assert not finals.state().complete
+
+
+def test_missing_required_source_still_refuses_composition(workspace):
+    _prepare_picked_live_workspace(workspace)
+    finals = FinalDocuments(workspace, SLUG)
+    (workspace / "master-resume.md").unlink()
+
+    with pytest.raises(FileNotFoundError):
+        finals.compose("", "")
+
+    assert not finals.state().complete
