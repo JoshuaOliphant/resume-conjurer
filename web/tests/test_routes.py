@@ -11,19 +11,6 @@ from fastapi.testclient import TestClient
 from markupsafe import escape
 from test_document_import import _docx, _pdf, _two_column_pdf
 
-
-class SameOriginClient(TestClient):
-    """TestClient that adds sec-fetch-site: same-origin to all POST requests.
-
-    When the test explicitly passes headers, the default is not applied,
-    allowing cross-origin rejection tests.
-    """
-
-    def post(self, *args, headers=None, **kwargs):
-        if headers is not None:
-            return super().post(*args, headers=headers, **kwargs)
-        return super().post(*args, headers={"sec-fetch-site": "same-origin"}, **kwargs)
-
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.scripts_path import ensure_scripts_on_path
 from app.adapters.verification_fake import NoVerificationPort
@@ -41,6 +28,19 @@ ensure_scripts_on_path()
 
 import verify  # noqa: E402
 from composer import resume_unit_ids  # noqa: E402
+
+
+class SameOriginClient(TestClient):
+    """TestClient that adds sec-fetch-site: same-origin to all POST requests.
+
+    When the test explicitly passes headers, the default is not applied,
+    allowing cross-origin rejection tests.
+    """
+
+    def post(self, *args, headers=None, **kwargs):
+        if headers is not None:
+            return super().post(*args, headers=headers, **kwargs)
+        return super().post(*args, headers={"sec-fetch-site": "same-origin"}, **kwargs)
 
 
 @pytest.fixture

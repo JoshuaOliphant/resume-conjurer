@@ -15,23 +15,6 @@ from test_document_import import _docx, _pdf
 from test_onboarding import ANSWERS
 from test_onboarding_sdk import SdkBoundary, _result
 
-
-class SameOriginClient(TestClient):
-    """TestClient that adds sec-fetch-site: same-origin to all POST requests.
-
-    Modern browsers send this header for same-origin form submissions, and the
-    cross-origin protection requires it. Test clients normally omit it, so this
-    wrapper ensures test POST requests pass the same-origin check.
-
-    When the test explicitly passes headers (even empty dict), the default is not
-    applied, allowing cross-origin rejection tests.
-    """
-
-    def post(self, *args, headers=None, **kwargs):
-        if headers is not None:
-            return super().post(*args, headers=headers, **kwargs)
-        return super().post(*args, headers={"sec-fetch-site": "same-origin"}, **kwargs)
-
 from app.adapters.composition import ScriptCompositionPort
 from app.adapters.finals_fs import FinalDocuments
 from app.adapters.generation_fake import FakeGenerationPort
@@ -53,6 +36,24 @@ from app.onboarding import build_prompt, empty_state
 from app.onboarding_sdk import OnboardingSdk
 from app.onboarding_store import OnboardingStore
 from app.runs import RunManager, RunStatus
+
+
+class SameOriginClient(TestClient):
+    """TestClient that adds sec-fetch-site: same-origin to all POST requests.
+
+    Modern browsers send this header for same-origin form submissions, and the
+    cross-origin protection requires it. Test clients normally omit it, so this
+    wrapper ensures test POST requests pass the same-origin check.
+
+    When the test explicitly passes headers (even empty dict), the default is not
+    applied, allowing cross-origin rejection tests.
+    """
+
+    def post(self, *args, headers=None, **kwargs):
+        if headers is not None:
+            return super().post(*args, headers=headers, **kwargs)
+        return super().post(*args, headers={"sec-fetch-site": "same-origin"}, **kwargs)
+
 
 SLUG = "globex-staff-platform"
 FIXTURE = Path(__file__).parent / "fixtures" / "workspace"

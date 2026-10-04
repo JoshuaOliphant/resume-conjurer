@@ -16,6 +16,8 @@ Review is bounded to 256 excerpts, 8 KiB per excerpt, 64 KiB source text, at mos
 
 Uploaded source files are stored under `.document-originals/<sha>/` keyed by content hash. Onboarding state (`onboarding.json`) is snapshotted to `.document-history/onboarding.json/` on every save. Removing a source from the onboarding page removes it from active state but does not delete the original file or its revision history by default.
 
-To permanently delete an uploaded source's original file, use the purge option when removing the source. This deletes the `.document-originals/<sha>/` directory for that file. Onboarding revision history under `.document-history/` is retained for recovery and is not automatically purged; delete these manually if needed.
+To permanently delete an uploaded source's original file, use the purge option when removing the source. This deletes the `.document-originals/<sha>/` directory for that file.
+
+**History snapshots:** Revision history under `.document-history/` is intentionally retained for recovery. Prior snapshots of `onboarding.json` that included a removed source's text are not automatically purged when the source is removed. This preserves the user's ability to recover accidentally removed content. Complete history purge—including all snapshots containing personal data—is deferred to account deletion, where the entire user storage partition is removed (see PR #33 design). For local single-user deployments without account management, delete `.document-history/` manually if history purge is needed before that infrastructure exists.
 
 No TypeSafe request occurs in this flow. Private career excerpts require separate, precise consent before any future Jev support check. Source-linked onboarding text is not generation evidence: factual additions must still enter master/evidence and be checked by the normal tailoring pipeline.
