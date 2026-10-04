@@ -79,6 +79,7 @@ class ScriptCompositionPort:
                     results[filename] = "skipped: unsupported export format"
                     continue
                 temporary_path: Path | None = None
+                target_path = app_dir / filename
                 try:
                     descriptor, temporary = tempfile.mkstemp(
                         prefix=f".{document}.", suffix=f".{format_name}", dir=app_dir
@@ -86,11 +87,13 @@ class ScriptCompositionPort:
                     temporary_path = Path(temporary)
                     os.close(descriptor)
                     export_document(markdown, format_name, temporary_path)
-                    os.replace(temporary_path, app_dir / filename)
+                    os.replace(temporary_path, target_path)
                 except (ExportError, OSError) as exc:
                     results[filename] = f"skipped: {exc}"
+                    target_path.unlink(missing_ok=True)
                 except Exception as exc:
                     results[filename] = f"skipped: renderer failed ({type(exc).__name__})"
+                    target_path.unlink(missing_ok=True)
                 else:
                     results[filename] = "written"
                 finally:

@@ -181,13 +181,14 @@ def test_document_import_previews_without_overwriting_and_saves_explicitly(docum
     digest = hashlib.sha256(content).hexdigest()
     assert (document_store.root / ".document-originals" / digest / "resume.md").read_bytes() == content
 
+    valid_resume = "## Experience\n\n### Acme -- 2020-2024\n\n**Engineer** -- 2020-2024\n\n- Checked claim\n"
     saved = document_client.post("/documents/save", data={
-        "document_name": "master-resume.md", "text": "# Imported\n- Checked claim\n",
+        "document_name": "master-resume.md", "text": valid_resume,
         "revision": revision, "import_key": digest,
     }, follow_redirects=False)
     assert saved.status_code == 303
     assert saved.headers["location"] == "/documents?name=master-resume.md&saved=true"
-    assert document_store.read("master-resume.md") == "# Imported\n- Checked claim\n"
+    assert document_store.read("master-resume.md") == valid_resume
     reloaded = document_client.get(saved.headers["location"])
     assert "Saved. Review existing applications" in reloaded.text
     assert "- Checked claim" in reloaded.text
@@ -622,10 +623,11 @@ def test_upload_limit_stops_when_client_disconnects():
 
 
 def test_document_save_conflict_preserves_submitted_text(document_client, document_store):
-    revision = document_store.revision("master-resume.md")
-    document_store.save("master-resume.md", "# Another tab\n", revision)
+    """Use grimoire.md to test conflict handling without master resume validation."""
+    revision = document_store.revision("grimoire.md")
+    document_store.save("grimoire.md", "# Another tab\n", revision)
     response = document_client.post("/documents/save", data={
-        "document_name": "master-resume.md", "text": "# My unsaved claim\n", "revision": revision,
+        "document_name": "grimoire.md", "text": "# My unsaved claim\n", "revision": revision,
     })
     assert response.status_code == 409
     assert "changed in another tab" in response.text
@@ -633,7 +635,7 @@ def test_document_save_conflict_preserves_submitted_text(document_client, docume
     assert "Reload saved document" in response.text
     assert "Review the imported text" not in response.text
     assert "# My unsaved claim" in response.text
-    assert document_store.read("master-resume.md") == "# Another tab\n"
+    assert document_store.read("grimoire.md") == "# Another tab\n"
 
 
 @pytest.mark.parametrize("text", ["  \n  ", "x" * (2 * 1024 * 1024 + 1)], ids=["whitespace", "too-large-edit"])
@@ -653,18 +655,51 @@ def test_document_save_rejects_invalid_target(document_client, document_store):
     assert document_store.read("grimoire.md") == "# Voice\nWrite plainly.\n"
 
 
-def test_document_mutations_allow_same_site_requests(document_client, document_store):
+def test_document_save_rejects_malformed_master_resume(document_client, document_store):
+    """Master resume without usable composer targets should be rejected."""
     revision = document_store.revision("master-resume.md")
+    malformed = "# Summary\nJust a summary with no experience section at all.\n"
     response = document_client.post("/documents/save", data={
-        "document_name": "master-resume.md", "text": "# Same site\n", "revision": revision,
+        "document_name": "master-resume.md", "text": malformed, "revision": revision,
+    })
+    assert response.status_code == 422
+    assert "no usable composer targets" in response.text
+    assert "normalization editor" in response.text
+    assert document_store.read("master-resume.md") != malformed
+
+
+def test_document_save_accepts_valid_master_resume(document_client, document_store):
+    """Master resume with valid structure should be saved."""
+    revision = document_store.revision("master-resume.md")
+    valid = """# Experience
+
+### Acme Corp -- 2020-2024
+
+**Engineer** -- 2020-2024
+
+- Built the billing system.
+"""
+    response = document_client.post("/documents/save", data={
+        "document_name": "master-resume.md", "text": valid, "revision": revision,
+    }, follow_redirects=False)
+    assert response.status_code == 303
+    assert document_store.read("master-resume.md") == valid
+
+
+def test_document_mutations_allow_same_site_requests(document_client, document_store):
+    """Use grimoire.md to test CORS without master resume validation."""
+    revision = document_store.revision("grimoire.md")
+    response = document_client.post("/documents/save", data={
+        "document_name": "grimoire.md", "text": "# Same site\n", "revision": revision,
     }, headers={"sec-fetch-site": "same-site"}, follow_redirects=False)
     assert response.status_code == 303
 
 
 def test_document_mutations_allow_matching_origin_without_fetch_site(document_client, document_store):
-    revision = document_store.revision("master-resume.md")
+    """Use grimoire.md to test CORS without master resume validation."""
+    revision = document_store.revision("grimoire.md")
     response = document_client.post("/documents/save", data={
-        "document_name": "master-resume.md", "text": "# Matching origin\n", "revision": revision,
+        "document_name": "grimoire.md", "text": "# Matching origin\n", "revision": revision,
     }, headers={"origin": "http://testserver"}, follow_redirects=False)
     assert response.status_code == 303
 

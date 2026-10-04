@@ -374,3 +374,22 @@ def test_rejects_password_encrypted_pdf() -> None:
     writer.write(output)
     with pytest.raises(DocumentImportError, match="Password-encrypted"):
         import_document("resume.pdf", output.getvalue())
+
+
+def test_normalize_handles_runtime_error_from_experience_lines(monkeypatch) -> None:
+    """The second resume_unit_ids call (for experience_lines) is wrapped in try/except."""
+    call_count = 0
+
+    def failing_on_second_call(text: str):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("Simulated failure on experience lines")
+        return ("resume.summary.bullet_1",)
+
+    monkeypatch.setattr("app.document_normalize.resume_unit_ids", failing_on_second_call)
+    valid_resume = "## Experience\n\n### Acme -- 2020-2024\n\n**Engineer** -- 2020-2024\n\n- Did something\n"
+    result = normalize_master_resume(valid_resume)
+    assert call_count == 2
+    assert result.targets == ("resume.summary.bullet_1",)
+    assert not result.ready

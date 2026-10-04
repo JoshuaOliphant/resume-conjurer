@@ -118,11 +118,12 @@ def test_live_start_renders_the_progress_page(live_client):
 
 
 def test_source_save_finishes_before_generation_can_start(workspace, monkeypatch):
+    """Use grimoire.md to test save/generation concurrency without master resume validation."""
     repo = FsWorkspaceRepository(workspace)
     gen = FakeGenerationPort()
     manager = RunManager(repo=repo, gen=gen, verifier=NoVerificationPort())
     documents = DocumentStore(workspace)
-    revision = documents.revision("master-resume.md")
+    revision = documents.revision("grimoire.md")
     saving = Event()
     release_save = Event()
     start_called = Event()
@@ -143,7 +144,7 @@ def test_source_save_finishes_before_generation_can_start(workspace, monkeypatch
     app = create_app(repo=repo, gen=gen, run_manager=manager, documents=documents, live=True)
     with SameOriginClient(app) as client, ThreadPoolExecutor(max_workers=2) as workers:
         save = workers.submit(client.post, "/documents/save", data={
-            "document_name": "master-resume.md", "text": "# Saved before generation\n", "revision": revision,
+            "document_name": "grimoire.md", "text": "# Saved before generation\n", "revision": revision,
         }, follow_redirects=False)
         assert saving.wait(5)
         start = workers.submit(client.post, "/start", data={"jd": "New JD"})
@@ -154,7 +155,7 @@ def test_source_save_finishes_before_generation_can_start(workspace, monkeypatch
         assert save.result(timeout=5).status_code == 303
         assert start.result(timeout=5).status_code == 200
         assert start_called.is_set()
-    assert documents.read("master-resume.md") == "# Saved before generation\n"
+    assert documents.read("grimoire.md") == "# Saved before generation\n"
 
 
 def test_repeated_start_does_not_change_job_description_during_generation(live_client, workspace):
@@ -1494,6 +1495,59 @@ def test_remove_source_with_purge_deletes_original_file(onboarding_client, works
     assert response.status_code == 303
     assert not original_dir.exists()
     assert store.read()[0]["optional_sources"] == []
+
+
+def test_duplicate_source_at_cap_replaces_instead_of_rejecting(onboarding_client, workspace):
+    client, _, _ = onboarding_client
+    store = OnboardingStore(workspace)
+    state = empty_state()
+    duplicate_text = "This exact text will be re-uploaded"
+    duplicate_hash = hashlib.sha256(duplicate_text.encode()).hexdigest()
+    state["optional_sources"] = [
+        {"text": f"source {i}", "revision": f"rev{i}", "kind": "career fact",
+         "filename": f"file{i}.txt", "original_hash": f"hash{i}", "warnings": []}
+        for i in range(15)
+    ] + [{"text": duplicate_text, "revision": "rev15", "kind": "career fact",
+          "filename": "file15.txt", "original_hash": duplicate_hash, "warnings": []}]
+    revision = store.save(state, "")
+    response = client.post("/onboarding/sources", data={
+        "revision": revision, "kind": "voice sample", "pasted": duplicate_text,
+    }, follow_redirects=False)
+    assert response.status_code == 303
+    updated = store.read()[0]["optional_sources"]
+    assert len(updated) == 16
+    replaced = next(s for s in updated if s["original_hash"] == duplicate_hash)
+    assert replaced["kind"] == "voice sample"
+
+
+def test_new_source_at_cap_is_rejected(onboarding_client, workspace):
+    """Non-duplicate source at cap should be rejected with 400."""
+    client, _, _ = onboarding_client
+    store = OnboardingStore(workspace)
+    state = empty_state()
+    state["optional_sources"] = [
+        {"text": f"source {i}", "revision": f"rev{i}", "kind": "career fact",
+         "filename": f"file{i}.txt", "original_hash": f"hash{i}", "warnings": []}
+        for i in range(16)
+    ]
+    revision = store.save(state, "")
+    response = client.post("/onboarding/sources", data={
+        "revision": revision, "kind": "voice sample", "pasted": "brand new text not in sources",
+    })
+    assert response.status_code == 400
+    assert "At most 16" in response.text
+    assert len(store.read()[0]["optional_sources"]) == 16
+
+
+def test_add_source_with_overlong_filename_returns_400(onboarding_client, workspace):
+    client, _, _ = onboarding_client
+    store = OnboardingStore(workspace)
+    _, revision = store.read()
+    response = client.post("/onboarding/sources", data={
+        "revision": revision, "kind": "career fact",
+    }, files={"file": ("x" * 300 + ".txt", b"content")})
+    assert response.status_code == 400
+    assert "original" in response.text.lower() or "filename" in response.text.lower() or "error" in response.text.lower()
 
 
 def test_onboarding_corrupt_history_failure_does_not_publish_grimoire(onboarding_client, workspace):

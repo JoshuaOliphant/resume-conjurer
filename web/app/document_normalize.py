@@ -124,7 +124,10 @@ def normalize_master_resume(text: str) -> NormalizedMaster:
         targets = resume_unit_ids(draft)
     except RuntimeError:
         targets = ()
-    role_targets = resume_unit_ids("\n".join(experience_lines)) if saw_experience else ()
+    try:
+        role_targets = resume_unit_ids("\n".join(experience_lines)) if saw_experience else ()
+    except RuntimeError:
+        role_targets = ()
     if role_bullets > len(role_targets):
         corrections.append("Some role bullets have no unambiguous composer target; correct the role hierarchy.")
     if not targets:

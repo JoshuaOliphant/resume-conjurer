@@ -201,6 +201,12 @@ def document_router(store: DocumentStore | None, templates: Jinja2Templates, run
     def save(request: Request, document_name: str = Form(...), text: str = Form(...), revision: str = Form(...)):
         with source_lock:
             repository = writable(request)
+            if document_name == "master-resume.md":
+                normalization = normalize_master_resume(text)
+                if not normalization.targets:
+                    return render(request, document_name, status=422,
+                        error="Master resume has no usable composer targets. Use the normalization editor to correct the structure.",
+                        import_key="recovery", import_text=text, revision=revision)
             try:
                 repository.save(document_name, text, revision)
             except ConflictError:

@@ -107,9 +107,12 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
                 filename = file.filename if has_file else "pasted.txt"
                 content = file.file.read(MAX_DOCUMENT_BYTES + 1) if has_file else pasted.encode("utf-8")
                 imported = import_document(filename or "", content)
-                if len(imported.text.encode()) > MAX_REVIEW_BYTES or len(state["optional_sources"]) >= 16:
-                    raise ValueError("Keep optional sources below 64 KiB and at most 16 files. Paste a shorter excerpt.")
+                if len(imported.text.encode()) > MAX_REVIEW_BYTES:
+                    raise ValueError("Keep optional sources below 64 KiB. Paste a shorter excerpt.")
                 original_hash = hashlib.sha256(content).hexdigest()
+                is_duplicate = any(item["original_hash"] == original_hash for item in state["optional_sources"])
+                if len(state["optional_sources"]) >= 16 and not is_duplicate:
+                    raise ValueError("At most 16 optional sources. Remove one before adding another.")
                 source = {"text": imported.text, "kind": kind, "filename": filename,
                           "revision": hashlib.sha256(imported.text.encode()).hexdigest(),
                           "original_hash": original_hash, "warnings": list(imported.warnings)}
@@ -117,7 +120,7 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
                 source_store.store_original(filename or "", content)
                 state["optional_sources"] = optional
                 draft_store.save(state, revision)
-            except ValueError as exc:
+            except (ValueError, OSError) as exc:
                 return render(request, state=state, revision=revision, status=400, error=str(exc))
             finally:
                 if file is not None:

@@ -137,9 +137,10 @@ def test_export_reports_source_and_format_failures(port: ScriptCompositionPort, 
     assert port.export(SLUG) == {}
 
 
-def test_failed_export_preserves_previous_artifact(
+def test_failed_export_removes_stale_artifact(
     port: ScriptCompositionPort, workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """When export fails, any existing artifact should be removed to prevent stale files."""
     app_dir = workspace / "applications" / SLUG
     (app_dir / "resume.md").write_text("# Resume", encoding="utf-8")
     old_artifact = app_dir / "resume.pdf"
@@ -151,13 +152,14 @@ def test_failed_export_preserves_previous_artifact(
 
     monkeypatch.setattr("app.adapters.composition.export_document", failed_renderer)
     assert port.export(SLUG, ("pdf",)) == {"resume.pdf": "skipped: renderer failed (RuntimeError)"}
-    assert old_artifact.read_bytes() == b"previous"
+    assert not old_artifact.exists(), "stale artifact should be removed on failed export"
     assert list(app_dir.glob(".resume.*.pdf")) == []
 
 
-def test_failed_publish_preserves_previous_artifact(
+def test_failed_publish_removes_stale_artifact(
     port: ScriptCompositionPort, workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """When os.replace fails, any existing artifact should be removed to prevent stale files."""
     app_dir = workspace / "applications" / SLUG
     (app_dir / "resume.md").write_text("# Resume", encoding="utf-8")
     old_artifact = app_dir / "resume.docx"
@@ -168,7 +170,7 @@ def test_failed_publish_preserves_previous_artifact(
 
     monkeypatch.setattr("app.adapters.composition.os.replace", failed_replace)
     assert port.export(SLUG, ("docx",)) == {"resume.docx": "skipped: publish failed"}
-    assert old_artifact.read_bytes() == b"previous"
+    assert not old_artifact.exists(), "stale artifact should be removed on failed publish"
     assert list(app_dir.glob(".resume.*.docx")) == []
 
 
