@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, query
-from claude_agent_sdk.types import ResultMessage
+from claude_agent_sdk.types import AssistantMessage, ResultMessage
 
 from app.adapters.generation_sdk import SdkGenerationPort, build_variant_prompt
 from app.adapters.scripts_path import ensure_scripts_on_path
@@ -448,22 +448,27 @@ def sdk_judge(model: str) -> Judge:  # pragma: no cover - live: calls Claude thr
             system_prompt=system,
             tools=[],
             setting_sources=[],
+            # Without this the CLI loads every user-level MCP server's tool schemas, ~158k tokens.
+            strict_mcp_config=True,
             output_format={"type": "json_schema", "schema": grading.JUDGE_SCHEMA},
         )
         result = None
+        answering: set[str] = set()
         async for message in query(prompt=prompt, options=options):
-            if isinstance(message, ResultMessage):
+            if isinstance(message, AssistantMessage):
+                answering.add(message.model)
+            elif isinstance(message, ResultMessage):
                 result = message
         if result is None or not isinstance(result.structured_output, dict):
             raise RuntimeError(f"judge returned no structured output: {result!r}")
-        served = sorted(result.model_usage or {})
-        if not served or any(not name.startswith(model) for name in served):
-            raise RuntimeError(f"judge asked for {model}, served {served}")
+        if not answering or any(not name.startswith(model) for name in answering):
+            raise RuntimeError(f"judge asked for {model}, answered by {sorted(answering)}")
         return {
             **result.structured_output,
             "model": model,
             "usage": result.usage or {},
             "cost_usd": result.total_cost_usd,
+            "model_usage": result.model_usage or {},
         }
 
     return judge

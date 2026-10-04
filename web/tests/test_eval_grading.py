@@ -31,7 +31,7 @@ def _answers(
     trace=True,
 ):
     answers = {
-        "pool": {"unstated": {"noul": unstated}, "adoption_overclaim": {"noul": adoption}},
+        "pool": {"unstated": {"noul": unstated}},
         "voice": {rule: {"noul": voice} for rule in grading.VOICE_QUESTIONS},
     }
     if trace:
@@ -39,6 +39,7 @@ def _answers(
             "relation": {"choice": relation, "confidence": confidence},
             "delivery_overclaim": {"noul": delivery},
             "ownership_overclaim": {"noul": ownership},
+            "adoption_overclaim": {"noul": adoption},
         }
     return answers
 
@@ -47,9 +48,9 @@ def test_cited_variant_gets_trace_pool_and_voice_requests_each_with_only_its_sta
     trace, pool, voice = grading.jev_requests(CLAIM, CITED, POOL)
 
     assert trace.name == "trace" and trace.state == {"claim": CLAIM, "evidence": CITED}
-    assert set(trace.questions) == {"relation", "delivery_overclaim", "ownership_overclaim"}
+    assert set(trace.questions) == {"relation", "delivery_overclaim", "ownership_overclaim", "adoption_overclaim"}
     assert pool.name == "pool" and pool.state == {"claim": CLAIM, "evidence": POOL}
-    assert set(pool.questions) == {"unstated", "adoption_overclaim"}
+    assert set(pool.questions) == {"unstated"}
     assert voice.name == "voice" and voice.state == {"claim": CLAIM}
     assert set(voice.questions) == set(grading.VOICE_QUESTIONS)
 
