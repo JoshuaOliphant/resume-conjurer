@@ -1,712 +1,677 @@
 # Design: Authentication, Per-User Isolation, and Account Deletion
 
-This document designs the authentication, per-user storage isolation, and account data
-deletion mechanisms for the resume-conjurer web app. It builds on the product constraints
-in `PRODUCT.md`, the hexagonal architecture in `web/BACKEND.md`, and the current local
-single-user implementation.
+How the resume-conjurer web app moves from one local workspace to many signed-in users whose
+data is isolated, deletable, and exportable. It builds on `PRODUCT.md`, `web/BACKEND.md`, and
+`main` as of `e108c44` (PR #32 merged: onboarding, uploads, document history, finals, exports).
 
-**Related work:**
-- Parent issue: #22 (release gates: "resolve per-user identity, storage, authorization, and isolation")
-- Draft PR #32 adds onboarding, uploads, document history, and exports
+**Related:** #22 (release gate: "resolve per-user identity, storage, authorization, and isolation").
 
-**Scope:** Design document only. Implementation will follow in separate PRs.
+**Scope:** design only. Implementation follows in separate PRs, one per phase.
 
----
-
-## Table of Contents
-
-1. [Context and Goals](#context-and-goals)
-2. [Authentication Options](#authentication-options)
-3. [Recommendation: OAuth with Passkey Option](#recommendation-oauth-with-passkey-option)
-4. [Session Model](#session-model)
-5. [Per-User Storage Partitioning](#per-user-storage-partitioning)
-6. [Migration of Existing Local Data](#migration-of-existing-local-data)
-7. [Account Deletion Flow](#account-deletion-flow)
-8. [Data Retention and Export](#data-retention-and-export)
-9. [Deployment Implications](#deployment-implications)
-10. [Threat Model](#threat-model)
-11. [Phased Implementation Plan](#phased-implementation-plan)
-12. [Open Questions](#open-questions)
+Line references are to `main` at `e108c44`, relative to `web/app/` unless stated.
 
 ---
 
-## Context and Goals
+## Contents
 
-The web app is currently a single-user, local-only tool:
-- No authentication or sessions
-- Hardcoded `SLUG = "globex-staff-platform"` at `web/app/main.py:25`
-- `CONJURER_WORKSPACE` env var points to a single workspace directory
-- CSRF protection via `Origin` / `Sec-Fetch-Site` header checking (no session tokens)
-
-**Goals for consumer launch:**
-
-1. **Login first:** Users authenticate before accessing their data
-2. **Per-user isolation:** Each user's career documents are invisible to others
-3. **Account deletion:** Users can delete all data tied to their account, including:
-   - Source documents (`master-resume.md`, `grimoire.md`)
-   - Document history (`.document-history/`)
-   - Uploaded originals (`.document-originals/`)
-   - Onboarding state (`onboarding.json`)
-   - Applications (`applications/<slug>/`) with JD, evidence, outline, variants, picks, finals
-   - Exports (PDFs, DOCX files)
+1. [Context and goals](#1-context-and-goals)
+2. [What multi-tenancy actually touches](#2-what-multi-tenancy-actually-touches)
+3. [Authentication](#3-authentication)
+4. [Sessions and CSRF](#4-sessions-and-csrf)
+5. [Per-user storage](#5-per-user-storage)
+6. [Per-user runtime state](#6-per-user-runtime-state)
+7. [Containing the agent](#7-containing-the-agent)
+8. [Cost and abuse controls](#8-cost-and-abuse-controls)
+9. [Account deletion](#9-account-deletion)
+10. [Data export](#10-data-export)
+11. [Adopting the existing local workspace](#11-adopting-the-existing-local-workspace)
+12. [Deployment](#12-deployment)
+13. [Threat model](#13-threat-model)
+14. [Phased plan](#14-phased-plan)
+15. [Decisions taken and questions left](#15-decisions-taken-and-questions-left)
 
 ---
 
-## Authentication Options
+## 1. Context and goals
 
-### Option A: OAuth 2.0 (Recommended)
+Today the app is one user, one workspace, one application:
 
-**Providers:** Google, GitHub, LinkedIn (most relevant for job seekers)
+- No authentication or sessions.
+- `SLUG = "globex-staff-platform"` is hardcoded at `main.py:40`.
+- `CONJURER_WORKSPACE` names the single workspace (`deps.py:30-43`).
+- Every adapter is built once, at import, against that workspace (`main.py:379-385`,
+  `deps.py:46-84`).
+- Mutations are guarded by an Origin/`Sec-Fetch-Site` allowlist (`main.py:73-82`, duplicated in
+  `document_routes.py` and `onboarding_routes.py`), but not every mutating route calls it.
 
-**Pros:**
-- No password storage or reset flows
-- Users already have accounts; reduces friction
-- LinkedIn OAuth aligns with job-seeker audience
-- Well-supported in FastAPI via `authlib` or `python-social-auth`
+**Goals for a consumer launch:**
 
-**Cons:**
-- Dependency on external providers (availability, ToS changes)
-- Requires provider app registration and callback handling
-- Some users distrust third-party OAuth for privacy reasons
+1. Users sign in before they see or change anything.
+2. One user's career data is unreachable by any other user, through HTTP **or through the agent**.
+3. A user can delete their account and every copy of their data the app controls.
+4. A user can export all of their data.
+5. Strangers cannot run up the model bill.
 
-**Implementation sketch:**
-```
-GET /auth/login -> redirect to provider
-GET /auth/callback -> validate code, create/lookup user, set session
-POST /auth/logout -> clear session
-```
-
-### Option B: Magic Links (Email-Based)
-
-**Flow:** User enters email, receives a signed link, clicks to log in.
-
-**Pros:**
-- No password to remember or store
-- Simple UX for infrequent users (job search is episodic)
-- Email is a natural identifier for job seekers
-
-**Cons:**
-- Requires email sending infrastructure (SMTP, SendGrid, SES)
-- Latency: user waits for email delivery
-- Email deliverability issues (spam filters, delays)
-- Links can be forwarded or intercepted
-
-### Option C: Username/Password
-
-**Pros:**
-- Self-contained, no external dependencies
-- Familiar pattern
-
-**Cons:**
-- Password storage (bcrypt/argon2), reset flows, rate limiting
-- Users reuse passwords; breach liability
-- More UI to build (signup, forgot password, change password)
-
-### Option D: Passkeys / WebAuthn
-
-**Pros:**
-- Phishing-resistant, no passwords
-- Modern UX on supported devices
-- No shared secrets to breach
-
-**Cons:**
-- Device-bound by default; recovery requires setup
-- Not universally supported (older browsers, enterprise lockdowns)
-- Requires a fallback auth method
+**Non-goals for this design:** multiple applications per user (the slug resolver), teams or
+sharing, admin impersonation, horizontal scaling.
 
 ---
 
-## Recommendation: OAuth with Passkey Option
+## 2. What multi-tenancy actually touches
 
-**Primary:** OAuth 2.0 with Google and GitHub (LinkedIn as a future option)
+Re-rooting the file stores is the easy part. These pieces of process-global state all assume one
+user and all have to change:
 
-**Rationale:**
-- Job seekers likely have Google or GitHub accounts
-- No password infrastructure to maintain
-- Fast onboarding (one click to sign in)
-- Aligns with "calm under pressure" principle: low friction
+| State | Where | Problem under many users |
+|---|---|---|
+| Adapters built at import | `main.py:379-385`, `deps.py:46-84` | One workspace for everyone |
+| Persistent variant client | `adapters/generation_sdk.py:225-236` | One long conversation; user B's request runs in a context holding user A's grimoire and resume |
+| `last_call` on the generation port | `adapters/generation_sdk.py:179` | Shared mutable metrics |
+| `RunManager._status/_tasks/_metrics` | `runs.py:54-56` | Keyed by slug only; same slug = collision |
+| `source_lock` | `main.py:69` | One user's edit blocks everyone |
+| `preview_tokens`, `warning_revision` | `document_routes.py:60-61` | Shared across users |
+| Onboarding `active` flag | `onboarding_routes.py:41` | Shared across users |
+| Fake repository picks | `adapters/workspace_fake.py:31` | Keyed by slug only |
+| Agent file tools | `adapters/generation_sdk.py:47,144-159` | `Read`/`Glob`/`Grep` allowed on any path |
+| SDK session transcripts | `~/.claude/projects/<encoded-cwd>/*.jsonl` | Full resume/grimoire/JD text, outside the workspace |
 
-**Secondary (Phase 2):** Passkey enrollment for returning users who want passwordless
-sign-in without OAuth. Not required for MVP.
-
-**Not recommended for MVP:** Magic links (email infra cost), username/password
-(security burden), LinkedIn OAuth (requires company verification for API access).
-
----
-
-## Session Model
-
-### Current State
-
-- No session management
-- CSRF protection checks `Origin` and `Sec-Fetch-Site` headers:
-
-```python
-def require_mutation(request: Request) -> None:
-    origin = request.headers.get("origin")
-    expected = f"{request.url.scheme}://{request.url.netloc}"
-    if request.headers.get("sec-fetch-site") == "cross-site" or (origin and origin != expected):
-        raise HTTPException(403, "Document changes must come from this application.")
-```
-
-### Proposed Session Model
-
-**Session storage:** Signed server-side sessions stored in a backend (Redis, PostgreSQL,
-or encrypted cookies for stateless deployment). Recommended: **encrypted cookies** for
-simplicity in early deployment, with a migration path to server-side sessions for
-revocation.
-
-**Session fields:**
-```python
-@dataclass
-class Session:
-    user_id: str           # Stable identifier (UUID or provider-scoped ID)
-    email: str             # For display and communication
-    provider: str          # "google", "github", etc.
-    created_at: datetime
-    expires_at: datetime
-```
-
-**Cookie configuration:**
-- `HttpOnly`: Yes (no JS access)
-- `Secure`: Yes (HTTPS only in production)
-- `SameSite`: `Lax` (allow top-level GET navigations, block cross-origin POST)
-- `Max-Age`: 7 days (rolling expiration on activity)
-
-**CSRF handling:**
-
-The existing `Origin` + `Sec-Fetch-Site` check remains valid and becomes stronger
-with proper sessions:
-
-1. `SameSite=Lax` cookies prevent most cross-origin POST attacks
-2. `Origin` header check catches remaining cases
-3. No separate CSRF tokens needed for browser-form POSTs if using `SameSite=Lax`
-
-For defense-in-depth, add a double-submit cookie pattern:
-- Server sets a non-HttpOnly `csrf_token` cookie
-- Forms include `<input type="hidden" name="_csrf" value="...">` echoing the cookie
-- Server validates the form value matches the cookie value
-
-This is optional if `SameSite=Lax` + `Origin` checking is deemed sufficient.
-
-### Session Middleware
-
-```python
-@app.middleware("http")
-async def session_middleware(request: Request, call_next):
-    session = decode_session_cookie(request.cookies.get("session"))
-    if session and session.expires_at > utcnow():
-        request.state.user = session
-    else:
-        request.state.user = None
-    response = await call_next(request)
-    return response
-```
-
-**Auth-required routes** check `request.state.user` and redirect to `/auth/login` if None.
+Every one of these is addressed below. A design that only re-roots `DocumentStore`,
+`FsWorkspaceRepository`, and `FinalDocuments` is not isolation.
 
 ---
 
-## Per-User Storage Partitioning
+## 3. Authentication
 
-### Current Layout (Single User)
+### Decision: OAuth with Google (OIDC) and GitHub, invite-gated
+
+| Option | Verdict |
+|---|---|
+| OAuth (Google, GitHub) | **Chosen.** No password storage, one-click sign-in, fits "calm under pressure". |
+| LinkedIn OAuth | Later. Sign-in with LinkedIn needs app review; no MVP value over Google. |
+| Magic links | Rejected for MVP: needs email delivery infrastructure. |
+| Username/password | Rejected: password storage, reset flows, breach liability. |
+| Passkeys | Out of scope. Revisit only if users ask. |
+
+Library: `authlib`'s Starlette client.
+
+### Flow requirements
+
+- **`state`** on every authorization request, checked on callback (login CSRF).
+- **PKCE (S256)** on both providers.
+- **Google:** OIDC with `nonce`; validate the ID token (issuer, audience, expiry, nonce). Use
+  `sub` as the subject. Require `email_verified = true`.
+- **GitHub:** not OIDC. Fetch `/user` for the numeric `id` (the subject; never the login name,
+  which can change) and `/user/emails` for an address with `verified = true`. Scope:
+  `read:user user:email`.
+- **Redirect URIs** are exact matches registered with each provider and derived from
+  `CONJURER_BASE_URL`, never from the request's `Host`.
+- **Provider tokens are discarded** after the callback. Nothing is stored except subject and
+  verified email.
+- authlib keeps `state` and `nonce` in a short-lived signed pre-login cookie
+  (`conjurer_oauth`, 10-minute max age), separate from the session cookie, deleted on callback.
+
+### Identity model
+
+- A user is keyed by `(provider, subject)`. Email is display-only and never used for lookup.
+- **No account linking.** Signing in with Google and with GitHub creates two accounts even if the
+  emails match. Linking by email is an account-takeover path and is not worth the complexity.
+- **Invite gate.** A sign-in creates an account only if the verified email is on the allowlist
+  (`invites` table, managed by CLI). Everyone else sees "not invited yet". The gate stays until
+  the cost controls in §8 are proven.
+
+### Routes
 
 ```
-$CONJURER_WORKSPACE/
-├── master-resume.md
-├── grimoire.md
-├── .document-history/
-│   ├── master-resume.md/
-│   │   └── <sha256>.md
-│   └── grimoire.md/
-│       └── <sha256>.md
-├── .document-originals/
-│   └── <sha256>/
-│       └── <filename>
-├── onboarding.json
-└── applications/
-    └── <slug>/
-        ├── jd.txt
-        ├── evidence.md
-        ├── outline.json
-        ├── variants.md
-        ├── metrics.json
-        ├── support.json
-        ├── cover_letter.md
-        ├── resume.md
-        ├── .document-history/
-        ├── .final-composition.json
-        ├── .final-exports.json
-        ├── cover_letter.pdf
-        ├── cover_letter.docx
-        ├── resume.pdf
-        └── resume.docx
-```
-
-### Proposed Multi-User Layout
-
-Partition by user ID at the workspace root:
-
-```
-$CONJURER_WORKSPACE/
-└── users/
-    └── <user_id>/                    # UUID or stable provider-scoped ID
-        ├── master-resume.md
-        ├── grimoire.md
-        ├── .document-history/
-        ├── .document-originals/
-        ├── onboarding.json
-        └── applications/
-            └── <slug>/
-                └── ... (same structure as today)
-```
-
-**Key design decisions:**
-
-1. **User ID format:** UUID v4, generated at first login. Provider-scoped IDs
-   (e.g., Google sub) are stored in a user record but not used as filesystem paths
-   (they may contain special characters or change on account linking).
-
-2. **Slug scope:** Application slugs are user-scoped. Two users can both have a
-   `globex-staff-platform` application independently.
-
-3. **Path resolution:** The current `workspace_root()` function becomes `user_workspace(user_id)`:
-
-   ```python
-   def user_workspace(user_id: str) -> Path:
-       validate_user_id(user_id)
-       return workspace_root() / "users" / user_id
-   ```
-
-4. **DocumentStore changes:** Constructor takes `user_workspace(user_id)` as root
-   instead of the global workspace root.
-
-5. **FsWorkspaceRepository changes:** Constructor takes user workspace root.
-
-### Storage Backend Options
-
-**Option 1: Local filesystem (current)**
-- Simple, no external dependencies
-- Requires sticky sessions or shared filesystem for horizontal scaling
-- Backup/restore is file-level
-
-**Option 2: Object storage (S3, GCS, R2)**
-- Scales horizontally without shared filesystem
-- Requires adapter changes (Path operations → object operations)
-- Higher latency for small reads/writes
-- Natural fit for account deletion (delete by prefix)
-
-**Recommendation:** Start with local filesystem for MVP (simplest path from current
-code). Design the `DocumentStore` interface to allow a future object-storage adapter.
-
----
-
-## Migration of Existing Local Data
-
-### Scenario
-
-A user has been running the local single-user app and has data in the old layout.
-After deploying auth, they sign up and want their data migrated.
-
-### Proposed Migration Flow
-
-**One-time import, not automatic merge:**
-
-1. Admin places the legacy workspace at a known path (e.g., `$CONJURER_WORKSPACE/legacy/`)
-2. User signs up and reaches an empty workspace
-3. User triggers "Import existing workspace" from account settings
-4. Server copies legacy files into `users/<user_id>/`
-5. Legacy files remain untouched (backup)
-6. Import is idempotent: re-running overwrites with fresh copies
-
-**Not supported:**
-- Merging two users' data (conflict resolution is out of scope)
-- Automatic detection of legacy data (explicit user action only)
-
-**Implementation:**
-
-```python
-def import_legacy_workspace(user_id: str, legacy_root: Path) -> None:
-    validate_user_id(user_id)
-    target = user_workspace(user_id)
-    if any(target.iterdir()):
-        raise ValueError("Target workspace is not empty; clear it first.")
-    shutil.copytree(legacy_root, target, dirs_exist_ok=False)
+GET  /login                     sign-in page with provider buttons
+GET  /auth/{provider}           start OAuth (provider in {"google", "github"})
+GET  /auth/{provider}/callback  finish OAuth, create session, 303 to /
+POST /logout                    revoke session, clear cookie, 303 to /login
 ```
 
 ---
 
-## Account Deletion Flow
+## 4. Sessions and CSRF
 
-### User Experience
+### Decision: server-side sessions in SQLite
 
-1. User navigates to Account Settings
-2. User clicks "Delete my account"
-3. Confirmation dialog: "This will permanently delete all your documents, history,
-   and exports. This cannot be undone. Type DELETE to confirm."
-4. User types "DELETE" and clicks "Confirm deletion"
-5. Server purges all user data and session
-6. User is redirected to a "Your account has been deleted" page
-7. Session cookie is cleared
+A stateless signed or encrypted cookie cannot be revoked, and logout and deletion both need
+revocation. A cookie that outlives its account would also let the next request recreate the
+deleted workspace. So sessions live in the database and the cookie carries only an opaque id.
 
-### Data to Delete
+- Cookie value: 32 random bytes, URL-safe base64. The database stores **its SHA-256**, so a
+  database read does not yield usable cookies.
+- Cookie: `__Host-conjurer_session`, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, no
+  `Domain`. Browsers treat `http://localhost` as secure, so `Secure` holds in development too.
+- Expiry: **7 days idle, 30 days absolute.** `last_seen_at` is updated at most once an hour to
+  avoid a write per request.
+- **Rotation:** a new session id is issued at every login; any pre-login session is discarded
+  (fixation).
+- **Per-request check:** the session row must exist, be unexpired, and belong to a user whose
+  `status = 'active'`. A deleted or deleting user's cookie fails this check.
+- No session secret is needed, which keeps the offline `fake` suite free of auth configuration.
+  (The pre-login OAuth cookie needs `CONJURER_OAUTH_STATE_SECRET`, required only when providers
+  are configured.)
 
-| Category | Location | Notes |
-|----------|----------|-------|
-| Source documents | `users/<user_id>/master-resume.md`, `grimoire.md` | |
-| Document history | `users/<user_id>/.document-history/**` | All revisions |
-| Uploaded originals | `users/<user_id>/.document-originals/**` | All uploads |
-| Onboarding state | `users/<user_id>/onboarding.json` | |
-| Applications | `users/<user_id>/applications/**` | All JDs, variants, finals, exports |
-| User record | Database (if using one) | Provider ID, email, created_at |
-| Sessions | Session store | All sessions for this user |
+### Data model
 
-### Implementation
-
-```python
-def delete_user_account(user_id: str) -> None:
-    validate_user_id(user_id)
-    user_dir = user_workspace(user_id)
-
-    # 1. Delete all files (shutil.rmtree is not atomic; acceptable for MVP)
-    if user_dir.exists():
-        shutil.rmtree(user_dir)
-
-    # 2. Delete user record from database (if any)
-    db.execute("DELETE FROM users WHERE id = ?", [user_id])
-
-    # 3. Invalidate all sessions for this user
-    session_store.delete_all(user_id)
-```
-
-### Audit Log
-
-For compliance (GDPR Article 17), log deletion events:
-- Timestamp
-- User ID (not PII)
-- Deletion method (user-initiated, admin, retention policy)
-- Operator (user, admin ID)
-
-Logs do NOT include deleted content, only the fact of deletion.
-
-### Asynchronous Deletion (Optional)
-
-For large workspaces, deletion could be queued:
-1. Mark user as `deletion_pending` in database
-2. Block login for this user
-3. Background job purges files
-4. Job marks user as `deleted` or removes record
-
-MVP can use synchronous deletion; async is a scaling optimization.
-
----
-
-## Data Retention and Export
-
-### Data Export (GDPR Article 20)
-
-**User-initiated export:**
-
-1. User clicks "Export my data" in Account Settings
-2. Server creates a ZIP archive of:
-   - `master-resume.md`, `grimoire.md`
-   - `.document-history/**` (all history revisions)
-   - `.document-originals/**` (all uploaded files)
-   - `applications/**/` (all applications, excluding generated PDFs/DOCX for size)
-   - `metadata.json`: user ID, email, created_at, list of applications
-3. User downloads the ZIP
-
-**Implementation:**
-
-```python
-def export_user_data(user_id: str) -> Path:
-    user_dir = user_workspace(user_id)
-    archive = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in user_dir.rglob("*"):
-            if path.suffix in {".pdf", ".docx"}:
-                continue  # Skip large exports; user can re-generate
-            if path.is_file():
-                zf.write(path, path.relative_to(user_dir))
-        zf.writestr("metadata.json", json.dumps({
-            "user_id": user_id,
-            "exported_at": utcnow().isoformat(),
-        }))
-    return Path(archive.name)
-```
-
-### Retention Policy
-
-**Active accounts:** Data retained indefinitely while account exists.
-
-**Deleted accounts:** Data purged immediately (no soft-delete grace period for MVP).
-
-**Inactive accounts (future):** Define an inactivity threshold (e.g., 24 months) and
-notify users before purging. Not required for MVP.
-
----
-
-## Deployment Implications
-
-### Environment Variables
-
-New variables for auth:
-```
-CONJURER_AUTH_PROVIDER=google,github       # Enabled OAuth providers
-CONJURER_GOOGLE_CLIENT_ID=...
-CONJURER_GOOGLE_CLIENT_SECRET=...
-CONJURER_GITHUB_CLIENT_ID=...
-CONJURER_GITHUB_CLIENT_SECRET=...
-CONJURER_SESSION_SECRET=...                # For signing session cookies
-CONJURER_BASE_URL=https://example.com      # For OAuth callbacks
-```
-
-### Database (Optional for MVP)
-
-If using encrypted cookies for sessions and filesystem for user data, no database is
-strictly required. A database becomes necessary for:
-- Session revocation (server-side sessions)
-- User lookup by email (for account linking)
-- Usage metrics
-
-**Minimal schema if using a database:**
+SQLite via the stdlib `sqlite3` module, one file at `$CONJURER_WORKSPACE/conjurer.db`, WAL mode.
+No ORM.
 
 ```sql
 CREATE TABLE users (
-    id UUID PRIMARY KEY,
-    email TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    provider_id TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (provider, provider_id)
+    id          TEXT PRIMARY KEY,          -- UUID v4, also the workspace directory name
+    email       TEXT NOT NULL,             -- verified, display only
+    status      TEXT NOT NULL CHECK (status IN ('active', 'deleting')),
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE identities (
+    provider    TEXT NOT NULL,             -- 'google' | 'github'
+    subject     TEXT NOT NULL,             -- Google sub, GitHub numeric id
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (provider, subject)
 );
 
 CREATE TABLE sessions (
-    id UUID PRIMARY KEY,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at TIMESTAMPTZ NOT NULL
+    token_hash   TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at   TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    expires_at   TEXT NOT NULL              -- absolute cap
+);
+
+CREATE TABLE invites (
+    email       TEXT PRIMARY KEY,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE usage (
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    day         TEXT NOT NULL,             -- UTC date
+    runs        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, day)
 );
 ```
 
-### HTTPS Requirement
+Access goes through an `AccountStore` Protocol in `ports.py` with one SQLite adapter, matching
+how the other ports are declared. Routes never touch `sqlite3`.
 
-Production deployment MUST use HTTPS:
-- `Secure` cookie attribute requires it
-- OAuth callback URLs require it
-- Without HTTPS, session cookies can be intercepted
+### Unauthenticated requests
 
-### Horizontal Scaling
+- Full-page request: `303` to `/login`.
+- HTMX request (`HX-Request: true`): `401` with `HX-Redirect: /login`, so HTMX navigates instead
+  of swapping the login page into a fragment.
+- `/login`, `/auth/*`, and `/static/*` are the only public routes.
 
-**Stateless sessions (encrypted cookies):** Any instance can validate sessions.
+### CSRF
 
-**Filesystem storage:** Requires shared storage (NFS, EFS) or sticky sessions.
+The existing check is an allowlist: it passes when `Sec-Fetch-Site` is `same-origin` or
+`same-site`, or when that header is absent and `Origin` equals the request's own origin
+(`main.py:73-82`). Changes:
 
-**Object storage (future):** Enables fully stateless app instances.
+1. **One dependency, every mutation.** Replace the three copies with a single
+   `require_same_origin` FastAPI dependency, applied router-wide to every non-GET route. Today
+   `POST /start` (`main.py:112`, writes `jd.txt` and starts a paid run) and `POST /reset`
+   (`main.py:367`) have no check at all. Once a session cookie exists, `/start` becomes a
+   cross-site way to plant a hostile job description and spend the user's quota.
+2. **Accept only `same-origin`.** Drop `same-site`, which trusts sibling subdomains.
+3. **Compare `Origin` to `CONJURER_BASE_URL`**, not to `request.url`. Behind a TLS-terminating
+   proxy `request.url` is `http://` while the browser sends `https://`.
+4. Keep rejecting when both headers are absent.
+
+With `SameSite=Lax` plus this check, no token-based CSRF scheme is needed.
+
+The run-state guard currently inside `require_mutation` (`runs.status(SLUG)`) moves out into its
+own per-user dependency, since it is not a CSRF concern.
 
 ---
 
-## Threat Model
+## 5. Per-user storage
 
-### Assets
+### Layout
 
-| Asset | Sensitivity | Protection |
-|-------|-------------|------------|
-| Resume content | High (PII, employment history) | Per-user isolation, auth required |
-| Evidence/grimoire | High (skills, accomplishments) | Per-user isolation, auth required |
-| Job descriptions | Medium (reveals job search) | Per-user isolation, auth required |
-| Document history | High (full edit trail) | Per-user isolation, auth required |
-| Session tokens | High (bearer credential) | HttpOnly, Secure, SameSite=Lax |
-| OAuth tokens | High (if stored) | Not stored; only used to fetch email/ID at login |
-
-### Threats and Mitigations
-
-| Threat | Impact | Mitigation |
-|--------|--------|------------|
-| Session hijacking | Account takeover | HttpOnly + Secure + SameSite=Lax cookies; short expiry |
-| CSRF | Unauthorized mutations | SameSite=Lax + Origin header check (existing) |
-| Path traversal | Access other users' files | `validate_user_id()` + `validate_slug()` (existing) |
-| OAuth token theft | Account takeover | Tokens not stored; only ID/email extracted at login |
-| Brute-force login | Account enumeration | OAuth delegates rate limiting to provider |
-| XSS | Session theft, data exfil | HttpOnly cookies; CSP headers (to add) |
-| Insider threat | Data breach | Filesystem permissions; audit logging |
-| Account deletion bypass | Data remains after deletion | Atomic deletion; audit log; periodic orphan scan |
-
-### Security Headers to Add
-
-```python
-@app.middleware("http")
-async def security_headers(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
-    return response
+```
+$CONJURER_WORKSPACE/
+├── conjurer.db
+└── users/
+    └── <user_id>/                      # UUID v4
+        ├── master-resume.md
+        ├── grimoire.md
+        ├── onboarding.json
+        ├── .document-history/          # includes onboarding.json/ snapshots
+        ├── .document-originals/<sha256>/<filename>
+        ├── .agent-runtime/             # SDK config dir: transcripts land here (§7)
+        └── applications/<slug>/        # unchanged from today
 ```
 
-### Out of Scope
+Everything a user owns lives under one directory, so deletion and export are both "this tree".
 
-- DDoS protection (handled at infrastructure layer)
-- Key management / HSM (use cloud KMS if needed)
-- Penetration testing (separate engagement)
-- SOC 2 / compliance audit (separate scope)
+### Rules
 
----
+- `user_id` is a server-generated UUID v4. Validate with `uuid.UUID(value)` and require the
+  canonical string form; never accept a user id from the request.
+- `user_workspace(user_id) -> Path` **resolves only**. It never creates the directory. The
+  directory is created once, when the account is created. A request for a user whose directory
+  is missing is an error, not a reason to recreate it. This is what stops a stale request from
+  resurrecting a deleted account.
+- `slug` stays validated by `validate_slug` (`domain.py:34-40`).
+- `DocumentStore.store_original` already rejects empty, `.`, `..`, and any filename containing
+  `/` or `\` (`document_store.py:122-128`). Phase 2 keeps that covered under the per-user root.
 
-## Phased Implementation Plan
+### Per-request adapters
 
-### Phase 1: Session Infrastructure
+The module-level singletons in `main.py:379-385` are replaced by a FastAPI dependency that
+resolves the signed-in user and builds that user's adapters:
 
-**Goal:** Add session management without changing user-visible features.
+```python
+@dataclass(frozen=True)
+class UserWorkspace:
+    user_id: str
+    repository: WorkspaceRepository
+    documents: DocumentStore
+    onboarding: OnboardingStore
+    finals: FinalDocuments
+    composition: CompositionPort | None
+```
 
-**Scope:**
-- Session middleware (encrypted cookie)
-- Session dataclass and encode/decode
-- `/auth/login` and `/auth/logout` stubs (redirect to home for now)
-- All existing routes work for unauthenticated users (no enforcement yet)
+These are cheap to construct (they hold a path), so per-request construction is fine. Routes
+take `UserWorkspace` instead of closing over globals. The `fake` backend builds the same shape
+from `FakeWorkspaceRepository`, with picks keyed by `(user_id, slug)`.
 
-**Acceptance Criteria:**
-- [ ] AC-1.1: `Session` dataclass with `user_id`, `email`, `provider`, `created_at`, `expires_at`
-- [ ] AC-1.2: `encode_session()` and `decode_session()` use `itsdangerous` signed cookies
-- [ ] AC-1.3: Session middleware attaches `request.state.user` (or None)
-- [ ] AC-1.4: `GET /auth/login` renders a "Sign in" page (no providers yet)
-- [ ] AC-1.5: `POST /auth/logout` clears session cookie, redirects to `/`
-- [ ] AC-1.6: All existing routes still work (100% test coverage maintained)
-- [ ] AC-1.7: `CONJURER_SESSION_SECRET` env var required; startup fails if missing
+**Slug:** each user gets exactly one application in the MVP, still named by the `SLUG` constant
+but always resolved under that user's tree. The per-user slug resolver noted in `AGENTS.md`
+stays future work; nothing here bakes in one application per user beyond that constant.
 
-### Phase 2: OAuth Integration
-
-**Goal:** Users can sign in with Google or GitHub.
-
-**Scope:**
-- OAuth flow with `authlib`
-- User record creation (first login)
-- Session creation on successful OAuth
-
-**Acceptance Criteria:**
-- [ ] AC-2.1: `GET /auth/google` redirects to Google OAuth
-- [ ] AC-2.2: `GET /auth/google/callback` validates code, creates user record, sets session
-- [ ] AC-2.3: `GET /auth/github` redirects to GitHub OAuth
-- [ ] AC-2.4: `GET /auth/github/callback` validates code, creates user record, sets session
-- [ ] AC-2.5: User record stored in database or `users/<user_id>/user.json`
-- [ ] AC-2.6: Login page shows "Sign in with Google" and "Sign in with GitHub" buttons
-- [ ] AC-2.7: Returning user (same provider+provider_id) reuses existing user_id
-- [ ] AC-2.8: OAuth credentials configured via env vars; startup fails if incomplete
-
-### Phase 3: Per-User Storage
-
-**Goal:** Each user's data is isolated in `users/<user_id>/`.
-
-**Scope:**
-- `user_workspace(user_id)` replaces `workspace_root()` in adapters
-- `DocumentStore`, `FsWorkspaceRepository`, `FinalDocuments` take user workspace
-- Routes resolve user_id from session and inject user-scoped adapters
-- Auth required for all document routes
-
-**Acceptance Criteria:**
-- [ ] AC-3.1: `deps.py` exports `user_workspace(user_id)` creating `users/<user_id>/`
-- [ ] AC-3.2: `DocumentStore` root is user workspace, not global workspace
-- [ ] AC-3.3: `FsWorkspaceRepository` root is user workspace
-- [ ] AC-3.4: `FinalDocuments` root is user workspace
-- [ ] AC-3.5: All document routes require authentication (return 401 if not logged in)
-- [ ] AC-3.6: Unauthenticated `/` shows login prompt; authenticated `/` shows entry
-- [ ] AC-3.7: Two test users with same slug have independent applications
-- [ ] AC-3.8: `validate_user_id()` rejects path traversal attempts
-
-### Phase 4: Account Deletion
-
-**Goal:** Users can permanently delete all their data.
-
-**Scope:**
-- Account settings page
-- Deletion confirmation flow
-- `delete_user_account()` function
-- Audit logging
-
-**Acceptance Criteria:**
-- [ ] AC-4.1: `GET /account` shows account settings with "Delete my account" button
-- [ ] AC-4.2: `POST /account/delete` requires confirmation input matching "DELETE"
-- [ ] AC-4.3: `delete_user_account()` removes `users/<user_id>/` directory tree
-- [ ] AC-4.4: Deletion clears session and redirects to "Account deleted" page
-- [ ] AC-4.5: Deleted user cannot log in (user record removed)
-- [ ] AC-4.6: Deletion is logged with timestamp, user_id, method
-- [ ] AC-4.7: Deletion endpoint requires authentication
-- [ ] AC-4.8: Deletion endpoint requires CSRF protection
-
-### Phase 5: Data Export
-
-**Goal:** Users can download all their data.
-
-**Scope:**
-- Export ZIP generation
-- Download endpoint
-
-**Acceptance Criteria:**
-- [ ] AC-5.1: `GET /account/export` returns a ZIP of user data
-- [ ] AC-5.2: ZIP contains `master-resume.md`, `grimoire.md`, `.document-history/`, `.document-originals/`, `applications/`
-- [ ] AC-5.3: ZIP excludes large generated files (`.pdf`, `.docx`)
-- [ ] AC-5.4: ZIP includes `metadata.json` with user_id and export timestamp
-- [ ] AC-5.5: Export endpoint requires authentication
-- [ ] AC-5.6: Export is generated synchronously (async queuing is a future optimization)
-
-### Phase 6: Migration Tooling
-
-**Goal:** Existing local users can import their data.
-
-**Scope:**
-- Import legacy workspace feature
-- Admin CLI or account settings UI
-
-**Acceptance Criteria:**
-- [ ] AC-6.1: `import_legacy_workspace(user_id, legacy_root)` copies files
-- [ ] AC-6.2: Import fails if target workspace is not empty
-- [ ] AC-6.3: Import is idempotent (re-running overwrites)
-- [ ] AC-6.4: Import accessible via CLI (`python -m app.cli import-workspace ...`)
-- [ ] AC-6.5: Optional: Import accessible via account settings for logged-in users
+Storage stays on the local filesystem. `DocumentStore` is a concrete class, not a port, and
+there is no plan to make it one until a second storage backend is actually needed.
 
 ---
 
-## Open Questions
+## 6. Per-user runtime state
 
-These require owner decision before implementation:
+| State | Change |
+|---|---|
+| `RunManager` | Key every dict by `(user_id, slug)`. Add `cancel(user_id)` that cancels and awaits that user's tasks. |
+| `source_lock`, onboarding `active` | Per-user `asyncio.Lock` / flag held in a small registry keyed by `user_id`. |
+| `preview_tokens`, `warning_revision` | Keyed by `user_id`. |
+| Generation port | One `SdkGenerationPort` **per user**, held in a `GenerationPool`. |
 
-1. **OAuth providers:** Google + GitHub, or should LinkedIn be prioritized despite
-   its API access requirements?
+### GenerationPool
 
-2. **Session duration:** 7-day rolling expiry, or longer (30 days)?
+The persistent variant client exists so per-unit calls share a warm prompt-cache prefix
+(`AGENTS.md`: "a design rule, not an optimization"). That stays true per user and must never be
+true across users.
 
-3. **Database vs. filesystem-only:** Accept the operational simplicity of filesystem-only
-   for MVP, or require a database from day one for user records?
+- `pool.get(user_id)` returns that user's port, creating it with the user's workspace as `cwd`.
+- **Idle eviction:** a port unused for 15 minutes is `aclose()`d (`generation_sdk.py:254-257`
+  already disconnects the client).
+- **Cap:** at most `CONJURER_MAX_LIVE_CLIENTS` (default 4) connected ports. When full, a new run
+  waits in the run queue rather than evicting another user's in-flight client.
+- `pool.release(user_id)` is called on logout and deletion.
+- `RunManager.aclose()` on shutdown closes every pooled port.
+- `last_call` moves onto the per-user port, so metrics stop being shared.
 
-4. **Account linking:** Can a user link multiple OAuth providers to one account, or is
-   each provider a separate account?
+The prompt-cache benefit becomes per user: the first run in a session pays for the static
+prefix. That is the correct trade.
 
-5. **Email verification:** OAuth provides email; should we verify it separately, or trust
-   the provider's verification?
+---
 
-6. **Deletion grace period:** Immediate purge, or soft-delete with a 30-day recovery
-   window?
+## 7. Containing the agent
 
-7. **Export format:** ZIP of raw files, or a structured JSON export with metadata?
+The variant client keeps the default toolset because a `tools` allowlist breaks plugin subagent
+dispatch (`AGENTS.md`). Its `can_use_tool` guard allows `Read`, `Glob`, `Grep`, `Agent`, `Task`
+**with no path check** (`generation_sdk.py:144-159`). Under multi-tenancy, a prompt injection in
+a pasted job description can `Glob ../*/master-resume.md` and `Read` another user's resume into
+the variants. The HTTP-side validators do nothing about this.
 
-8. **Inactive account policy:** Notify and delete after N months of inactivity, or retain
-   indefinitely?
+### Required before a second user is admitted
 
-9. **Admin tooling:** Is there an admin role that can view/delete other users' data for
-   support purposes?
+1. **Path guard.** For `Read`, `Glob`, and `Grep`, resolve every path argument (`file_path`,
+   `path`, and the base of `pattern`) with `Path.resolve()` and allow it only if it is inside
+   the user's workspace or inside the plugin directory (`DEFAULT_PLUGIN_DIR`,
+   `generation_sdk.py:37`), which the subagent reads. A missing path argument defaults to `cwd`,
+   which is the user's workspace. Everything else is denied.
+2. **Prove the guard sees the calls that matter, including subagent calls.** The variant client
+   already omits `allowed_tools` so whole-tool approvals cannot bypass the callback
+   (`generation_sdk.py:225-236`). `can_use_tool` is consulted for calls that would otherwise
+   prompt; reads inside `cwd` (the user's own workspace) are auto-approved, and reads outside it
+   prompt and so reach the guard. That is the right split, but it is CLI behavior, not ours. If
+   a live test shows any out-of-workspace read skipping the callback, enforce the rule with a
+   `PreToolUse` hook instead. A live negative test must show a `Read` of a sibling user's file
+   being denied **from inside the dispatched variant-generator subagent**, not just the
+   top-level agent.
+3. **No secrets in the app's environment.** The SDK starts the CLI with all of `os.environ`
+   plus `options.env` (`claude_agent_sdk/_internal/transport/subprocess_cli.py:819-825`,
+   SDK 0.2.163), and `options.env` can override but not remove variables. On Linux, a `Read` of
+   `/proc/self/environ` would hand over OAuth secrets. So OAuth client secrets and the OAuth
+   state secret are read from a file named by `CONJURER_SECRETS_FILE` (mode `0600`) into a
+   config object, never exported. The path guard in (1) also denies `/proc`.
+4. **Transcripts inside the user tree.** The CLI saves session transcripts under its config
+   directory. Set `env={"CLAUDE_CONFIG_DIR": str(user_workspace / ".agent-runtime")}` for both
+   SDK clients so transcripts land in the user's tree and are removed with it. (The CLI's
+   `--no-session-persistence` flag documents itself as `--print`-only, and the SDK runs the CLI
+   in stream-json mode, so it is not relied on.) This requires the deployment to authenticate
+   the CLI with `ANTHROPIC_API_KEY`, not a stored login, since each config dir starts empty.
+   The onboarding client (`onboarding_sdk.py:33-34`) runs with `tools=[]` in a temp directory,
+   so it cannot read files, but it still writes a transcript; it gets the same `CLAUDE_CONFIG_DIR`.
+5. **Agent writes stay impossible.** No change: the guard already denies `Write`, `Edit`,
+   `Bash`, network tools and `mcp__*`. Keep the existing tests.
 
-10. **Rate limiting:** Should the app itself enforce rate limits, or rely on a reverse
-    proxy (nginx, Cloudflare)?
+**Later hardening (not MVP):** run each user's CLI under a separate OS user or container so the
+filesystem itself enforces isolation and the path guard becomes defense in depth.
+
+---
+
+## 8. Cost and abuse controls
+
+Every run is an outline call plus one variant call per unit plus subagents, billed to the
+operator. A reverse proxy cannot see per-user spend, so the app enforces this itself.
+
+- **Invite gate** (§3) until the rest of this section is proven.
+- **One active run per user.** `RunManager.start` refuses a second concurrent run for the same
+  user (already true per slug; becomes per user).
+- **Global cap** on connected clients (§6).
+- **Daily run quota per user**, `CONJURER_DAILY_RUNS` (default 10), counted in `usage` at
+  `RunManager.start`. Over quota returns a calm "come back tomorrow" page, not an error.
+- **Commercial credentials.** Production uses an `ANTHROPIC_API_KEY` under commercial terms, not
+  a personal Claude subscription login.
+- Spend alerting is configured in the Anthropic console, not in the app.
+
+---
+
+## 9. Account deletion
+
+### User experience
+
+1. `GET /account` shows email, sign-in provider, created date, "Export my data", and "Delete my
+   account".
+2. Deleting asks the user to type `DELETE` and submit.
+3. The server runs the sequence below, clears the cookie, and shows "Your account has been
+   deleted".
+
+### Sequence
+
+Order matters: stop every writer before removing files, or an in-flight run recreates the tree.
+
+```
+1. UPDATE users SET status = 'deleting'      -- every session now fails the per-request check
+2. DELETE FROM sessions WHERE user_id = ?
+3. await run_manager.cancel(user_id)          -- cancel and await in-flight runs
+4. await generation_pool.release(user_id)     -- disconnect the user's SDK client
+5. shutil.rmtree(users/<user_id>)             -- includes .agent-runtime/ transcripts
+6. DELETE FROM users WHERE id = ?             -- cascades identities, usage
+7. append to deletion audit log
+```
+
+If any step fails, the user stays `deleting` (locked out) and a startup sweep retries every
+`deleting` account. Deletion is therefore idempotent and eventually complete; it is not atomic,
+and the design does not claim it is.
+
+Writers must not recreate the tree: `save_jd` (`adapters/workspace_fs.py:161`) and the other
+adapter writes use `mkdir(parents=True)` today. With `user_workspace` refusing a missing root
+(§5), a write that slips past step 3 fails instead of resurrecting the directory.
+
+### What deletion covers
+
+| Data | Location | Removed by |
+|---|---|---|
+| Source documents, onboarding state | `users/<id>/*.md`, `onboarding.json` | step 5 |
+| All revision history, including onboarding snapshots | `users/<id>/.document-history/` | step 5 |
+| Uploaded originals | `users/<id>/.document-originals/` | step 5 |
+| Applications, picks, finals, PDF/DOCX | `users/<id>/applications/` | step 5 |
+| SDK transcripts | `users/<id>/.agent-runtime/` | step 5 (§7.4) |
+| In-memory run status and metrics | `RunManager` | step 3 |
+| Warm SDK conversation | `GenerationPool` | step 4 |
+| Account, identities, sessions, usage | `conjurer.db` | steps 2, 6 |
+
+### What deletion does not cover, stated to the user
+
+- **Anthropic.** Resume, grimoire, job description and onboarding text are sent to Anthropic to
+  generate output. Retention there follows the operator's commercial agreement. The privacy
+  notice names Anthropic as a subprocessor.
+- **TypeSafe (Jev).** With `CONJURER_VERIFIER=jev`, variant text and the evidence pool go to
+  TypeSafe (`adapters/verification_jev.py`). Multi-user deployments keep the verifier off until
+  that processor is reviewed (open question).
+- **Backups.** If the host takes filesystem backups, they age out within 30 days, and the privacy
+  notice says so.
+- **Application logs.** Logs record slugs, user ids and exception types, never document content.
+  Phase 2 adds a test that a run failure logs no document text. Logs are retained 30 days.
+
+### Removing one source
+
+`purge_original` (`document_store.py:131-145`) deletes `.document-originals/<hash>` but the
+extracted text survives in `.document-history/onboarding.json/` snapshots. Phase 4 also prunes
+onboarding history snapshots that contain the removed source, so "remove this source" means
+what it says.
+
+### Audit log
+
+Append-only JSON lines at `$CONJURER_WORKSPACE/audit.log`: timestamp, user id, method
+(`user` or `retry-sweep`). No content, no email. The user id is pseudonymous personal data, kept
+for 90 days as the record that the deletion happened.
+
+---
+
+## 10. Data export
+
+`GET /account/export` returns a ZIP of the user's tree:
+
+- Includes everything under `users/<id>/`: documents, history, **uploaded originals (including
+  their PDF/DOCX files)**, applications, and generated PDF/DOCX exports. Sizes are small; no
+  suffix filtering.
+- Excludes `.agent-runtime/` (SDK internals) and in-progress atomic-write temps (`.<name>.*`
+  files and `.final-compose-*` directories left by a crash).
+- Adds `account.json`: user id, email, provider, created date, and the list of applications.
+- The archive is built in a `SpooledTemporaryFile` and streamed; nothing is left on disk after
+  the response.
+- Export takes the user's source lock so it never captures a half-written save.
+
+ZIP of raw files is the format: the files are already the app's documented on-disk contracts.
+
+---
+
+## 11. Adopting the existing local workspace
+
+There is exactly one legacy workspace and one owner, so this is a CLI command, not a feature:
+
+```
+uv run python -m app.accounts adopt-workspace --email <owner email> --from <legacy dir>
+```
+
+It requires an existing account for that email (sign in once first), refuses if the account's
+workspace has any content, and **moves** the legacy tree into `users/<user_id>/`. There is no
+web route for it: a web import of a shared legacy directory would hand the owner's resume to
+whichever user clicked first.
+
+---
+
+## 12. Deployment
+
+### Environment
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `CONJURER_BACKEND` | existing | `fake` (default) or `live` |
+| `CONJURER_WORKSPACE` | existing, live | Root holding `conjurer.db`, `users/`, `audit.log` |
+| `CONJURER_VERIFIER` | existing | Off for multi-user until reviewed (§9) |
+| `TYPESAFE_API_KEY` | existing | Only with the Jev verifier |
+| `CONJURER_BASE_URL` | live | Origin for CSRF and OAuth redirect URIs |
+| `CONJURER_SECRETS_FILE` | live | `0600` file with OAuth client ids/secrets and the OAuth state secret |
+| `ANTHROPIC_API_KEY` | live | Commercial API credential for the CLI |
+| `CONJURER_DAILY_RUNS` | optional | Default 10 |
+| `CONJURER_MAX_LIVE_CLIENTS` | optional | Default 4 |
+
+`live` refuses to start if `CONJURER_BASE_URL`, `CONJURER_SECRETS_FILE`, or at least one
+complete provider configuration is missing. The `fake` backend needs none of these; offline tests
+create users and sessions directly through `AccountStore` against a temporary SQLite file.
+
+### One process
+
+Run state, the generation pool and the per-user locks live in process memory, so the app runs as
+**one uvicorn worker**. A second worker would answer status polls with "idle". Scaling out is a
+separate design.
+
+### HTTPS
+
+Required in production (the `__Host-` cookie needs `Secure`, and OAuth providers require HTTPS
+callbacks). Add `Strict-Transport-Security: max-age=31536000`.
+
+### Security headers
+
+```
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+                         frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+Referrer-Policy: strict-origin-when-cross-origin
+```
+
+The templates load only `static/vendor/htmx.min.js` and `app.js` and have no inline scripts
+(`templates/base.html:10-11`), so `script-src 'self'` holds. `'unsafe-inline'` for styles is
+needed by the existing inline `style=` attributes (progress bars in `curate.html` and
+`_summon_progress.html`).
+
+---
+
+## 13. Threat model
+
+| Threat | Mitigation |
+|---|---|
+| Prompt injection reads another user's files | Path guard on agent file tools, verified inside subagents (§7.1-7.2) |
+| Prompt injection reads app secrets | No secrets in the environment; `/proc` denied (§7.3) |
+| Cross-user leakage through a shared SDK conversation | One generation port per user (§6) |
+| Session theft | `__Host-`, `HttpOnly`, `Secure`, `SameSite=Lax`; hashed at rest; revocable; 7-day idle cap |
+| Session fixation | New session id at every login |
+| Login CSRF | OAuth `state`; PKCE |
+| CSRF on mutations | One same-origin dependency on every non-GET route, including `/start` and `/reset` |
+| Account takeover via email | No lookup or linking by email; identity is `(provider, subject)` |
+| Unverified GitHub email | Require `verified = true` from `/user/emails` |
+| HTTP path traversal | `uuid.UUID` for user ids, `validate_slug`, safe original filenames |
+| Deleted account comes back | `status='deleting'` lockout; runs cancelled first; `user_workspace` never creates |
+| Stranger runs up cost | Invite gate, daily quota, one run per user, global client cap |
+| XSS | Jinja2 autoescape (existing), CSP above, `HttpOnly` cookie |
+| Data left after deletion | Single tree per user incl. transcripts; retry sweep; processors disclosed |
+
+Out of scope: DDoS (infrastructure), penetration testing, compliance audits.
+
+---
+
+## 14. Phased plan
+
+Each phase is one PR and keeps the 100% line and branch gate. **Gate:** the invite list holds
+only the owner until Phases 2 and 3 are merged, and public sign-up waits for Phase 6.
+
+### Phase 1: Accounts, sessions, and CSRF
+
+- [ ] AC-1.1: `AccountStore` port and SQLite adapter create the schema in §4 at startup.
+- [ ] AC-1.2: Google (OIDC) and GitHub sign-in work end to end with `state` and PKCE; a
+  mismatched `state` and a replayed code are both rejected.
+- [ ] AC-1.3: Returning `(provider, subject)` reuses its user id; the same email via the other
+  provider creates a separate account.
+- [ ] AC-1.4: A verified email not in `invites` gets "not invited yet" and no account; an
+  unverified GitHub email is refused.
+- [ ] AC-1.5: Session cookie is `__Host-conjurer_session` with the flags in §4; the database
+  holds only its hash; a new id is issued at login.
+- [ ] AC-1.6: Expired (idle or absolute) sessions and sessions of a non-`active` user are
+  rejected.
+- [ ] AC-1.7: Every route except `/login`, `/auth/*`, `/static/*` requires a session: full
+  pages get `303 /login`, HTMX requests get `401` with `HX-Redirect`.
+- [ ] AC-1.8: `require_same_origin` runs on every non-GET route; `POST /start` and
+  `POST /reset` reject a cross-site request; `same-site` is rejected; `Origin` is compared to
+  `CONJURER_BASE_URL`.
+- [ ] AC-1.9: `POST /logout` deletes the session row and clears the cookie.
+- [ ] AC-1.10: `live` refuses to start without the configuration in §12; `fake` starts without it.
+
+### Phase 2: Per-user workspaces and runtime state
+
+- [ ] AC-2.1: Account creation creates `users/<uuid>/`; `user_workspace` resolves without
+  creating and rejects non-canonical UUIDs.
+- [ ] AC-2.2: Routes take a per-request `UserWorkspace`; no adapter is built at import.
+- [ ] AC-2.3: `RunManager`, source lock, preview tokens, onboarding flag, and fake picks are keyed
+  by user.
+- [ ] AC-2.4: `GenerationPool` gives each user their own `SdkGenerationPort`, evicts after 15
+  idle minutes, and honors `CONJURER_MAX_LIVE_CLIENTS`.
+- [ ] AC-2.5: Two users with the same slug have independent runs, picks, documents, and finals.
+- [ ] AC-2.6: User B gets 404 for every user-A resource reachable by URL.
+- [ ] AC-2.7: An uploaded original named `../x` is rejected and nothing is written outside the
+  user's `.document-originals/`.
+- [ ] AC-2.8: A failing run logs no document text.
+- [ ] AC-2.9: `adopt-workspace` CLI moves the legacy tree into an empty account and refuses a
+  non-empty one.
+
+### Phase 3: Agent containment
+
+- [ ] AC-3.1: Path guard denies `Read`/`Glob`/`Grep` outside the user workspace and the plugin
+  directory, including `../`, absolute paths, symlinks that resolve outside, and `/proc`.
+- [ ] AC-3.2: Live test: a prompt-injected `Read` of a sibling user's `master-resume.md` is
+  denied from inside the dispatched variant-generator subagent, and variants still generate.
+- [ ] AC-3.3: OAuth secrets are absent from `os.environ` at runtime.
+- [ ] AC-3.4: Both SDK clients run with `CLAUDE_CONFIG_DIR` under the user's `.agent-runtime/`;
+  a live run writes no transcript under `~/.claude/projects/`.
+
+### Phase 4: Account deletion
+
+- [ ] AC-4.1: `GET /account` and `POST /account/delete` (confirmation must equal `DELETE`).
+- [ ] AC-4.2: The §9 sequence runs in order; afterwards `users/<id>/` and all the user's rows are
+  gone.
+- [ ] AC-4.3: Deleting during an in-flight run cancels it and leaves no directory behind.
+- [ ] AC-4.4: The deleted user's old cookie is rejected on the next request.
+- [ ] AC-4.5: A failure mid-sequence leaves the user `deleting`; the startup sweep completes it.
+- [ ] AC-4.6: Audit log records timestamp, user id, method, and nothing else.
+- [ ] AC-4.7: Removing an onboarding source also prunes history snapshots containing it.
+
+### Phase 5: Data export
+
+- [ ] AC-5.1: `GET /account/export` streams a ZIP of the user tree plus `account.json`.
+- [ ] AC-5.2: Uploaded PDF/DOCX originals and generated exports are included; `.agent-runtime/`
+  and atomic-write temps are not.
+- [ ] AC-5.3: No archive remains on disk after the response.
+
+### Phase 6: Cost controls and public sign-up
+
+- [ ] AC-6.1: Daily run quota enforced per user with a calm over-quota page.
+- [ ] AC-6.2: A second concurrent run for the same user is refused.
+- [ ] AC-6.3: Privacy notice names Anthropic (and TypeSafe if enabled) as processors and states
+  backup and log retention.
+- [ ] AC-6.4: Invite gate can be switched off by configuration.
+
+---
+
+## 15. Decisions taken and questions left
+
+### Decided in this revision
+
+| Question | Decision |
+|---|---|
+| OAuth providers | Google + GitHub; LinkedIn later |
+| Session duration | 7 days idle, 30 days absolute |
+| Database or filesystem only | SQLite from Phase 1 (revocation requires it) |
+| Account linking | None |
+| Email verification | Trust Google `email_verified` and GitHub `verified`; email is display only |
+| Export format | ZIP of raw files plus `account.json` |
+| Rate limiting | In the app (per-user quota); a proxy cannot see per-user spend |
+| Legacy migration | One-off CLI move, no web route |
+| Deployment shape | One process, local filesystem, HTTPS |
+
+### Still needs the owner
+
+1. **Deletion grace period:** immediate purge (this design), or a recovery window?
+2. **Inactive accounts:** retain indefinitely, or notify and delete after N months?
+3. **Admin role:** none (this design), or a support role that can delete on request?
+4. **Jev verifier for multi-user:** keep off, or review TypeSafe as a processor and enable it?
+5. **Anthropic retention:** is standard commercial retention acceptable, or is zero data
+   retention required before launch?
+6. **Quota numbers:** are 10 runs per user per day and 4 live clients the right starting point?
 
 ---
 
 ## References
 
-- `PRODUCT.md` — Audience and design principles
-- `web/BACKEND.md` — Hexagonal architecture, port/adapter structure
-- `web/app/main.py` — Current CSRF handling
-- `web/app/document_store.py` — DocumentStore implementation
-- `web/app/adapters/workspace_fs.py` — Filesystem workspace adapter
-- `web/app/deps.py` — Composition root with `workspace_root()`
-- Draft PR #32 — Onboarding, document history, originals, exports
+- `PRODUCT.md`: audience and design principles
+- `web/BACKEND.md`: ports and adapters
+- `AGENTS.md`: generation-port constraints and the slug seam
+- `web/app/main.py`: composition, CSRF helper, routes
+- `web/app/deps.py`: `workspace_root()`, adapter construction
+- `web/app/runs.py`: `RunManager`
+- `web/app/adapters/generation_sdk.py`: variant client, tool guard
+- `web/app/onboarding_sdk.py`: onboarding client
+- `web/app/document_store.py`: history, originals, `purge_original`
