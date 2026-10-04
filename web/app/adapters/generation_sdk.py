@@ -177,6 +177,8 @@ class SdkGenerationPort:
         self._variant_client: Any = None
         # Metrics of the most recent call, for observability and the live cache assertion.
         self.last_call: CallMetrics | None = None
+        # Every SDK message of the most recent variant call, subagent turns included.
+        self.last_transcript: list[Any] = []
 
     def _base_options(self) -> dict[str, Any]:  # pragma: no cover - SDK wiring, live-tested
         # No permission_mode here; each client sets its own. The outline client can safely
@@ -236,7 +238,9 @@ class SdkGenerationPort:
             await self._variant_client.connect()
         await self._variant_client.query(prompt)
         parts: list[str] = []
+        self.last_transcript = []
         async for msg in self._variant_client.receive_response():
+            self.last_transcript.append(msg)
             if isinstance(msg, AssistantMessage):
                 for block in msg.content:
                     if isinstance(block, TextBlock):

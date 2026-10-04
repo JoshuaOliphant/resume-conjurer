@@ -22,6 +22,8 @@ master-resume.md
 grimoire.md
 !plugins/conjurer/skills/conjurer/assets/grimoire.md
 !plugins/conjurer/commands/grimoire.md
+# Eval cases and results are built from a real workspace's resume and JDs.
+.claude/hillclimb/
 
 # Committed test fixture workspace for the web backend (a small, non-personal sample).
 !web/tests/fixtures/workspace/grimoire.md
