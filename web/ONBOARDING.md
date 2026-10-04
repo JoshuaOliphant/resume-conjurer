@@ -12,4 +12,10 @@ Style acceptance intentionally uses a constrained vocabulary of short instructio
 
 Review is bounded to 256 excerpts, 8 KiB per excerpt, 64 KiB source text, at most 16 optional files and 64 KiB outbound request. Oversized optional selections are rejected before originals or onboarding state are persisted. Existing oversized sources can be removed from the page to recover. The upload byte cap applies before multipart parsing. No OCR or original-layout recovery is promised. Extraction and model failures leave accepted sources and existing drafts intact.
 
+## Data retention and deletion
+
+Uploaded source files are stored under `.document-originals/<sha>/` keyed by content hash. Onboarding state (`onboarding.json`) is snapshotted to `.document-history/onboarding.json/` on every save. Removing a source from the onboarding page removes it from active state but does not delete the original file or its revision history by default.
+
+To permanently delete an uploaded source's original file, use the purge option when removing the source. This deletes the `.document-originals/<sha>/` directory for that file. Onboarding revision history under `.document-history/` is retained for recovery and is not automatically purged; delete these manually if needed.
+
 No TypeSafe request occurs in this flow. Private career excerpts require separate, precise consent before any future Jev support check. Source-linked onboarding text is not generation evidence: factual additions must still enter master/evidence and be checked by the normal tailoring pipeline.

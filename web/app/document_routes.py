@@ -66,9 +66,14 @@ def document_router(store: DocumentStore | None, templates: Jinja2Templates, run
         return store
 
     def writable(request: Request) -> DocumentStore:
+        site = request.headers.get("sec-fetch-site")
         origin = request.headers.get("origin")
         expected = f"{request.url.scheme}://{request.url.netloc}"
-        if request.headers.get("sec-fetch-site") == "cross-site" or (origin and origin != expected):
+        if site in {"same-origin", "same-site"}:
+            pass
+        elif site is None and origin and origin == expected:
+            pass
+        else:
             raise HTTPException(403, "Source changes must come from this application.")
         repository = configured()
         if runs.status(slug).state == "running":

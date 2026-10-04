@@ -71,9 +71,14 @@ def create_app(
     app.include_router(onboarding_router(documents, templates, onboarding or OnboardingSdk(), run_manager, SLUG, source_lock))
 
     def require_mutation(request: Request) -> None:
+        site = request.headers.get("sec-fetch-site")
         origin = request.headers.get("origin")
         expected = f"{request.url.scheme}://{request.url.netloc}"
-        if request.headers.get("sec-fetch-site") == "cross-site" or (origin and origin != expected):
+        if site in {"same-origin", "same-site"}:
+            pass
+        elif site is None and origin and origin == expected:
+            pass
+        else:
             raise HTTPException(403, "Document changes must come from this application.")
         if run_manager.status(SLUG).state == "running":
             raise HTTPException(409, "Wait for generation to finish before changing final documents.")

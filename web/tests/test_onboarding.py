@@ -39,6 +39,14 @@ def state():
     return value
 
 
+def test_large_master_resume_can_be_listed_and_selection_is_bounded():
+    large_master = "# Casey\n\n" + "\n".join(f"- Achievement {i}" for i in range(300))
+    sources = source_lines(large_master, "master-hash", [])
+    assert len(sources) > 256
+    with pytest.raises(ValueError, match="at most 256"):
+        source_questions(sources)
+
+
 def test_exact_source_lines_and_outbound_prompt_exclude_unselected_originals(state):
     optional = [{"text": "Voice only\n\ngrew revenue 80%", "revision": "extracted-hash", "original_hash": "original-hash",
                  "kind": "voice sample", "filename": "voice.txt", "warnings": ["Review order"]}]

@@ -302,3 +302,25 @@ def test_original_upload_rejects_symlink_in_place_of_immutable_file(
     with pytest.raises(ValueError, match="symlink"):
         store.store_original("resume.pdf", content)
     assert external.read_bytes() == content
+
+
+def test_purge_original_removes_upload_directory(store: DocumentStore) -> None:
+    content = b"sensitive personal data"
+    revision = store.store_original("resume.pdf", content)
+    original_dir = store.root / ".document-originals" / revision
+    assert original_dir.is_dir()
+    assert (original_dir / "resume.pdf").read_bytes() == content
+
+    assert store.purge_original(revision) is True
+    assert not original_dir.exists()
+    assert store.purge_original(revision) is False
+
+
+def test_purge_original_rejects_invalid_hashes(store: DocumentStore) -> None:
+    content = b"file"
+    revision = store.store_original("resume.pdf", content)
+    assert store.purge_original("") is False
+    assert store.purge_original("../parent") is False
+    assert store.purge_original("sub/path") is False
+    assert store.purge_original(r"sub\path") is False
+    assert (store.root / ".document-originals" / revision / "resume.pdf").exists()

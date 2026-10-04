@@ -46,9 +46,14 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
         return documents, drafts
 
     def writable(request: Request) -> tuple[DocumentStore, OnboardingStore]:
+        site = request.headers.get("sec-fetch-site")
         origin = request.headers.get("origin")
         expected = f"{request.url.scheme}://{request.url.netloc}"
-        if request.headers.get("sec-fetch-site") == "cross-site" or (origin and origin != expected):
+        if site in {"same-origin", "same-site"}:
+            pass
+        elif site is None and origin and origin == expected:
+            pass
+        else:
             raise HTTPException(403, "Grimoire changes must come from this application.")
         stores = configured()
         if active or runs.status(slug).state == "running":
@@ -109,8 +114,6 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
                           "revision": hashlib.sha256(imported.text.encode()).hexdigest(),
                           "original_hash": original_hash, "warnings": list(imported.warnings)}
                 optional = [item for item in state["optional_sources"] if item["original_hash"] != original_hash] + [source]
-                master, master_revision = source_store.read_with_revision("master-resume.md")
-                source_lines(master, master_revision, optional)
                 source_store.store_original(filename or "", content)
                 state["optional_sources"] = optional
                 draft_store.save(state, revision)
@@ -122,14 +125,17 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
         return RedirectResponse("/onboarding", status_code=303)
 
     @router.post("/onboarding/sources/remove")
-    def remove_source(request: Request, revision: str = Form(...), original_hash: str = Form(...)):
+    def remove_source(request: Request, revision: str = Form(...), original_hash: str = Form(...),
+                      purge: bool = Form(False)):
         with source_lock:
-            _, draft_store = writable(request)
+            source_store, draft_store = writable(request)
             state, _ = draft_store.read()
             state["optional_sources"] = [source for source in state["optional_sources"] if source["original_hash"] != original_hash]
             state["selected"] = [source for source in state["selected"] if source["original_hash"] != original_hash]
             try:
                 draft_store.save(state, revision)
+                if purge:
+                    source_store.purge_original(original_hash)
             except ConflictError:
                 return render(request, status=409, error="Onboarding changed. Reload before removing a source.")
         return RedirectResponse("/onboarding", status_code=303)
@@ -189,8 +195,8 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
                                   error="The master resume changed while Claude drafted. Your proposal is retained; re-review sources before acceptance.")
         except ConflictError:
             return render(request, state=state, revision=revision, status=409, error="Onboarding changed while Claude drafted. Recover the proposal below before reloading.")
-        except Exception as exc:
-            return render(request, status=400, error=f"Draft failed ({type(exc).__name__}): {exc}. Your saved answers and draft remain available.")
+        except Exception:
+            return render(request, state=state, revision=revision, status=400, error="Draft failed. If a proposal was generated, recover it below before reloading.")
         finally:
             with source_lock:
                 active = False

@@ -11,6 +11,19 @@ from fastapi.testclient import TestClient
 from markupsafe import escape
 from test_document_import import _docx, _pdf, _two_column_pdf
 
+
+class SameOriginClient(TestClient):
+    """TestClient that adds sec-fetch-site: same-origin to all POST requests.
+
+    When the test explicitly passes headers, the default is not applied,
+    allowing cross-origin rejection tests.
+    """
+
+    def post(self, *args, headers=None, **kwargs):
+        if headers is not None:
+            return super().post(*args, headers=headers, **kwargs)
+        return super().post(*args, headers={"sec-fetch-site": "same-origin"}, **kwargs)
+
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.scripts_path import ensure_scripts_on_path
 from app.adapters.verification_fake import NoVerificationPort
@@ -39,7 +52,7 @@ def repo():
 def client(repo):
     gen = FakeGenerationPort()
     app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=False)
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         yield c
 
 
@@ -64,7 +77,7 @@ def document_runs(repo, document_gen):
 def document_client(repo, document_store, document_runs, document_gen):
     app = create_app(repo=repo, gen=document_gen, run_manager=document_runs,
                      documents=document_store, live=False)
-    with TestClient(app) as c:
+    with SameOriginClient(app) as c:
         yield c
 
 
@@ -640,10 +653,28 @@ def test_document_save_rejects_invalid_target(document_client, document_store):
     assert document_store.read("grimoire.md") == "# Voice\nWrite plainly.\n"
 
 
+def test_document_mutations_allow_same_site_requests(document_client, document_store):
+    revision = document_store.revision("master-resume.md")
+    response = document_client.post("/documents/save", data={
+        "document_name": "master-resume.md", "text": "# Same site\n", "revision": revision,
+    }, headers={"sec-fetch-site": "same-site"}, follow_redirects=False)
+    assert response.status_code == 303
+
+
+def test_document_mutations_allow_matching_origin_without_fetch_site(document_client, document_store):
+    revision = document_store.revision("master-resume.md")
+    response = document_client.post("/documents/save", data={
+        "document_name": "master-resume.md", "text": "# Matching origin\n", "revision": revision,
+    }, headers={"origin": "http://testserver"}, follow_redirects=False)
+    assert response.status_code == 303
+
+
 @pytest.mark.parametrize("headers", [
     {"origin": "https://other.example"},
     {"sec-fetch-site": "cross-site"},
-], ids=["cross-origin", "cross-site"])
+    {"sec-fetch-site": "none"},
+    {},
+], ids=["cross-origin", "cross-site", "fetch-site-none", "missing-headers"])
 def test_document_mutations_reject_cross_origin_requests(document_client, document_store, headers):
     revision = document_store.revision("master-resume.md")
     saved = document_client.post("/documents/save", data={

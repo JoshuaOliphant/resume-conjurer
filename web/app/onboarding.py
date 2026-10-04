@@ -52,6 +52,13 @@ def empty_state() -> dict:
 
 
 def source_lines(master: str, revision: str, optional: list[dict]) -> list[dict]:
+    """All available lines from master resume and optional sources for selection.
+
+    This returns unfiltered source lines for the user to select from. The
+    bounded_snippets check is intentionally not applied here: limits should
+    constrain what gets sent to Claude (reviewed_snippets), not what can be
+    listed for selection. A 300-line resume should be browsable.
+    """
     sources = [{"id": key, "text": line, "revision": revision, "kind": "career fact",
                 "filename": "master-resume.md", "original_hash": revision, "warnings": []}
                for key, line in pool_lines(master, "").items()]
@@ -59,7 +66,6 @@ def source_lines(master: str, revision: str, optional: list[dict]) -> list[dict]
         for number, line in enumerate(source["text"].splitlines(), start=1):
             if line.strip():
                 sources.append({**source, "id": f"{source['original_hash']} L{number}", "text": line})
-    bounded_snippets(sources)
     return sources
 
 
