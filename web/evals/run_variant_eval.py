@@ -297,11 +297,13 @@ async def judge_case(arm: Arm, case: Case, rep: int, texts: list[str]) -> dict[s
     """Pairwise judge against the frozen baseline set; the baseline itself is the neutral 0.5."""
     if arm.variant == "baseline":
         return {"judge_win": 0.5}
-    ref_path = arm.flow / "baseline" / "ref" / trace_name(case.id, rep)
+    refs = arm.flow / "baseline" / "ref"
+    ref_path = refs / trace_name(case.id, rep)
     if not ref_path.exists():
-        ref_path = arm.flow / "baseline" / "ref" / trace_name(case.id, 0)
-    if not ref_path.exists():
-        raise CaseFailure("missing_reference", f"no frozen baseline set for {case.id}")
+        others = sorted(refs.glob(trace_name(case.id, 0).replace("_rep0.json", "_rep*.json")))
+        if not others:
+            raise CaseFailure("missing_reference", f"no frozen baseline set for {case.id}")
+        ref_path = others[0]
     reference = json.loads(ref_path.read_text())["texts"]
     on_a = grading.candidate_is_a(case.id, rep, arm.variant)
     set_a, set_b = (texts, reference) if on_a else (reference, texts)

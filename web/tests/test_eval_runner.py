@@ -316,11 +316,11 @@ def test_candidate_is_judged_blind_against_the_frozen_baseline_set(tmp_path, sou
     assert not (arm.dir / "ref").exists()
 
 
-def test_a_rep_without_its_own_reference_falls_back_to_rep_zero(tmp_path, sources):
-    _freeze_reference(tmp_path, sources, rep=0)
+def test_a_rep_without_its_own_reference_falls_back_to_another_baseline_rep(tmp_path, sources):
+    _freeze_reference(tmp_path, sources, rep=1)
     arm = _arm(tmp_path, sources, variant="v1")
 
-    row = asyncio.run(runner.run_case(arm, FakePort(None), _case(), rep=2))
+    row = asyncio.run(runner.run_case(arm, FakePort(None), _case(), rep=0))
 
     assert row["grade"]["judge_win"] in (0.0, 1.0)
 
