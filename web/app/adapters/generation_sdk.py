@@ -35,7 +35,7 @@ import composer  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_PLUGIN_DIR = REPO_ROOT / "plugins" / "conjurer"
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-sonnet-5-5"
 
 # The only tools the variant agent may use: read/search and subagent dispatch. This is a
 # deny-by-default allowlist, not a denylist — anything not named here (unknown built-ins,
