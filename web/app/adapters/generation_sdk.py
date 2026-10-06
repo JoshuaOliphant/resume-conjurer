@@ -189,6 +189,9 @@ class SdkGenerationPort:
             plugins=[{"type": "local", "path": str(self.plugin_dir)}],
             setting_sources=[],
             model=self.model,
+            # The CLI runs Agent-tool subagents in the background by default; the variant turn
+            # would end before the variant-generator returns, leaving no block to relay.
+            env={"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"},
         )
 
     async def outline(self, slug: str) -> Outline:  # pragma: no cover - live-tested

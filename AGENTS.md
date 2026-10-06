@@ -104,6 +104,11 @@ Rationale in `web/BACKEND.md`; the empirically verified SDK contract in
   they share the cached prefix. Recreating it per unit throws that away; this is a design rule, not
   an optimization. The outline client is a one-shot `async with`, because it is called once per run.
 - **`setting_sources=[]`** isolates the SDK from this repo's own `.claude/` hooks and settings.
+- **`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`** in the client `env` keeps Agent-tool subagents
+  synchronous. Without it the CLI launches `conjurer:variant-generator` in the background, the
+  variant turn ends before the subagent returns, and the parent model invents a "verbatim" block
+  it never received: ungrounded variants in a format `variants_from_block` cannot parse. Found by
+  the variant-generation eval (`web/evals/`).
 
 ### Async run model
 
