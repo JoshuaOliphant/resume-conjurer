@@ -322,6 +322,17 @@ def test_missing_reference_and_judge_failure_are_recorded_failures(tmp_path, sou
     assert judged.value.failure_class == "grader_error"
 
 
+def test_generation_with_no_parsable_variants_is_a_failure_not_a_zero_row(tmp_path, sources):
+    arm = _arm(tmp_path, sources)
+
+    with pytest.raises(runner.CaseFailure) as failure:
+        asyncio.run(runner.run_case(arm, FakePort(None, texts=()), _case(), 0))
+
+    assert failure.value.failure_class == "unparseable_output"
+    assert failure.value.extra["usage"]["output_tokens"] == 50
+    assert (arm.flow / failure.value.extra["trace"]).exists()
+
+
 @pytest.mark.parametrize(
     "port_kwargs, failure_class",
     [({"delay": 1.0}, "timeout"), ({"error": RuntimeError("cli died")}, "harness_error"),

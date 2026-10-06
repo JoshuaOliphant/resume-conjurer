@@ -324,16 +324,20 @@ async def run_case(arm: Arm, port: Any, case: Case, rep: int) -> dict[str, Any]:
     transcript = port.last_transcript
     served = check_served_model(transcript, arm.model)
     result = result_message(transcript)
+    trace_path = arm.dir / "traces" / trace_name(case.id, rep)
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    trace_path.write_text(json.dumps(grading.transcript_to_trace(prompt, transcript), indent=2))
+    if not variants:
+        raise CaseFailure(
+            "unparseable_output", "no variant block parsed from the final message",
+            usage=usage_of(port), trace=str(trace_path.relative_to(arm.flow)),
+        )
     texts = [v.text for v in variants]
     parsed = [{"text": v.text, "citation": v.evidence_items[0].id} for v in variants]
     grades, jev_retries = await grade_variants(parsed, case.kind, arm.lines_by_app[case.app], arm.ask)
     judged = await judge_case(arm, case, rep, texts)
 
     stop_reason = getattr(result, "stop_reason", None)
-    trace = grading.transcript_to_trace(prompt, transcript)
-    trace_path = arm.dir / "traces" / trace_name(case.id, rep)
-    trace_path.parent.mkdir(parents=True, exist_ok=True)
-    trace_path.write_text(json.dumps(trace, indent=2))
     if arm.variant == "baseline":
         ref_path = arm.dir / "ref" / trace_name(case.id, rep)
         ref_path.parent.mkdir(parents=True, exist_ok=True)
