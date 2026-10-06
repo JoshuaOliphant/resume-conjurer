@@ -61,6 +61,7 @@ HARNESS_FILES = (
 )
 RETRYABLE_STATUS = {429, 500, 502, 503, 504, 529}
 INTERRUPTED = "[Request interrupted"
+MODEL_FAILURES = {"unparseable_output"}
 
 Ask = Callable[[dict[str, Any], dict[str, Any]], Awaitable[dict[str, Any]]]
 Judge = Callable[[str, str], Awaitable[dict[str, Any]]]
@@ -146,11 +147,21 @@ def trace_name(case_id: str, rep: int) -> str:
     return f"{case_id.replace('/', '__')}_rep{rep}.json"
 
 
-def done_keys(results: Path) -> set[tuple[str, int]]:
-    if not results.exists():
-        return set()
-    rows = [json.loads(line) for line in results.read_text().splitlines() if line.strip()]
-    return {(row["prompt_id"], row["rep"]) for row in rows}
+def _jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def done_keys(variant_dir: Path) -> set[tuple[str, int]]:
+    """Attempts not to run again: scored rows, and failures that are the model's own doing."""
+    scored = {(row["prompt_id"], row["rep"]) for row in _jsonl(variant_dir / "results.jsonl")}
+    final = {
+        (error["prompt_id"], error["rep"])
+        for error in _jsonl(variant_dir / "errors.jsonl")
+        if error["failure_class"] in MODEL_FAILURES
+    }
+    return scored | final
 
 
 def append_jsonl(path: Path, row: dict[str, Any]) -> None:
@@ -436,7 +447,7 @@ async def run_arm(
     concurrency: int,
     make_port: Callable[[Path], Any],
 ) -> None:
-    done = done_keys(arm.dir / "results.jsonl")
+    done = done_keys(arm.dir)
     groups: dict[tuple[str, int], list[Case]] = {}
     for rep in range(reps):
         for case in cases:

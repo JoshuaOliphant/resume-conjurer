@@ -154,13 +154,14 @@ def test_workspace_holds_only_generation_inputs_and_is_rebuilt_fresh(tmp_path, s
     assert not (dest / "stale").exists()
 
 
-def test_resume_keys_come_from_written_rows(tmp_path):
-    results = tmp_path / "results.jsonl"
-    assert runner.done_keys(results) == set()
+def test_resume_skips_scored_rows_and_model_failures_but_retries_harness_failures(tmp_path):
+    assert runner.done_keys(tmp_path) == set()
 
-    runner.append_jsonl(results, {"prompt_id": "x", "rep": 1})
+    runner.append_jsonl(tmp_path / "results.jsonl", {"prompt_id": "x", "rep": 1})
+    runner.append_jsonl(tmp_path / "errors.jsonl", {"prompt_id": "y", "rep": 0, "failure_class": "unparseable_output"})
+    runner.append_jsonl(tmp_path / "errors.jsonl", {"prompt_id": "z", "rep": 0, "failure_class": "subagent_interrupted"})
 
-    assert runner.done_keys(results) == {("x", 1)}
+    assert runner.done_keys(tmp_path) == {("x", 1), ("y", 0)}
     assert runner.trace_name("app/unit.id", 2) == "app__unit.id_rep2.json"
 
 
@@ -393,7 +394,7 @@ def test_group_records_failures_in_the_sidecar_and_continues_on_a_fresh_port(tmp
 
     errors = [json.loads(line) for line in (arm.dir / "errors.jsonl").read_text().splitlines()]
     assert [(e["prompt_id"], e["failure_class"]) for e in errors] == [(f"{APP}/x", "harness_error")]
-    assert runner.done_keys(arm.dir / "results.jsonl") == {(f"{APP}/y", 0)}
+    assert runner.done_keys(arm.dir) == {(f"{APP}/y", 0)}
     assert all(port.closed for port in FakePort.instances)
 
 
@@ -408,7 +409,7 @@ def test_arm_skips_written_cases_and_runs_the_rest_per_app_and_rep(tmp_path, sou
 
     asyncio.run(runner.run_arm(arm, sources, [_case()], reps=2, concurrency=2, make_port=make_port))
 
-    assert runner.done_keys(arm.dir / "results.jsonl") == {(_case().id, 0), (_case().id, 1)}
+    assert runner.done_keys(arm.dir) == {(_case().id, 0), (_case().id, 1)}
     assert workspaces == [f"{APP}_rep1"]
 
 
