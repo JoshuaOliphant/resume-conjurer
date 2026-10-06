@@ -122,6 +122,29 @@ def test_cover_paragraph_is_held_to_its_own_voice_rules():
     assert "weak_verb" not in grade["probabilities"]
 
 
+COVER = "My thesis is that reliability lives in the environment. Those three ideas shaped syseng-oncall v1.1.0."
+
+
+def test_cover_paragraph_with_opinion_and_a_prose_count_is_fact_clean_when_nothing_is_unstated():
+    grade = grading.grade_variant(COVER, CITED, "cover_paragraph", _answers(relation="partly_supports", confidence=0.95))
+
+    assert grade["verdict"] == "adds_detail"
+    assert grade["unsourced_numbers"] == []
+    assert grade["fact_clean"] is True
+
+
+@pytest.mark.parametrize(
+    "claim, answers",
+    [
+        (COVER + " It cut paging 45%.", _answers(relation="partly_supports")),
+        (COVER, _answers(unstated=0.7)),
+        (COVER, _answers(relation="contradicts")),
+    ],
+)
+def test_cover_paragraph_fails_on_an_unsourced_digit_an_unstated_fact_or_a_contradiction(claim, answers):
+    assert grading.grade_variant(claim, CITED, "cover_paragraph", answers)["fact_clean"] is False
+
+
 def test_regex_style_rules_come_from_the_existing_linter():
     grade = grading.grade_variant(CLAIM + " It really mattered.", CITED, "resume_bullet", _answers())
 

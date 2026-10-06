@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ import lint  # noqa: E402
 import verify  # noqa: E402
 
 FLAG = verify.UNSTATED_FLAG
+DIGITS_RE = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")
 SUPPORTING_RELATIONS = ("supports", "partly_supports")
 INVENTED_FACT_VERDICTS = ("adds_detail", "conflicts", "not_covered")
 
@@ -183,6 +185,10 @@ def _noul(answers: dict[str, Any], question_id: str) -> float:
     return _probability(answers[question_id]["noul"], question_id)
 
 
+def _digits_in(text: str) -> set[str]:
+    return {match.replace(",", "") for match in DIGITS_RE.findall(text)}
+
+
 def grade_variant(
     claim: str, cited: list[str], kind: str, answers: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
@@ -211,9 +217,14 @@ def grade_variant(
     numbers = verify.unsourced_numbers(claim, "\n".join(cited))
     lint_findings = [f.rule for f in lint.lint_text(claim, Path("variant"), kind == "cover_paragraph")]
     overclaims = [p for p in (delivery, ownership, adoption) if p is not None]
+    if kind == "cover_paragraph":
+        numbers = [n for n in numbers if n in _digits_in(claim)]
+        fact_clean = unstated < FLAG and relation != "contradicts" and not numbers
+    else:
+        fact_clean = verdict not in INVENTED_FACT_VERDICTS and not numbers
     return {
         "verdict": verdict,
-        "fact_clean": verdict not in INVENTED_FACT_VERDICTS and not numbers,
+        "fact_clean": fact_clean,
         "overclaim_free": all(p < FLAG for p in overclaims),
         "cite_ok": has_trace and relation in SUPPORTING_RELATIONS,
         "voice": sum(p < FLAG for p in voice.values()) / len(voice),
