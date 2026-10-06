@@ -60,6 +60,7 @@ HARNESS_FILES = (
     REPO_ROOT / "plugins" / "conjurer" / "skills" / "conjurer" / "SKILL.md",
 )
 RETRYABLE_STATUS = {429, 500, 502, 503, 504, 529}
+INTERRUPTED = "[Request interrupted"
 
 Ask = Callable[[dict[str, Any], dict[str, Any]], Awaitable[dict[str, Any]]]
 Judge = Callable[[str, str], Awaitable[dict[str, Any]]]
@@ -312,7 +313,16 @@ async def judge_case(arm: Arm, case: Case, rep: int, texts: list[str]) -> dict[s
     }
 
 
-async def run_case(arm: Arm, port: Any, case: Case, rep: int) -> dict[str, Any]:
+def missing_block_class(trace: list[dict[str, Any]]) -> str:
+    """Why a generation produced no variant block: an interrupted dispatch, or the model's format."""
+    interrupted = any(
+        turn["role"] == "tool_result" and turn["content"].startswith(INTERRUPTED) for turn in trace
+    )
+    return "subagent_interrupted" if interrupted else "unparseable_output"
+
+
+async def run_case(arm: Arm, port: Any, case: Case, rep: int, prior_cost: float = 0.0) -> dict[str, Any]:
+    """Generate and grade one case. ``prior_cost`` is the port's cumulative SDK cost before this call."""
     prompt = build_variant_prompt(case.app, case.unit, N_VARIANTS)
     try:
         variants = await asyncio.wait_for(port.variants(case.app, case.unit, N_VARIANTS), arm.timeout_s)
@@ -321,16 +331,32 @@ async def run_case(arm: Arm, port: Any, case: Case, rep: int) -> dict[str, Any]:
     except Exception as error:
         raise CaseFailure("harness_error", f"generation: {error!r}") from error
 
+    spent = {
+        "sdk_cost_usd": port.last_call.cost_usd - prior_cost,
+        "sdk_cost_cumulative_usd": port.last_call.cost_usd,
+        "usage": usage_of(port),
+    }
+    try:
+        return await score_generation(arm, port, case, rep, prompt, variants, spent)
+    except CaseFailure as failure:
+        failure.extra.update(spent)
+        raise
+
+
+async def score_generation(
+    arm: Arm, port: Any, case: Case, rep: int, prompt: str, variants: list[Any], spent: dict[str, Any]
+) -> dict[str, Any]:
     transcript = port.last_transcript
     served = check_served_model(transcript, arm.model)
     result = result_message(transcript)
+    trace = grading.transcript_to_trace(prompt, transcript)
     trace_path = arm.dir / "traces" / trace_name(case.id, rep)
     trace_path.parent.mkdir(parents=True, exist_ok=True)
-    trace_path.write_text(json.dumps(grading.transcript_to_trace(prompt, transcript), indent=2))
+    trace_path.write_text(json.dumps(trace, indent=2))
     if not variants:
         raise CaseFailure(
-            "unparseable_output", "no variant block parsed from the final message",
-            usage=usage_of(port), trace=str(trace_path.relative_to(arm.flow)),
+            missing_block_class(trace), "no variant block parsed from the final message",
+            trace=str(trace_path.relative_to(arm.flow)),
         )
     texts = [v.text for v in variants]
     parsed = [{"text": v.text, "citation": v.evidence_items[0].id} for v in variants]
@@ -353,12 +379,13 @@ async def run_case(arm: Arm, port: Any, case: Case, rep: int) -> dict[str, Any]:
         "stop_reason": stop_reason,
         "grade": {**grading.grade_case(grades, N_VARIANTS), "judge_win": judged["judge_win"]},
         "model": arm.model,
-        "usage": usage_of(port),
+        "usage": spent["usage"],
         "latency_s": port.last_call.duration_ms / 1000,
         "turns": port.last_call.num_turns,
         **judge_fields,
         "meta": {
-            "sdk_cost_usd": port.last_call.cost_usd,
+            "sdk_cost_usd": spent["sdk_cost_usd"],
+            "sdk_cost_cumulative_usd": spent["sdk_cost_cumulative_usd"],
             "served_models": sorted(served),
             "jev_retries": jev_retries,
             "variants": grades,
@@ -374,12 +401,17 @@ async def run_group(
     cases: list[Case],
     rep: int,
 ) -> None:
-    """Run one (app, rep)'s cases in order on one port; a failed attempt gets a fresh port."""
+    """Run one (app, rep)'s cases in order on one port; a failed attempt gets a fresh port.
+
+    The SDK reports cost cumulatively per client session, so each row records the difference
+    from the port's previous call.
+    """
     port = make_port(workspace)
+    prior_cost = 0.0
     try:
         for case in cases:
             try:
-                row = await run_case(arm, port, case, rep)
+                row = await run_case(arm, port, case, rep, prior_cost)
             except CaseFailure as failure:
                 append_jsonl(
                     arm.dir / "errors.jsonl",
@@ -388,7 +420,9 @@ async def run_group(
                 )
                 await port.aclose()
                 port = make_port(workspace)
+                prior_cost = 0.0
                 continue
+            prior_cost = row["meta"]["sdk_cost_cumulative_usd"]
             append_jsonl(arm.dir / "results.jsonl", row)
     finally:
         await port.aclose()

@@ -8,7 +8,13 @@ import urllib.error
 from pathlib import Path
 
 import pytest
-from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
+from claude_agent_sdk.types import (
+    AssistantMessage,
+    ResultMessage,
+    TextBlock,
+    ToolResultBlock,
+    UserMessage,
+)
 
 from app.domain import Evidence, Variant
 from app.metrics import CallMetrics
@@ -20,6 +26,7 @@ APP = "globex-staff-platform"
 MODEL = "claude-sonnet-4-6"
 CITATION = "master-resume.md L18"
 SUPPORTED = "Owned the billing on-call rotation; cut paging volume 60% by adding idempotency keys."
+INTERRUPT = "[Request interrupted by user for tool use]"
 
 
 def _case(case_id=f"{APP}/resume.bullet_1", kind="resume_bullet"):
@@ -69,28 +76,37 @@ class FakePort:
     instances: list["FakePort"] = []
 
     def __init__(self, workspace, texts=(SUPPORTED,) * 4, model=MODEL, stop_reason="end_turn",
-                 error=None, delay=0.0):
+                 error=None, delay=0.0, interrupted=False, fail_on_call=None):
         self.workspace = workspace
         self.texts = texts
         self.model = model
         self.stop_reason = stop_reason
         self.error = error
         self.delay = delay
+        self.interrupted = interrupted
+        self.fail_on_call = fail_on_call
+        self.calls = 0
         self.closed = False
+        self.session_cost = 0.0
         self.last_transcript = []
         self.last_call = None
         FakePort.instances.append(self)
 
     async def variants(self, slug, unit, n):
         await asyncio.sleep(self.delay)
-        if self.error:
-            raise self.error
+        self.calls += 1
+        if self.error or self.calls == self.fail_on_call:
+            raise self.error or RuntimeError("cli died mid-session")
+        dispatch = [UserMessage(content=[ToolResultBlock(tool_use_id="t1", content=INTERRUPT)])] if self.interrupted else []
         self.last_transcript = [
+            *dispatch,
             AssistantMessage(content=[TextBlock(text="## Unit")], model=self.model),
             ResultMessage(subtype="success", duration_ms=1500, duration_api_ms=1, is_error=False,
                           num_turns=3, session_id="s", stop_reason=self.stop_reason),
         ]
-        self.last_call = CallMetrics(cost_usd=0.02, input_tokens=100, output_tokens=50,
+        # The SDK reports total_cost_usd cumulatively over the client session.
+        self.session_cost += 0.02
+        self.last_call = CallMetrics(cost_usd=self.session_cost, input_tokens=100, output_tokens=50,
                                      cache_read_tokens=80, cache_creation_tokens=20,
                                      duration_ms=1500, num_turns=3)
         return [
@@ -330,7 +346,28 @@ def test_generation_with_no_parsable_variants_is_a_failure_not_a_zero_row(tmp_pa
 
     assert failure.value.failure_class == "unparseable_output"
     assert failure.value.extra["usage"]["output_tokens"] == 50
+    assert failure.value.extra["sdk_cost_usd"] == pytest.approx(0.02)
     assert (arm.flow / failure.value.extra["trace"]).exists()
+
+
+def test_an_interrupted_dispatch_is_not_charged_to_the_model_as_bad_format(tmp_path, sources):
+    with pytest.raises(runner.CaseFailure) as failure:
+        asyncio.run(runner.run_case(_arm(tmp_path, sources), FakePort(None, texts=(), interrupted=True), _case(), 0))
+
+    assert failure.value.failure_class == "subagent_interrupted"
+
+
+def test_each_row_costs_its_own_call_although_the_sdk_reports_session_totals(tmp_path, sources):
+    arm = _arm(tmp_path, sources)
+    ports = iter([FakePort(None, fail_on_call=3), FakePort(None)])
+    cases = [_case(f"{APP}/a"), _case(f"{APP}/b"), _case(f"{APP}/c"), _case(f"{APP}/d")]
+
+    asyncio.run(runner.run_group(arm, lambda ws: next(ports), tmp_path, cases, 0))
+
+    rows = [json.loads(line) for line in (arm.dir / "results.jsonl").read_text().splitlines()]
+    assert [r["prompt_id"].split("/")[1] for r in rows] == ["a", "b", "d"]
+    assert [r["meta"]["sdk_cost_usd"] for r in rows] == pytest.approx([0.02, 0.02, 0.02])
+    assert [r["meta"]["sdk_cost_cumulative_usd"] for r in rows] == pytest.approx([0.02, 0.04, 0.02])
 
 
 @pytest.mark.parametrize(
