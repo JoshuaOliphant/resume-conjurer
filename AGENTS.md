@@ -133,6 +133,8 @@ it, so do not bake further single-user assumptions into the domain model or rout
 
 `knowledge/capture/daily/2026-10-02-product-22.md` records runtime findings and review lessons from the product implementation.
 
+`knowledge/capture/daily/2026-10-06-variant-generation-eval.md` records the variant-generation eval's findings: the background-subagent defect, MCP token overhead, Jev question design, and judge calibration.
+
 `web/ONBOARDING.md` covers reviewed grimoire sources, bounded Claude drafting, local validation limits, and explicit acceptance.
 
 `PRODUCT.md` (audience, anti-references, design principles) and `DESIGN.md` (the oxblood-on-white
