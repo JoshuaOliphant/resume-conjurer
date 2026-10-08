@@ -247,26 +247,21 @@ def test_transcript_becomes_report_turns_with_subagent_turns_labelled():
     assert trace[8] == {"role": "assistant", "content": "[_UnknownBlock]"}
 
 
-def test_api_requests_are_counted_once_per_message_for_parent_and_subagent():
-    usage = {"input_tokens": 3, "output_tokens": 40, "cache_read_input_tokens": 90_000, "cache_creation_input_tokens": 500}
-    messages = [
-        AssistantMessage(content=[ThinkingBlock(thinking="", signature="s")], model="claude-haiku-5-5", usage=usage, message_id="m1"),
-        AssistantMessage(content=[TextBlock(text="dispatch")], model="claude-haiku-5-5", usage=usage, message_id="m1"),
-        AssistantMessage(content=[TextBlock(text="block")], model="claude-haiku-5-5", parent_tool_use_id="t1",
-                         usage={"output_tokens": 900, "cache_creation_input_tokens": None}, message_id="m2"),
-        AssistantMessage(content=[TextBlock(text="no usage")], model="claude-haiku-5-5", message_id="m3"),
-        AssistantMessage(content=[TextBlock(text="no id")], model="claude-haiku-5-5", usage=usage),
-        UserMessage(content="not a request"),
-    ]
+def test_usage_delta_is_one_calls_tokens_per_model_from_session_totals():
+    prior = {
+        "claude-haiku-5-5": {"inputTokens": 8, "outputTokens": 10_092, "cacheReadInputTokens": 44_689, "cacheCreationInputTokens": 40_039},
+        "claude-haiku-4-5-20251001": {"inputTokens": 1073, "outputTokens": 19, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
+    }
+    current = {
+        "claude-haiku-5-5": {"inputTokens": 16, "outputTokens": 24_571, "cacheReadInputTokens": 122_447, "cacheCreationInputTokens": 64_984, "costUSD": 1.0},
+        "claude-haiku-4-5-20251001": prior["claude-haiku-4-5-20251001"],
+        "claude-sonnet-5-5": {"outputTokens": 7, "inputTokens": None},
+    }
 
-    requests = grading.api_requests(messages)
-
-    assert requests == [
-        {"model": "claude-haiku-5-5", "subagent": False, "input_tokens": 3, "output_tokens": 40,
-         "cache_read_input_tokens": 90_000, "cache_creation_input_tokens": 500},
-        {"model": "claude-haiku-5-5", "subagent": True, "input_tokens": 0, "output_tokens": 900,
-         "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
-    ]
+    assert grading.usage_delta(current, prior) == {
+        "claude-haiku-5-5": {"inputTokens": 8, "outputTokens": 14_479, "cacheReadInputTokens": 77_758, "cacheCreationInputTokens": 24_945},
+        "claude-sonnet-5-5": {"inputTokens": 0, "outputTokens": 7, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
+    }
 
 
 def _result(model_usage):

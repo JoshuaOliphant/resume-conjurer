@@ -98,14 +98,17 @@ class FakePort:
         if self.error or self.calls == self.fail_on_call:
             raise self.error or RuntimeError("cli died mid-session")
         dispatch = [UserMessage(content=[ToolResultBlock(tool_use_id="t1", content=INTERRUPT)])] if self.interrupted else []
+        # The SDK reports total_cost_usd and model_usage cumulatively over the client session.
+        self.session_cost += 0.02
+        model_usage = {self.model: {"inputTokens": 5 * self.calls, "outputTokens": 1000 * self.calls,
+                                    "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}}
         self.last_transcript = [
             *dispatch,
             AssistantMessage(content=[TextBlock(text="## Unit")], model=self.model),
             ResultMessage(subtype="success", duration_ms=1500, duration_api_ms=1, is_error=False,
-                          num_turns=3, session_id="s", stop_reason=self.stop_reason),
+                          num_turns=3, session_id="s", stop_reason=self.stop_reason,
+                          model_usage=model_usage, usage={"iterations": [{"output_tokens": 50}]}),
         ]
-        # The SDK reports total_cost_usd cumulatively over the client session.
-        self.session_cost += 0.02
         self.last_call = CallMetrics(cost_usd=self.session_cost, input_tokens=100, output_tokens=50,
                                      cache_read_tokens=80, cache_creation_tokens=20,
                                      duration_ms=1500, num_turns=3)
@@ -369,6 +372,9 @@ def test_each_row_costs_its_own_call_although_the_sdk_reports_session_totals(tmp
     assert [r["prompt_id"].split("/")[1] for r in rows] == ["a", "b", "d"]
     assert [r["meta"]["sdk_cost_usd"] for r in rows] == pytest.approx([0.02, 0.02, 0.02])
     assert [r["meta"]["sdk_cost_cumulative_usd"] for r in rows] == pytest.approx([0.02, 0.04, 0.02])
+    per_call = {MODEL: {"inputTokens": 5, "outputTokens": 1000, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}}
+    assert [r["meta"]["model_usage"] for r in rows] == [per_call, per_call, per_call]
+    assert rows[0]["meta"]["parent_iterations"] == [{"output_tokens": 50}]
 
 
 @pytest.mark.parametrize(

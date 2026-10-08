@@ -29,7 +29,7 @@ import shutil
 import sys
 import urllib.error
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -334,8 +334,19 @@ def missing_block_class(trace: list[dict[str, Any]]) -> str:
     return "subagent_interrupted" if interrupted else "unparseable_output"
 
 
-async def run_case(arm: Arm, port: Any, case: Case, rep: int, prior_cost: float = 0.0) -> dict[str, Any]:
-    """Generate and grade one case. ``prior_cost`` is the port's cumulative SDK cost before this call."""
+@dataclass(frozen=True)
+class SessionTotals:
+    """The SDK's session-cumulative cost and per-model tokens as of a port's last call."""
+
+    cost_usd: float = 0.0
+    model_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+async def run_case(
+    arm: Arm, port: Any, case: Case, rep: int, prior: SessionTotals | None = None
+) -> dict[str, Any]:
+    """Generate and grade one case. ``prior`` is the port's session totals before this call."""
+    prior = prior or SessionTotals()
     prompt = build_variant_prompt(case.app, case.unit, N_VARIANTS)
     try:
         variants = await asyncio.wait_for(port.variants(case.app, case.unit, N_VARIANTS), arm.timeout_s)
@@ -344,9 +355,15 @@ async def run_case(arm: Arm, port: Any, case: Case, rep: int, prior_cost: float 
     except Exception as error:
         raise CaseFailure("harness_error", f"generation: {error!r}") from error
 
+    result = result_message(port.last_transcript)
+    model_usage = getattr(result, "model_usage", None) or {}
+    parent_usage = getattr(result, "usage", None) or {}
     spent = {
-        "sdk_cost_usd": port.last_call.cost_usd - prior_cost,
+        "sdk_cost_usd": port.last_call.cost_usd - prior.cost_usd,
         "sdk_cost_cumulative_usd": port.last_call.cost_usd,
+        "model_usage": grading.usage_delta(model_usage, prior.model_usage),
+        "model_usage_cumulative": model_usage,
+        "parent_iterations": parent_usage.get("iterations") or [],
         "usage": usage_of(port),
     }
     try:
@@ -399,7 +416,9 @@ async def score_generation(
         "meta": {
             "sdk_cost_usd": spent["sdk_cost_usd"],
             "sdk_cost_cumulative_usd": spent["sdk_cost_cumulative_usd"],
-            "api_requests": grading.api_requests(transcript),
+            "model_usage": spent["model_usage"],
+            "model_usage_cumulative": spent["model_usage_cumulative"],
+            "parent_iterations": spent["parent_iterations"],
             "served_models": sorted(served),
             "jev_retries": jev_retries,
             "variants": grades,
@@ -417,15 +436,15 @@ async def run_group(
 ) -> None:
     """Run one (app, rep)'s cases in order on one port; a failed attempt gets a fresh port.
 
-    The SDK reports cost cumulatively per client session, so each row records the difference
-    from the port's previous call.
+    The SDK reports cost and per-model tokens cumulatively per client session, so each row
+    records the difference from the port's previous call.
     """
     port = make_port(workspace)
-    prior_cost = 0.0
+    prior = SessionTotals()
     try:
         for case in cases:
             try:
-                row = await run_case(arm, port, case, rep, prior_cost)
+                row = await run_case(arm, port, case, rep, prior)
             except CaseFailure as failure:
                 append_jsonl(
                     arm.dir / "errors.jsonl",
@@ -434,9 +453,9 @@ async def run_group(
                 )
                 await port.aclose()
                 port = make_port(workspace)
-                prior_cost = 0.0
+                prior = SessionTotals()
                 continue
-            prior_cost = row["meta"]["sdk_cost_cumulative_usd"]
+            prior = SessionTotals(row["meta"]["sdk_cost_cumulative_usd"], row["meta"]["model_usage_cumulative"])
             append_jsonl(arm.dir / "results.jsonl", row)
     finally:
         await port.aclose()
