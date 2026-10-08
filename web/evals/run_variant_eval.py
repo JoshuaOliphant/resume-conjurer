@@ -399,6 +399,7 @@ async def score_generation(
         "meta": {
             "sdk_cost_usd": spent["sdk_cost_usd"],
             "sdk_cost_cumulative_usd": spent["sdk_cost_cumulative_usd"],
+            "api_requests": grading.api_requests(transcript),
             "served_models": sorted(served),
             "jev_retries": jev_retries,
             "variants": grades,

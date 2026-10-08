@@ -357,6 +357,28 @@ def transcript_to_trace(prompt: str, messages: list[Any]) -> list[dict[str, Any]
     return trace
 
 
+def api_requests(messages: list[Any]) -> list[dict[str, Any]]:
+    """Token usage per API request, parent and subagent alike, from the transcript's assistant turns.
+
+    The SDK emits one AssistantMessage per content block, each repeating its request's usage,
+    so requests are keyed by message_id.
+    """
+    requests: dict[str, dict[str, Any]] = {}
+    for message in messages:
+        usage = getattr(message, "usage", None)
+        if type(message).__name__ != "AssistantMessage" or not usage or not message.message_id:
+            continue
+        requests[message.message_id] = {
+            "model": message.model,
+            "subagent": bool(message.parent_tool_use_id),
+            "input_tokens": usage.get("input_tokens") or 0,
+            "output_tokens": usage.get("output_tokens") or 0,
+            "cache_read_input_tokens": usage.get("cache_read_input_tokens") or 0,
+            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens") or 0,
+        }
+    return list(requests.values())
+
+
 def served_models(messages: list[Any]) -> set[str]:
     """Every model the transcript's assistant turns and result usage report."""
     models = {m.model for m in messages if type(m).__name__ == "AssistantMessage"}

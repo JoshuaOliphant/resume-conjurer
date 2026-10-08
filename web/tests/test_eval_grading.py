@@ -247,6 +247,28 @@ def test_transcript_becomes_report_turns_with_subagent_turns_labelled():
     assert trace[8] == {"role": "assistant", "content": "[_UnknownBlock]"}
 
 
+def test_api_requests_are_counted_once_per_message_for_parent_and_subagent():
+    usage = {"input_tokens": 3, "output_tokens": 40, "cache_read_input_tokens": 90_000, "cache_creation_input_tokens": 500}
+    messages = [
+        AssistantMessage(content=[ThinkingBlock(thinking="", signature="s")], model="claude-haiku-5-5", usage=usage, message_id="m1"),
+        AssistantMessage(content=[TextBlock(text="dispatch")], model="claude-haiku-5-5", usage=usage, message_id="m1"),
+        AssistantMessage(content=[TextBlock(text="block")], model="claude-haiku-5-5", parent_tool_use_id="t1",
+                         usage={"output_tokens": 900, "cache_creation_input_tokens": None}, message_id="m2"),
+        AssistantMessage(content=[TextBlock(text="no usage")], model="claude-haiku-5-5", message_id="m3"),
+        AssistantMessage(content=[TextBlock(text="no id")], model="claude-haiku-5-5", usage=usage),
+        UserMessage(content="not a request"),
+    ]
+
+    requests = grading.api_requests(messages)
+
+    assert requests == [
+        {"model": "claude-haiku-5-5", "subagent": False, "input_tokens": 3, "output_tokens": 40,
+         "cache_read_input_tokens": 90_000, "cache_creation_input_tokens": 500},
+        {"model": "claude-haiku-5-5", "subagent": True, "input_tokens": 0, "output_tokens": 900,
+         "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+    ]
+
+
 def _result(model_usage):
     return ResultMessage(
         subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=1,
