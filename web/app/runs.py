@@ -169,11 +169,17 @@ class RunManager:
         self._metrics[slug] = run_metrics
         self._support[slug] = {}
         self._generated[slug] = {}
+        started = time.monotonic()
         try:
-            started = time.monotonic()
             outline = await self._gen.outline(slug)
-            self._record_step(run_metrics, "outline", started)
-            self._repo.save_outline(slug, outline)
+        except Exception:
+            logger.exception("outline generation failed for slug=%s", slug)
+            self._status[slug].state = "error"
+            self._status[slug].error = "Could not generate the outline. Try starting again."
+            return
+        self._record_step(run_metrics, "outline", started)
+        try:
+            self._repo.begin_generation(slug, outline)
             self._status[slug] = RunStatus(state="running", units_total=len(outline.units), units={u.unit_id: UnitGenerationStatus(u.unit_id) for u in outline.units})
             pool = self._repo.load_inputs(slug).evidence_pool
             for ou in outline.units:

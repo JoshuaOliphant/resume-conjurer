@@ -183,7 +183,20 @@ class FsWorkspaceRepository:
             ],
         }
         path = self._app_dir(slug) / "outline.json"
-        path.write_text(json.dumps(data, indent=2) + "\n")
+        self._write_atomic(path, json.dumps(data, indent=2) + "\n")
+
+    def begin_generation(self, slug: str, outline: Outline) -> None:
+        path = self._app_dir(slug) / "outline.json"
+        previous = path.read_text() if path.exists() else None
+        try:
+            self.save_outline(slug, outline)
+            self.save_variants(slug, [])
+        except OSError:
+            if previous is None:
+                path.unlink(missing_ok=True)
+            else:
+                self._write_atomic(path, previous)
+            raise
 
     def load_outline(self, slug: str) -> Outline | None:
         path = self._app_dir(slug) / "outline.json"
@@ -230,7 +243,7 @@ class FsWorkspaceRepository:
                 lines.append("- [ ] Pick")
                 lines.append("")
         path = self._app_dir(slug) / "variants.md"
-        path.write_text("\n".join(lines))
+        self._write_atomic(path, "\n".join(lines))
 
     def save_unit_variants(self, slug: str, unit: Unit) -> None:
         path = self._app_dir(slug) / "variants.md"
@@ -242,6 +255,9 @@ class FsWorkspaceRepository:
         replacement = "\n".join(block) + "\n"
         pattern = re.compile(r"^## Unit: " + re.escape(unit.id) + r"[ \t]*\n.*?(?=^## Unit: |\Z)", re.M | re.S)
         text = pattern.sub(lambda _: replacement, text) if pattern.search(text) else text.rstrip() + "\n\n" + replacement
+        self._write_atomic(path, text)
+
+    def _write_atomic(self, path: Path, text: str) -> None:
         with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
             staged = Path(stream.name)
             try:

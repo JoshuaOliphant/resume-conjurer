@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -15,6 +16,8 @@ import pytest
 
 import citations  # on sys.path once app.adapters.workspace_fs is imported
 import verify
+from app.adapters.generation_fake import FakeGenerationPort
+from app.adapters.verification_fake import NoVerificationPort
 from app.adapters.workspace_fs import FsWorkspaceRepository, resolve_citation
 from app.domain import (
     Evidence,
@@ -26,6 +29,7 @@ from app.domain import (
     Variant,
 )
 from app.metrics import CallMetrics, RunMetrics, StepMetrics
+from app.runs import RunManager
 from app.schemas import SUPPORT_SCHEMA
 
 SLUG = "globex-staff-platform"
@@ -828,3 +832,35 @@ def test_targeted_write_failure_preserves_saved_variants(repo, workspace, monkey
         repo.save_unit_variants(SLUG, units[0])
     assert path.read_bytes() == before
     assert sorted(p.name for p in path.parent.iterdir()) == ["evidence.md", "jd.txt", "outline.json", "variants.md"]
+
+
+@pytest.mark.parametrize("previous", [True, False])
+def test_initialization_failure_keeps_previous_outline_and_drafts(repo, workspace, monkeypatch, caplog, previous):
+    repo.save_outline(SLUG, _sample_outline())
+    units = _sample_units(repo.load_inputs(SLUG).evidence_pool)
+    repo.save_variants(SLUG, units)
+    repo.set_pick(SLUG, units[0].id, units[0].variants[0].id)
+    outline_path = workspace / "applications" / SLUG / "outline.json"
+    variants_path = outline_path.with_name("variants.md")
+    before = (outline_path.read_bytes(), variants_path.read_bytes())
+    if not previous:
+        outline_path.unlink()
+        variants_path.unlink()
+        before = (None, None)
+    real_replace = os.replace
+    def fails_reset(source, target):
+        if Path(target) == variants_path:
+            raise OSError("reset denied")
+        return real_replace(source, target)
+    monkeypatch.setattr(os, "replace", fails_reset)
+    class AnotherCompany(FakeGenerationPort):
+        async def outline(self, slug):
+            return replace(await super().outline(slug), company="Another company")
+    manager = RunManager(repo, AnotherCompany(), NoVerificationPort())
+    async def start():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+    asyncio.run(start())
+    assert manager.status(SLUG).state == "error"
+    assert (outline_path.read_bytes() if outline_path.exists() else None, variants_path.read_bytes() if variants_path.exists() else None) == before
+    assert "generation run failed" in caplog.text

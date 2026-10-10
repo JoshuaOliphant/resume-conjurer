@@ -51,6 +51,9 @@ class FakeWorkspaceRepository:
     def save_outline(self, slug: str, outline: Outline) -> None:
         raise NotImplementedError
 
+    def begin_generation(self, slug: str, outline: Outline) -> None:
+        raise NotImplementedError
+
     def load_outline(self, slug: str) -> Outline | None:
         raise NotImplementedError
 

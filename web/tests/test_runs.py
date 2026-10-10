@@ -161,7 +161,7 @@ def test_error_path_sets_state_error_with_message(workspace):
     status = manager.status(SLUG)
     assert status.state == "error"
     assert status.error is not None
-    assert "Could not save generation progress" in status.error
+    assert "Could not generate the outline" in status.error
 
 
 def test_zero_variant_unit_fails_the_run_honestly(workspace):
@@ -684,3 +684,28 @@ def test_metrics_storage_failure_preserves_completed_units(workspace, caplog):
         assert all(u.state == "succeeded" for u in manager.status(SLUG).units.values())
     asyncio.run(exercise())
     assert "generation run failed" in caplog.text
+
+
+def test_full_run_does_not_publish_previous_outline_drafts(workspace, caplog):
+    repo = FsWorkspaceRepository(workspace)
+    manager = RunManager(repo, FakeGenerationPort(), NoVerificationPort())
+    async def run():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+    asyncio.run(run())
+    previous = repo.load_application(SLUG)
+    repo.set_pick(SLUG, previous.units[0].id, previous.units[0].variants[0].id)
+    class ChangedOutline(FakeGenerationPort):
+        async def outline(self, slug):
+            original = await super().outline(slug)
+            return replace(original, cover_letter_units=original.cover_letter_units[:1], resume_units=())
+        async def variants(self, slug, unit, n=4):
+            return []
+    manager = RunManager(repo, ChangedOutline(), NoVerificationPort())
+    asyncio.run(run())
+    app = repo.load_application(SLUG)
+    assert [u.id for u in app.units] == ["cover_letter.opening"]
+    assert app.units[0].variants == []
+    assert repo.get_picks(SLUG) == {}
+    assert manager.status(SLUG).state == "partial"
+    assert "unit generation failed" in caplog.text

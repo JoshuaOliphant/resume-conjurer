@@ -127,6 +127,10 @@ class WorkspaceRepository(Protocol):
         """Persist the outline to applications/<slug>/outline.json."""
         ...
 
+    def begin_generation(self, slug: str, outline: Outline) -> None:
+        """Start an outline's draft set, restoring the prior outline if reset fails."""
+        ...
+
     def load_outline(self, slug: str) -> Outline | None:
         """Load the persisted outline, or None if generation has not produced it yet."""
         ...
