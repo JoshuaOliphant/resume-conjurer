@@ -27,3 +27,22 @@ def validate_unit_variants(variants: list[Variant], expected: int = 4) -> None:
             for item in variant.evidence_items
         ):
             raise ValueError("Generation returned malformed citation references.")
+
+
+class GenerationStatusConflict(ValueError):
+    pass
+
+
+def decode_unit_statuses(value: object) -> dict[str, UnitGenerationStatus]:
+    if not isinstance(value, dict):
+        raise ValueError("Invalid generation progress.")
+    statuses = {}
+    for unit_id, item in value.items():
+        if not isinstance(unit_id, str) or not isinstance(item, dict):
+            raise ValueError("Invalid generation progress.")
+        state = item.get("state")
+        error = item.get("error")
+        if item.get("unit_id") != unit_id or state not in ("pending", "generating", "succeeded", "failed") or (error is not None and not isinstance(error, str)):
+            raise ValueError("Invalid generation progress.")
+        statuses[unit_id] = UnitGenerationStatus(unit_id, state, error)
+    return statuses

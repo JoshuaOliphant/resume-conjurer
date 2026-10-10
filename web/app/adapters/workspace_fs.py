@@ -15,13 +15,14 @@ keeps each variant's number and citation so we can resolve its evidence trace.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
 import tempfile
 from collections.abc import Iterable, Mapping
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from app.adapters.scripts_path import ensure_scripts_on_path
@@ -39,6 +40,11 @@ from app.domain import (
     WorkspaceInputs,
     label_for_unit_id,
     validate_slug,
+)
+from app.generation_status import (
+    GenerationStatusConflict,
+    UnitGenerationStatus,
+    decode_unit_statuses,
 )
 from app.metrics import RunMetrics
 
@@ -245,6 +251,31 @@ class FsWorkspaceRepository:
         path = self._app_dir(slug) / "variants.md"
         self._write_atomic(path, "\n".join(lines))
 
+    def load_generation_status(self, slug: str) -> dict[str, UnitGenerationStatus] | None:
+        path = self._app_dir(slug) / "generation.json"
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError("Invalid generation progress.")
+        binding = data.get("outline")
+        if not isinstance(binding, str) or not re.fullmatch(r"[0-9a-f]{64}", binding):
+            raise ValueError("Invalid generation progress outline binding.")
+        outline_bytes = path.with_name("outline.json").read_bytes()
+        if binding != hashlib.sha256(outline_bytes).hexdigest():
+            raise GenerationStatusConflict("Generation progress belongs to a different outline.")
+        statuses = decode_unit_statuses(data.get("units"))
+        outline = json.loads(outline_bytes)
+        expected = {unit["unit_id"] for key in ("cover_letter_units", "resume_units") for unit in outline[key]}
+        if set(statuses) != expected:
+            raise ValueError("Generation progress does not cover the outline units.")
+        return statuses
+
+    def save_generation_status(self, slug: str, statuses: dict[str, UnitGenerationStatus]) -> None:
+        path = self._app_dir(slug) / "generation.json"
+        document = {"outline": hashlib.sha256(path.with_name("outline.json").read_bytes()).hexdigest(), "units": {key: asdict(value) for key, value in statuses.items()}}
+        self._write_atomic(path, json.dumps(document, indent=2) + "\n")
+
     def save_unit_variants(self, slug: str, unit: Unit) -> None:
         path = self._app_dir(slug) / "variants.md"
         text = path.read_text() if path.exists() else "# Conjurer Variants\n\n"
@@ -361,6 +392,16 @@ class FsWorkspaceRepository:
 
         variant_path = self._app_dir(slug) / "variants.md"
         parsed = parse_variants_md(variant_path.read_text() if variant_path.exists() else "")
+        try:
+            progress = self.load_generation_status(slug)
+        except GenerationStatusConflict:
+            progress = {}
+            parsed = []
+        except (OSError, ValueError):
+            logger.warning("unreadable generation progress for slug=%s", slug)
+            progress = None
+        if progress is not None:
+            parsed = [unit for unit in parsed if unit.unit_id in contexts and progress.get(unit.unit_id, UnitGenerationStatus(unit.unit_id)).state not in ("pending", "failed")]
         support = self.load_support(slug)
         cited: dict[str, Evidence] = {}
 

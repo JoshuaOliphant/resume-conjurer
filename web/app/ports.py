@@ -36,6 +36,7 @@ from app.domain import (
     Variant,
     WorkspaceInputs,
 )
+from app.generation_status import UnitGenerationStatus
 from app.metrics import CallMetrics, RunMetrics
 
 
@@ -137,6 +138,14 @@ class WorkspaceRepository(Protocol):
 
     def save_variants(self, slug: str, units: list[Unit]) -> None:
         """Write applications/<slug>/variants.md from the generated units."""
+        ...
+
+    def load_generation_status(self, slug: str) -> dict[str, UnitGenerationStatus] | None:
+        """Load progress bound to the current outline; None for legacy workspaces."""
+        ...
+
+    def save_generation_status(self, slug: str, statuses: dict[str, UnitGenerationStatus]) -> None:
+        """Persist unit progress without duplicating variants or picks."""
         ...
 
     def save_unit_variants(self, slug: str, unit: Unit) -> None:

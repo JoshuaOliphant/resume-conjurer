@@ -10,9 +10,14 @@ import logging
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from threading import RLock
 
 from app.domain import Evidence, Support, Unit, label_for_unit_id
-from app.generation_status import UnitGenerationStatus, validate_unit_variants
+from app.generation_status import (
+    GenerationStatusConflict,
+    UnitGenerationStatus,
+    validate_unit_variants,
+)
 from app.metrics import CallMetrics, RunMetrics, StepMetrics
 from app.ports import GenerationPort, VerificationPort, WorkspaceRepository
 
@@ -38,6 +43,7 @@ class RunManager:
     def __init__(
         self, repo: WorkspaceRepository, gen: GenerationPort, verifier: VerificationPort, timeout_s: float = 300
     ) -> None:
+        self._lock = RLock()
         self._timeout_s = timeout_s
         self._repo = repo
         self._gen = gen
@@ -49,7 +55,42 @@ class RunManager:
         self._generated: dict[str, dict[str, Unit]] = {}
 
     def status(self, slug: str) -> RunStatus:
-        return self._status.get(slug, RunStatus())
+        with self._lock:
+            if slug in self._status:
+                return self._status[slug]
+            try:
+                outline = self._repo.load_outline(slug)
+            except NotImplementedError:
+                return RunStatus()
+            if outline is None:
+                return RunStatus()
+            application = self._repo.load_application(slug)
+            error = None
+            conflict = False
+            try:
+                saved = self._repo.load_generation_status(slug)
+            except (OSError, ValueError) as exc:
+                logger.warning("could not recover generation progress for slug=%s: %s", slug, type(exc).__name__)
+                saved = None
+                conflict = isinstance(exc, GenerationStatusConflict)
+                error = "Could not recover generation progress. Check workspace storage."
+            units = {unit.id: unit for unit in application.units}
+            statuses = {}
+            for ou in outline.units:
+                stored = saved.get(ou.unit_id) if saved else None
+                variants = units[ou.unit_id].variants
+                complete = not conflict and len(variants) == 4 and all(v.text.strip() for v in variants) and (stored is None or stored.state != "pending")
+                statuses[ou.unit_id] = UnitGenerationStatus(ou.unit_id, "succeeded" if complete else "failed", None if complete else "Generation was interrupted or incomplete. Retry this line.")
+            status = RunStatus(units_total=len(statuses), units_done=sum(u.state == "succeeded" for u in statuses.values()), units=statuses, error=error)
+            status.state = "error" if error else ("done" if status.units_done == status.units_total else "partial")
+            self._status[slug] = status
+            self._metrics[slug] = self._repo.load_metrics(slug) or RunMetrics(slug=slug, steps=[])
+            self._support[slug] = self._repo.load_support(slug)
+            self._generated[slug] = {key: units[key] for key, state in statuses.items() if state.state == "succeeded"}
+            return status
+
+    def _persist_progress(self, slug: str) -> None:
+        self._repo.save_generation_status(slug, self._status[slug].units)
 
     def metrics(self, slug: str) -> RunMetrics | None:
         return self._metrics.get(slug)
@@ -66,12 +107,13 @@ class RunManager:
 
     def start(self, slug: str) -> None:
         """Launch a background run for ``slug`` unless one is already running."""
-        if self.status(slug).state == "running":
-            return
-        self._status[slug] = RunStatus(state="running")
-        task = asyncio.create_task(self._run(slug))
-        task.add_done_callback(self._log_task_exception)
-        self._tasks[slug] = task
+        with self._lock:
+            if self.status(slug).state == "running":
+                return
+            self._status[slug] = RunStatus(state="running")
+            task = asyncio.create_task(self._run(slug))
+            task.add_done_callback(self._log_task_exception)
+            self._tasks[slug] = task
 
     def _log_task_exception(self, task: asyncio.Task[None]) -> None:
         if task.cancelled():
@@ -99,28 +141,35 @@ class RunManager:
             return {variant.id: Support(verdict="unchecked") for variant in unit.variants}
 
     def retry_unit(self, slug: str, unit_id: str) -> RunStatus:
-        status = self.status(slug)
-        if status.state == "running":
+        with self._lock:
+            status = self.status(slug)
+            if status.state == "running":
+                return status
+            target = status.units.get(unit_id)
+            if target is None or target.state != "failed":
+                raise ValueError("This unit is not available for retry.")
+            outline = self._repo.load_outline(slug)
+            if outline is None:
+                raise ValueError("No outline available.")
+            unit = next(u for u in outline.units if u.unit_id == unit_id)
+            status.state = "running"
+            status.error = None
+            target.state = "generating"
+            target.error = None
+            try:
+                self._persist_progress(slug)
+            except OSError:
+                self._fail_storage(slug)
+                return status
+            task = asyncio.create_task(self._retry(slug, unit))
+            task.add_done_callback(self._log_task_exception)
+            self._tasks[slug] = task
             return status
-        target = status.units.get(unit_id)
-        if target is None or target.state != "failed":
-            raise ValueError("This unit is not available for retry.")
-        outline = self._repo.load_outline(slug)
-        if outline is None:
-            raise ValueError("No outline available.")
-        unit = next(u for u in outline.units if u.unit_id == unit_id)
-        status.state = "running"
-        status.error = None
-        target.state = "generating"
-        target.error = None
-        task = asyncio.create_task(self._retry(slug, unit))
-        task.add_done_callback(self._log_task_exception)
-        self._tasks[slug] = task
-        return status
 
     async def _generate_unit(self, slug, ou, run_metrics, pool):
         target = self._status[slug].units[ou.unit_id]
         target.state = "generating"
+        self._persist_progress(slug)
         started = time.monotonic()
         try:
             variants = await asyncio.wait_for(self._gen.variants(slug, ou), self._timeout_s)
@@ -133,6 +182,7 @@ class RunManager:
                 await self._gen.aclose()
             except Exception:
                 logger.exception("generation client cleanup failed for slug=%s", slug)
+            self._persist_progress(slug)
             return
         finally:
             self._record_step(run_metrics, ou.unit_id, started)
@@ -141,6 +191,7 @@ class RunManager:
         self._generated.setdefault(slug, {})[unit.id] = unit
         target.state = "succeeded"
         target.error = None
+        self._persist_progress(slug)
         self._status[slug].units_done = sum(u.state == "succeeded" for u in self._status[slug].units.values())
         support = self._support.setdefault(slug, {})
         support.update(await self._check_claims(slug, unit, pool))
@@ -153,6 +204,7 @@ class RunManager:
         status = self._status[slug]
         status.state = "done" if all(u.state == "succeeded" for u in status.units.values()) else "partial"
         self._repo.save_metrics(slug, self._metrics[slug])
+        self._persist_progress(slug)
 
     def _fail_storage(self, slug):
         logger.exception("generation run failed for slug=%s", slug)
@@ -181,6 +233,7 @@ class RunManager:
         try:
             self._repo.begin_generation(slug, outline)
             self._status[slug] = RunStatus(state="running", units_total=len(outline.units), units={u.unit_id: UnitGenerationStatus(u.unit_id) for u in outline.units})
+            self._persist_progress(slug)
             pool = self._repo.load_inputs(slug).evidence_pool
             for ou in outline.units:
                 await self._generate_unit(slug, ou, run_metrics, pool)

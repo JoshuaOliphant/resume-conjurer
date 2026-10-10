@@ -29,6 +29,7 @@ from app.domain import (
     WorkspaceInputs,
     validate_slug,
 )
+from app.generation_status import UnitGenerationStatus
 from app.metrics import RunMetrics
 
 
@@ -39,6 +40,7 @@ class FakeWorkspaceRepository:
         # slug -> {unit_id: variant_id}; exactly one pick per unit, like variants.md.
         self._picks: dict[str, dict[str, str]] = {}
         self._units: dict[str, dict[str, Unit]] = {}
+        self._progress: dict[str, dict[str, UnitGenerationStatus]] = {}
 
     # --- generation persistence (live-only; unused offline) ----------------
 
@@ -59,6 +61,14 @@ class FakeWorkspaceRepository:
 
     def save_variants(self, slug: str, units: list[Unit]) -> None:
         raise NotImplementedError
+
+    def load_generation_status(self, slug: str) -> dict[str, UnitGenerationStatus] | None:
+        validate_slug(slug)
+        return deepcopy(self._progress.get(slug))
+
+    def save_generation_status(self, slug: str, statuses: dict[str, UnitGenerationStatus]) -> None:
+        validate_slug(slug)
+        self._progress[slug] = deepcopy(statuses)
 
     def save_unit_variants(self, slug: str, unit: Unit) -> None:
         validate_slug(slug)

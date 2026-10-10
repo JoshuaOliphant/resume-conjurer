@@ -4,6 +4,7 @@
 from app.adapters.scripts_path import ensure_scripts_on_path
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import get_application
+from app.generation_status import UnitGenerationStatus
 from app.ports import WorkspaceRepository
 
 ensure_scripts_on_path()
@@ -66,3 +67,17 @@ def test_targeted_write_preserves_other_picks_and_fixture():
     assert repo.get_picks(slug) == {second.id: second.variants[0].id}
     assert repo.load_application(slug).units[0] == first
     assert repo.load_application(slug).units[1] == second
+
+
+def test_saved_progress_is_isolated_from_the_callers_objects():
+    repo = FakeWorkspaceRepository()
+    assert repo.load_generation_status("app") is None
+    states = {"u": UnitGenerationStatus("u", "failed")}
+    repo.save_generation_status("app", states)
+    states["u"].state = "succeeded"
+    loaded = repo.load_generation_status("app")
+    assert loaded is not None
+    assert loaded["u"].state == "failed"
+    loaded["u"].state = "pending"
+    saved = repo.load_generation_status("app")
+    assert saved is not None and saved["u"].state == "failed"

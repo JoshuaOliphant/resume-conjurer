@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from app.domain import Evidence, Variant
-from app.generation_status import validate_unit_variants
+from app.generation_status import decode_unit_statuses, validate_unit_variants
 
 
 @pytest.mark.parametrize("count,text,citation", [
@@ -27,3 +27,9 @@ def test_supported_and_unverified_references_are_not_semantically_graded():
     validate_unit_variants([replace(variant, id=f"u#{n}") for n in range(1, 5)])
     with pytest.raises(ValueError):
         validate_unit_variants([replace(variant, evidence_items=())] * 4)
+
+
+@pytest.mark.parametrize("payload", [None, [], {3: {}}, {"u": []}, {"u": {"unit_id": "other", "state": "failed"}}, {"u": {"unit_id": "u", "state": "complete"}}, {"u": {"unit_id": "u", "state": []}}, {"u": {"unit_id": "u", "state": {}}}, {"u": {"unit_id": "u", "state": "failed", "error": 3}}])
+def test_invalid_progress_cannot_be_loaded(payload):
+    with pytest.raises(ValueError, match="Invalid generation progress"):
+        decode_unit_statuses(payload)

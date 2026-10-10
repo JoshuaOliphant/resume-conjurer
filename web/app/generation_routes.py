@@ -1,6 +1,8 @@
 # ABOUTME: Application-scoped retry actions and generation progress rendering.
 # ABOUTME: Rejects unsafe mutations and keeps retry controls attached to failed units.
+import re
 from threading import Lock
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -34,6 +36,10 @@ def generation_router(repo: WorkspaceRepository, run_manager: RunManager, templa
 
     @router.get("/generate/unit-status")
     def progress(request: Request):
-        return render(request)
+        response = render(request)
+        current = urlsplit(request.headers.get("HX-Current-URL", ""))
+        if run_manager.status(slug).state in ("done", "partial") and current.netloc == request.url.netloc and (current.path == "/outline" or re.fullmatch(r"/curate/\d+", current.path)):
+            response.headers["HX-Redirect"] = current.path
+        return response
 
     return router
