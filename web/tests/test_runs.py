@@ -8,13 +8,12 @@ from pathlib import Path
 
 import pytest
 
+import verify  # on sys.path once app.adapters.workspace_fs is imported
 from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.verification_fake import FakeVerificationPort, NoVerificationPort
 from app.adapters.workspace_fs import FsWorkspaceRepository, cited_lines
 from app.domain import Evidence, OutlineUnit, Support
 from app.runs import RunManager
-
-import verify  # on sys.path once app.adapters.workspace_fs is imported
 
 SLUG = "globex-staff-platform"
 FIXTURE = Path(__file__).parent / "fixtures" / "workspace"
@@ -106,12 +105,12 @@ def test_metrics_keep_partial_steps_on_error(workspace):
 
     asyncio.run(go())
 
-    assert manager.status(SLUG).state == "error"
+    assert manager.status(SLUG).state == "partial"
     metrics = manager.metrics(SLUG)
     assert metrics is not None
     # outline + the one variant step that completed before the second raised.
     assert [s.name for s in metrics.steps][0] == "outline"
-    assert metrics.line_count == 1
+    assert metrics.line_count == len(manager.status(SLUG).units)
 
 
 def test_status_for_unstarted_slug_is_idle(workspace):
@@ -162,7 +161,7 @@ def test_error_path_sets_state_error_with_message(workspace):
     status = manager.status(SLUG)
     assert status.state == "error"
     assert status.error is not None
-    assert "the summoning failed" in status.error
+    assert "Could not save generation progress" in status.error
 
 
 def test_zero_variant_unit_fails_the_run_honestly(workspace):
@@ -189,10 +188,10 @@ def test_zero_variant_unit_fails_the_run_honestly(workspace):
     asyncio.run(go())
 
     status = manager.status(SLUG)
-    assert status.state == "error"
-    assert status.error is not None
-    assert "No variants generated for" in status.error
-    assert status.error.endswith(empty_unit_id[0])
+    assert status.state == "partial"
+    assert status.units[empty_unit_id[0]].state == "failed"
+    error = status.units[empty_unit_id[0]].error
+    assert error is not None and "Retry this line" in error
 
 
 def test_error_mid_loop_keeps_partial_progress_snapshot(workspace):
@@ -216,11 +215,8 @@ def test_error_mid_loop_keeps_partial_progress_snapshot(workspace):
     asyncio.run(go())
 
     status = manager.status(SLUG)
-    assert status.state == "error"
-    assert status.error is not None
-    assert "the summoning failed mid-flight" in status.error
-    # One unit completed before the second raised; the total is the full outline.
-    assert status.units_done == 1
+    assert status.state == "partial"
+    assert status.units_done == status.units_total - 1
     gen = manager._gen
     assert isinstance(gen, FakeGenerationPort)
     assert status.units_total == len(gen._outline_units)
@@ -307,9 +303,9 @@ def test_run_verifies_each_unit_after_its_variants_and_saves_support_after_varia
             return await super().verify(unit, pool)
 
     class LoggingRepo(RecordingRepo):
-        def save_variants(self, slug, units):
-            events.append(("save_variants", slug))
-            super().save_variants(slug, units)
+        def save_unit_variants(self, slug, unit):
+            events.append(("save_variants", unit.id))
+            super().save_unit_variants(slug, unit)
 
         def save_support(self, slug, support, units, pool):
             events.append(("save_support", slug))
@@ -327,8 +323,8 @@ def test_run_verifies_each_unit_after_its_variants_and_saves_support_after_varia
 
     assert manager.status(SLUG).state == "done"
     unit_ids = [unit_id for step, unit_id in events if step == "variants"]
-    per_unit = [event for unit_id in unit_ids for event in (("variants", unit_id), ("verify", unit_id))]
-    assert events == per_unit + [("save_variants", SLUG), ("save_support", SLUG)]
+    per_unit = [event for unit_id in unit_ids for event in (("variants", unit_id), ("save_variants", unit_id), ("verify", unit_id), ("save_support", SLUG))]
+    assert events == per_unit
     assert pools == [set(repo.load_inputs(SLUG).evidence_pool)] * len(unit_ids)
     assert repo.saved_support == scripted
 
@@ -550,3 +546,141 @@ def test_run_does_not_attach_verdicts_after_evidence_changes_during_verification
     app = repo.load_application(SLUG)
     assert app.units
     assert all(variant.support is None for unit in app.units for variant in unit.variants)
+
+
+def test_failed_unit_does_not_block_later_units_and_retry_preserves_picks(workspace, caplog):
+    class FailsOnce(FakeGenerationPort):
+        failed = False
+        calls = []
+        async def variants(self, slug, unit, n=4):
+            self.calls.append(unit.unit_id)
+            if not self.failed:
+                self.failed = True
+                return []
+            return await super().variants(slug, unit, n)
+    repo = FsWorkspaceRepository(workspace)
+    gen = FailsOnce()
+    manager = RunManager(repo, gen, NoVerificationPort())
+    async def generate():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+        assert manager.status(SLUG).state == "partial"
+        app = repo.load_application(SLUG)
+        failed, good = app.units[:2]
+        assert failed.variants == []
+        assert len(good.variants) == 4
+        repo.set_pick(SLUG, good.id, good.variants[0].id)
+        previous = repo.get_picks(SLUG)
+        gen.calls.clear()
+        manager.retry_unit(SLUG, failed.id)
+        await manager.join(SLUG)
+        assert gen.calls == [failed.id]
+        assert repo.get_picks(SLUG) == previous
+        assert manager.status(SLUG).state == "done"
+    asyncio.run(generate())
+    assert "generation failed" in caplog.text
+
+
+@pytest.mark.parametrize("failure", ["empty", "short", "text", "citation", "provider", "timeout"])
+def test_failed_attempts_are_explicit_and_remain_retryable(workspace, caplog, failure):
+    class Broken(FakeGenerationPort):
+        async def variants(self, slug, unit, n=4):
+            variants = await super().variants(slug, unit, n)
+            if failure == "empty":
+                return []
+            if failure == "short":
+                return variants[:3]
+            if failure == "provider":
+                raise RuntimeError("provider stopped")
+            if failure == "timeout":
+                await asyncio.sleep(1)
+            if failure == "text":
+                return [replace(v, text=" ") for v in variants]
+            if failure == "citation":
+                return [replace(v, evidence_items=(Evidence("Angle", "", "", False),)) for v in variants]
+            return variants
+    repo = FsWorkspaceRepository(workspace)
+    manager = RunManager(repo, Broken(), NoVerificationPort(), timeout_s=0.01)
+    async def exercise():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+        status = manager.status(SLUG)
+        assert status.state == "partial"
+        assert status.units_done == 0
+        target = next(iter(status.units))
+        first = manager.retry_unit(SLUG, target)
+        assert manager.retry_unit(SLUG, target) is first
+        await manager.join(SLUG)
+        assert manager.status(SLUG).units[target].state == "failed"
+        assert not repo.load_application(SLUG).units[0].variants
+        with pytest.raises(ValueError):
+            manager.retry_unit(SLUG, "other-user/unit")
+        (workspace / "applications" / SLUG / "outline.json").unlink()
+        with pytest.raises(ValueError, match="No outline"):
+            manager.retry_unit(SLUG, target)
+    asyncio.run(exercise())
+    assert "unit generation failed" in caplog.text
+
+
+def test_storage_failure_leaves_pending_units_retryable(workspace, caplog):
+    class Unwritable(FsWorkspaceRepository):
+        failing = True
+        def save_unit_variants(self, slug, unit):
+            if self.failing:
+                raise OSError("full disk")
+            return super().save_unit_variants(slug, unit)
+    repo = Unwritable(workspace)
+    manager = RunManager(repo, FakeGenerationPort(), NoVerificationPort())
+    async def exercise():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+        assert manager.status(SLUG).state == "error"
+        assert manager.status(SLUG).units_done == 0
+        assert all(u.state == "failed" for u in manager.status(SLUG).units.values())
+        target = next(iter(manager.status(SLUG).units))
+        manager.retry_unit(SLUG, target)
+        await manager.join(SLUG)
+        assert manager.status(SLUG).state == "error"
+        repo.failing = False
+        target = next(iter(manager.status(SLUG).units))
+        manager.retry_unit(SLUG, target)
+        await manager.join(SLUG)
+        assert manager.status(SLUG).state == "partial"
+        assert manager.status(SLUG).units_done == 1
+        with pytest.raises(ValueError):
+            manager.retry_unit(SLUG, target)
+    asyncio.run(exercise())
+    assert "generation run failed" in caplog.text
+
+
+def test_cleanup_error_does_not_stop_remaining_units(workspace, caplog):
+    class BrokenCleanup(FakeGenerationPort):
+        attempts = 0
+        async def variants(self, slug, unit, n=4):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("interrupted")
+            return await super().variants(slug, unit, n)
+        async def aclose(self):
+            raise OSError("disconnect failed")
+    manager = RunManager(FsWorkspaceRepository(workspace), BrokenCleanup(), NoVerificationPort())
+    async def exercise():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+        assert manager.status(SLUG).units_done == manager.status(SLUG).units_total - 1
+    asyncio.run(exercise())
+    assert "generation client cleanup failed" in caplog.text
+
+
+def test_metrics_storage_failure_preserves_completed_units(workspace, caplog):
+    class UnwritableMetrics(FsWorkspaceRepository):
+        def save_metrics(self, slug, metrics):
+            raise OSError("metrics storage failed")
+    manager = RunManager(UnwritableMetrics(workspace), FakeGenerationPort(), NoVerificationPort())
+    async def exercise():
+        manager.start(SLUG)
+        await manager.join(SLUG)
+        assert manager.status(SLUG).state == "error"
+        assert all(u.state == "succeeded" for u in manager.status(SLUG).units.values())
+    asyncio.run(exercise())
+    assert "generation run failed" in caplog.text

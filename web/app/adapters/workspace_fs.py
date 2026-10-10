@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -230,6 +232,26 @@ class FsWorkspaceRepository:
         path = self._app_dir(slug) / "variants.md"
         path.write_text("\n".join(lines))
 
+    def save_unit_variants(self, slug: str, unit: Unit) -> None:
+        path = self._app_dir(slug) / "variants.md"
+        text = path.read_text() if path.exists() else "# Conjurer Variants\n\n"
+        block = [f"## Unit: {unit.id}", f"<!-- conjurer:unit id={unit.id} -->", ""]
+        for n, variant in enumerate(unit.variants, 1):
+            citation = "; ".join(item.id for item in variant.evidence_items)
+            block.extend([f"### Variant {n}: {citation}", "", variant.text, "", "*Axis: variant distinction*", "", "- [ ] Pick", ""])
+        replacement = "\n".join(block) + "\n"
+        pattern = re.compile(r"^## Unit: " + re.escape(unit.id) + r"[ \t]*\n.*?(?=^## Unit: |\Z)", re.M | re.S)
+        text = pattern.sub(lambda _: replacement, text) if pattern.search(text) else text.rstrip() + "\n\n" + replacement
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+            staged = Path(stream.name)
+            try:
+                stream.write(text)
+                stream.flush()
+                os.fsync(stream.fileno())
+                os.replace(staged, path)
+            finally:
+                staged.unlink(missing_ok=True)
+
     def set_pick(self, slug: str, unit_id: str, variant_id: str) -> None:
         target_n = int(variant_id.rsplit("#", 1)[1])
         path = self._app_dir(slug) / "variants.md"
@@ -258,7 +280,7 @@ class FsWorkspaceRepository:
     def get_picks(self, slug: str) -> dict[str, str]:
         path = self._app_dir(slug) / "variants.md"
         picks: dict[str, str] = {}
-        for unit in parse_variants_md(path.read_text()):
+        for unit in parse_variants_md(path.read_text() if path.exists() else ""):
             for variant in unit.variants:
                 if variant.picked:
                     picks[unit.unit_id] = f"{unit.unit_id}#{variant.n}"
@@ -321,7 +343,8 @@ class FsWorkspaceRepository:
         contexts = {u.unit_id: u.description for u in outline.units}
         order = {u.unit_id: i for i, u in enumerate(outline.units)}
 
-        parsed = parse_variants_md((self._app_dir(slug) / "variants.md").read_text())
+        variant_path = self._app_dir(slug) / "variants.md"
+        parsed = parse_variants_md(variant_path.read_text() if variant_path.exists() else "")
         support = self.load_support(slug)
         cited: dict[str, Evidence] = {}
 
@@ -348,6 +371,10 @@ class FsWorkspaceRepository:
                 )
             )
 
+        present = {unit.id for unit in units}
+        for ou in outline.units:
+            if ou.unit_id not in present:
+                units.append(Unit(id=ou.unit_id, kind=ou.kind, label=label_for_unit_id(ou.unit_id), context=ou.description, variants=[]))
         units.sort(key=lambda u: order.get(u.id, len(order)))
 
         return Application(

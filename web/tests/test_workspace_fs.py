@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -239,6 +240,7 @@ def test_save_variants_then_load_application_round_trips(repo: FsWorkspaceReposi
     # Units in outline document order: cover first, then resume.
     assert [u.id for u in app.units] == [
         "cover_letter.opening",
+        "cover_letter.evidence",
         "resume.northwind.billing.bullet_1",
     ]
     cover = app.units[0]
@@ -726,6 +728,7 @@ def test_load_application_notes_a_unit_whose_every_variant_is_flagged(
 
     assert notes == {
         "cover_letter.opening": opening_note,
+        "cover_letter.evidence": None,
         "resume.northwind.billing.bullet_1": None,
         "resume.northwind.billing.bullet_2": None,
     }
@@ -798,3 +801,30 @@ def test_load_inputs_without_optional_evidence_keeps_resume_line_contract(repo, 
     assert inputs.evidence == ""
     assert "master-resume.md L16" in inputs.evidence_pool
     assert all(not key.startswith("evidence.md ") for key in inputs.evidence_pool)
+
+
+def test_targeted_write_preserves_unrelated_pick_bytes(repo, workspace):
+    repo.save_outline(SLUG, _sample_outline())
+    units = _sample_units(repo.load_inputs(SLUG).evidence_pool)
+    repo.save_variants(SLUG, units)
+    repo.set_pick(SLUG, units[0].id, units[0].variants[1].id)
+    path = workspace / "applications" / SLUG / "variants.md"
+    before = path.read_text().split("## Unit: " + units[1].id)[0]
+    repo.save_unit_variants(SLUG, units[1])
+    assert path.read_text().split("## Unit: " + units[1].id)[0] == before
+    assert repo.get_picks(SLUG) == {units[0].id: units[0].variants[1].id}
+
+
+def test_targeted_write_failure_preserves_saved_variants(repo, workspace, monkeypatch):
+    repo.save_outline(SLUG, _sample_outline())
+    units = _sample_units(repo.load_inputs(SLUG).evidence_pool)
+    repo.save_variants(SLUG, units)
+    path = workspace / "applications" / SLUG / "variants.md"
+    before = path.read_bytes()
+    def fails(source, target):
+        raise OSError("disk unavailable")
+    monkeypatch.setattr(os, "replace", fails)
+    with pytest.raises(OSError, match="disk unavailable"):
+        repo.save_unit_variants(SLUG, units[0])
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in path.parent.iterdir()) == ["evidence.md", "jd.txt", "outline.json", "variants.md"]

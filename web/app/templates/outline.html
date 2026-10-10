@@ -13,6 +13,7 @@
     <p class="frame__why">{{ app_data.frame.rationale }}</p>
   </div>
 
+  {% if generation_status.units %}{% set status = generation_status %}{% include "_summon_progress.html" %}{% endif %}
   <ol class="unit-list">
     {% for unit in app_data.units %}
     <li class="unit-row">

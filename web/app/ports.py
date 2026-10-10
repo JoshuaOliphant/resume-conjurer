@@ -135,6 +135,10 @@ class WorkspaceRepository(Protocol):
         """Write applications/<slug>/variants.md from the generated units."""
         ...
 
+    def save_unit_variants(self, slug: str, unit: Unit) -> None:
+        """Atomically replace one unit, retaining other variants and picks."""
+        ...
+
     def set_pick(self, slug: str, unit_id: str, variant_id: str) -> None:
         """Mark exactly one '- [x] Pick' for unit_id in variants.md (the stitch contract)."""
         ...

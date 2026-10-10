@@ -260,5 +260,6 @@ class SdkGenerationPort:
 
     async def aclose(self) -> None:  # pragma: no cover - live-tested
         if self._variant_client is not None:
-            await self._variant_client.disconnect()
+            client = self._variant_client
             self._variant_client = None
+            await client.disconnect()

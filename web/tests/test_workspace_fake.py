@@ -1,9 +1,9 @@
 # ABOUTME: Tests for the in-memory FakeWorkspaceRepository used by the default (offline) config.
 # ABOUTME: Conformance to the port, fixture hydration, and the pick round-trip via the in-memory store.
 
+from app.adapters.scripts_path import ensure_scripts_on_path
 from app.adapters.workspace_fake import FakeWorkspaceRepository
 from app.data import get_application
-from app.adapters.scripts_path import ensure_scripts_on_path
 from app.ports import WorkspaceRepository
 
 ensure_scripts_on_path()
@@ -18,7 +18,7 @@ def test_fake_repository_conforms_to_port():
 def test_load_application_returns_the_fixture_app():
     repo = FakeWorkspaceRepository()
     app_data = repo.load_application("globex-staff-platform")
-    assert app_data is get_application()
+    assert app_data == get_application()
     assert app_data.company == "Globex"
 
 
@@ -55,3 +55,14 @@ def test_load_support_serves_the_fixture_overreaches():
     assert set(support) == {"cover-open-1", "bullet-kubernetes-1"}
     assert {s.verdict for s in support.values()} == {"adds_detail"}
     assert all(s.note == verify.note_for("adds_detail", []) for s in support.values())
+
+
+def test_targeted_write_preserves_other_picks_and_fixture():
+    repo = FakeWorkspaceRepository()
+    slug = "globex-staff-platform"
+    first, second = repo.load_application(slug).units[:2]
+    repo.set_pick(slug, second.id, second.variants[0].id)
+    repo.save_unit_variants(slug, first)
+    assert repo.get_picks(slug) == {second.id: second.variants[0].id}
+    assert repo.load_application(slug).units[0] == first
+    assert repo.load_application(slug).units[1] == second

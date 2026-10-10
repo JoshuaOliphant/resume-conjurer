@@ -1,19 +1,7 @@
 # ABOUTME: Async RunManager — orchestrates a live generation run and tracks per-unit progress.
 # ABOUTME: Kicks outline + variants off as a background task; the UI polls status() while it works.
 
-"""Background orchestration for the live generation flow.
-
-A run, keyed by ``slug``, does the work the agent can't do synchronously inside a request:
-choose the outline, then summon variants for each unit and check their claims against the
-evidence they cite, persisting all three to the workspace via the repository. The route
-handler calls :meth:`start` (which returns immediately, having set state to ``running``) and
-the HTMX poll calls :meth:`status` until it reads ``done`` or ``error``.
-
-State is held in memory, keyed by slug, behind the same indirection the rest of the backend
-uses, so a future per-session/per-user resolver is a new key source rather than a rewrite.
-Generation's non-determinism stays quarantined behind :class:`~app.ports.GenerationPort`;
-this module only sequences calls and counts progress.
-"""
+"""Generate complete unit drafts, retain partial progress, and retry failed units."""
 
 from __future__ import annotations
 
@@ -21,15 +9,16 @@ import asyncio
 import logging
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.domain import Evidence, Support, Unit, label_for_unit_id
+from app.generation_status import UnitGenerationStatus, validate_unit_variants
 from app.metrics import CallMetrics, RunMetrics, StepMetrics
 from app.ports import GenerationPort, VerificationPort, WorkspaceRepository
 
 logger = logging.getLogger(__name__)
 
-RunState = str  # one of: "idle" | "running" | "done" | "error"
+RunState = str
 
 
 @dataclass
@@ -40,20 +29,24 @@ class RunStatus:
     units_done: int = 0
     units_total: int = 0
     error: str | None = None
+    units: dict[str, UnitGenerationStatus] = field(default_factory=dict)
 
 
 class RunManager:
     """Sequences outline + variant generation for a slug, tracking progress."""
 
     def __init__(
-        self, repo: WorkspaceRepository, gen: GenerationPort, verifier: VerificationPort
+        self, repo: WorkspaceRepository, gen: GenerationPort, verifier: VerificationPort, timeout_s: float = 300
     ) -> None:
+        self._timeout_s = timeout_s
         self._repo = repo
         self._gen = gen
         self._verifier = verifier
         self._status: dict[str, RunStatus] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._metrics: dict[str, RunMetrics] = {}
+        self._support: dict[str, dict[str, Support]] = {}
+        self._generated: dict[str, dict[str, Unit]] = {}
 
     def status(self, slug: str) -> RunStatus:
         return self._status.get(slug, RunStatus())
@@ -75,14 +68,8 @@ class RunManager:
         """Launch a background run for ``slug`` unless one is already running."""
         if self.status(slug).state == "running":
             return
-        # Mark running synchronously so the route can render the progress page and the
-        # very next status poll already reflects an in-flight run.
         self._status[slug] = RunStatus(state="running")
         task = asyncio.create_task(self._run(slug))
-        # _run catches every exception it can raise itself, so this task should always
-        # complete cleanly today — this callback is defense-in-depth against that
-        # invariant breaking in a future edit, since nothing else awaits a fire-and-forget
-        # task (join() is only called by tests).
         task.add_done_callback(self._log_task_exception)
         self._tasks[slug] = task
 
@@ -105,70 +92,103 @@ class RunManager:
         """The unit's support verdicts; every variant reads ``unchecked`` when the check fails."""
         try:
             return await self._verifier.verify(unit, pool)
-        except Exception as exc:  # advisory: a failed claim check never fails the run.
+        except Exception as exc:
             logger.warning(
                 "claim check failed for slug=%s unit=%s: %r", slug, unit.id, exc
             )
             return {variant.id: Support(verdict="unchecked") for variant in unit.variants}
 
+    def retry_unit(self, slug: str, unit_id: str) -> RunStatus:
+        status = self.status(slug)
+        if status.state == "running":
+            return status
+        target = status.units.get(unit_id)
+        if target is None or target.state != "failed":
+            raise ValueError("This unit is not available for retry.")
+        outline = self._repo.load_outline(slug)
+        if outline is None:
+            raise ValueError("No outline available.")
+        unit = next(u for u in outline.units if u.unit_id == unit_id)
+        status.state = "running"
+        status.error = None
+        target.state = "generating"
+        target.error = None
+        task = asyncio.create_task(self._retry(slug, unit))
+        task.add_done_callback(self._log_task_exception)
+        self._tasks[slug] = task
+        return status
+
+    async def _generate_unit(self, slug, ou, run_metrics, pool):
+        target = self._status[slug].units[ou.unit_id]
+        target.state = "generating"
+        started = time.monotonic()
+        try:
+            variants = await asyncio.wait_for(self._gen.variants(slug, ou), self._timeout_s)
+            validate_unit_variants(variants)
+        except Exception:
+            logger.exception("unit generation failed for slug=%s unit=%s", slug, ou.unit_id)
+            target.state = "failed"
+            target.error = "Could not generate four usable variants. Retry this line."
+            try:
+                await self._gen.aclose()
+            except Exception:
+                logger.exception("generation client cleanup failed for slug=%s", slug)
+            return
+        finally:
+            self._record_step(run_metrics, ou.unit_id, started)
+        unit = Unit(id=ou.unit_id, kind=ou.kind, label=label_for_unit_id(ou.unit_id), context=ou.description, variants=variants)
+        self._repo.save_unit_variants(slug, unit)
+        self._generated.setdefault(slug, {})[unit.id] = unit
+        target.state = "succeeded"
+        target.error = None
+        self._status[slug].units_done = sum(u.state == "succeeded" for u in self._status[slug].units.values())
+        support = self._support.setdefault(slug, {})
+        support.update(await self._check_claims(slug, unit, pool))
+        try:
+            self._repo.save_support(slug, support, list(self._generated[slug].values()), pool)
+        except OSError as exc:
+            logger.warning("could not save support.json for slug=%s: %r", slug, exc)
+
+    def _complete(self, slug):
+        status = self._status[slug]
+        status.state = "done" if all(u.state == "succeeded" for u in status.units.values()) else "partial"
+        self._repo.save_metrics(slug, self._metrics[slug])
+
+    def _fail_storage(self, slug):
+        logger.exception("generation run failed for slug=%s", slug)
+        status = self._status[slug]
+        status.state = "error"
+        status.error = "Could not save generation progress. Check workspace storage before retrying."
+        for unit in status.units.values():
+            if unit.state in ("pending", "generating"):
+                unit.state = "failed"
+                unit.error = status.error
+
     async def _run(self, slug: str) -> None:
         run_metrics = RunMetrics(slug=slug, steps=[])
-        # Publish the (initially empty) metrics up front so any steps recorded before an error
-        # are visible best-effort; the except path touches no metrics and so cannot mask the
-        # generation error with a metrics/persist failure.
         self._metrics[slug] = run_metrics
+        self._support[slug] = {}
+        self._generated[slug] = {}
         try:
             started = time.monotonic()
             outline = await self._gen.outline(slug)
             self._record_step(run_metrics, "outline", started)
             self._repo.save_outline(slug, outline)
-            outline_units = outline.units
-            self._status[slug] = RunStatus(
-                state="running", units_done=0, units_total=len(outline_units)
-            )
+            self._status[slug] = RunStatus(state="running", units_total=len(outline.units), units={u.unit_id: UnitGenerationStatus(u.unit_id) for u in outline.units})
             pool = self._repo.load_inputs(slug).evidence_pool
-            units: list[Unit] = []
-            support: dict[str, Support] = {}
-            for ou in outline_units:
-                started = time.monotonic()
-                variants = await self._gen.variants(slug, ou)
-                self._record_step(run_metrics, ou.unit_id, started)
-                # A unit with zero variants is a real generation failure: fail honestly
-                # here so the except below records state="error", rather than letting an
-                # empty unit reach (and 500) the curate/review screens later.
-                if not variants:
-                    raise RuntimeError(f"No variants generated for {ou.unit_id}")
-                unit = Unit(
-                    id=ou.unit_id,
-                    kind=ou.kind,
-                    label=label_for_unit_id(ou.unit_id),
-                    context=ou.description,
-                    variants=variants,
-                )
-                units.append(unit)
-                support.update(await self._check_claims(slug, unit, pool))
-                self._status[slug].units_done = len(units)
-            self._repo.save_variants(slug, units)
-            try:
-                self._repo.save_support(slug, support, units, pool)
-            except OSError as exc:
-                logger.warning("could not save support.json for slug=%s: %r", slug, exc)
-            self._repo.save_metrics(slug, run_metrics)
-            self._status[slug].state = "done"
-        except Exception as exc:  # the agent can fail; we say so honestly rather than pretend.
-            # A generation failure's only other home is RunStatus.error, visible solely to
-            # whoever happens to be polling; log it so there is a durable trace once they
-            # aren't.
-            logger.exception("generation run failed for slug=%s", slug)
-            # Keep whatever progress counts the run reached so the error snapshot shows how
-            # far the summoning got (e.g. "failed after 3 of 6 lines"), not a reset to zero.
-            prev = self._status.get(slug, RunStatus())
-            self._status[slug] = RunStatus(
-                state="error",
-                units_done=prev.units_done,
-                units_total=prev.units_total,
-                error=str(exc),
-            )
+            for ou in outline.units:
+                await self._generate_unit(slug, ou, run_metrics, pool)
+            self._complete(slug)
+        except Exception:
+            self._fail_storage(slug)
+
+    async def _retry(self, slug, ou):
+        try:
+            pool = self._repo.load_inputs(slug).evidence_pool
+            await self._generate_unit(slug, ou, self._metrics[slug], pool)
+            self._complete(slug)
+        except Exception:
+            self._fail_storage(slug)
 
     async def aclose(self) -> None:
         """Cancel any pending runs cleanly (called on app shutdown)."""
@@ -181,6 +201,5 @@ class RunManager:
             except asyncio.CancelledError:
                 pass
         self._tasks.clear()
-        # Release the generation port's own resources (e.g. the persistent SDK client).
         await self._gen.aclose()
         await self._verifier.aclose()
