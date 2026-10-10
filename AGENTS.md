@@ -125,6 +125,8 @@ it, so do not bake further single-user assumptions into the domain model or rout
 
 ## Repo docs
 
+`CONTEXT.md` defines application, unit, variant, pick, and failed unit.
+
 `docs/document-workbench.md` covers live source imports, manual editing, revision history, and local-workspace limits.
 
 `docs/final-documents.md` covers explicit composition, editable final Markdown, stale notices, and revision-bound exports.
