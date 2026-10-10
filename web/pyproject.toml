@@ -28,7 +28,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 # Coverage gate: see .claude/rules/testing.md. A passing `uv run pytest` proves 100%
 # line + branch coverage of app/. Live-only paths are marked under markers, not exempted.
-addopts = "--cov=app --cov-branch --cov-report=term-missing -m 'not live'"
+addopts = "--cov=app --cov=evals --cov-branch --cov-report=term-missing -m 'not live'"
 markers = [
     "live: exercises a real API (Claude, or TypeSafe Jev); skipped without its credentials",
 ]
@@ -44,7 +44,7 @@ extra-paths = ["../plugins/conjurer/skills/conjurer/scripts"]
 
 [tool.coverage.run]
 branch = true
-source = ["app"]
+source = ["app", "evals"]
 
 [tool.coverage.report]
 fail_under = 100

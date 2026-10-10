@@ -266,6 +266,11 @@ def _units() -> list[Unit]:
                     "tooling 9 teams now use.",
                     "internal-platform",
                 ),
+                _v(
+                    "bullet-kubernetes-4",
+                    "Built a shared service template and CI pipeline, shortening setup for 9 teams.",
+                    "internal-platform",
+                ),
             ],
         ),
         Unit(

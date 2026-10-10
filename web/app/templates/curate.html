@@ -2,6 +2,7 @@
 {% import "_icons.html" as i %}
 {% block title %}Curate · {{ unit.label }} · Conjurer{% endblock %}
 {% block main %}
+{% if generation_status.units and not unit.variants %}{% set status = generation_status %}{% include "_summon_progress.html" %}{% endif %}
 <form class="page" method="post" action="/curate/{{ idx }}" data-curate>
   <div class="progress">
     <span class="progress__count">Line {{ idx + 1 }} of {{ total }}</span>
@@ -64,6 +65,9 @@
     {% else %}
     <a class="btn btn--quiet" href="/outline">{{ i.icon("arrow-left") }} Outline</a>
     {% endif %}
+    {% if not unit.variants and idx + 1 < total %}
+    <a class="btn btn--quiet" href="/curate/{{ idx + 1 }}">Review next line {{ i.icon("arrow-right") }}</a>
+    {% endif %}
     <button class="btn btn--primary" type="submit" data-continue{% if not unit.variants %} disabled{% endif %}>
       {% if idx + 1 >= total %}Review your picks{% else %}Use this line{% endif %} {{ i.icon("arrow-right") }}
     </button>
@@ -73,7 +77,7 @@
     {% if unit.variants %}
     Choose a line before continuing. Press <kbd>1</kbd>–<kbd>{{ unit.variants|length }}</kbd> to choose · <kbd>Enter</kbd> to continue
     {% else %}
-    No variants are available for this line. Generate variants before continuing.
+    No variants are available for this line. Retry generation, or review another line.
     {% endif %}
   </p>
 </form>

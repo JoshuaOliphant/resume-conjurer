@@ -40,10 +40,6 @@
     "sha256": "677410749fb2568178667fd80db4fb320af511a811d516674afb81dcdb825f46"
   },
   {
-    "path": "web/app/adapters/workspace_fake.py",
-    "sha256": "a537e02a3a243d54138b4cb00e940a2db83992d2c8ece76c80941750c4941482"
-  },
-  {
     "path": "web/app/data.py",
     "sha256": "b1dc191bbfcb05f258adb733edd6395619c72cfdbae0a650dbb63528af26d218"
   },
@@ -56,19 +52,7 @@
     "sha256": "cbbddf0a0f5ce83b1a2657e82d2e8898f136dc7f78a7d7f64c9a5ac9f17a98a6"
   },
   {
-    "path": "web/tests/test_generation_live.py",
-    "sha256": "7f40a2632409243ce1b077756be2613915e97d7c83aedcbd2f9b4854df0312a6"
-  },
-  {
     "path": "web/tests/test_ports.py",
     "sha256": "aff1fe5e8318ccf240a90bffc7393750e98a423dfc08fc8137016ced2130e457"
-  },
-  {
-    "path": "web/tests/test_runs.py",
-    "sha256": "066a6c7269f3cc1dcaf940f8067227dcf969cd2d47c2d0a44ff34291cbbe5ee0"
-  },
-  {
-    "path": "web/tests/test_workspace_fake.py",
-    "sha256": "a9c8721290e9f1822ccd54398a088c2ed67ed680f1797f9b610c9b5b1a52765b"
   }
 ]

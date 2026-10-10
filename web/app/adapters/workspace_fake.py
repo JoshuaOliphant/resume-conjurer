@@ -17,9 +17,19 @@ The generation-persistence methods (``load_inputs`` / ``save_outline`` / ``load_
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 
 from app.data import get_application
-from app.domain import Application, Evidence, Outline, Support, Unit, WorkspaceInputs, validate_slug
+from app.domain import (
+    Application,
+    Evidence,
+    Outline,
+    Support,
+    Unit,
+    WorkspaceInputs,
+    validate_slug,
+)
+from app.generation_status import UnitGenerationStatus
 from app.metrics import RunMetrics
 
 
@@ -29,6 +39,8 @@ class FakeWorkspaceRepository:
     def __init__(self) -> None:
         # slug -> {unit_id: variant_id}; exactly one pick per unit, like variants.md.
         self._picks: dict[str, dict[str, str]] = {}
+        self._units: dict[str, dict[str, Unit]] = {}
+        self._progress: dict[str, dict[str, UnitGenerationStatus]] = {}
 
     # --- generation persistence (live-only; unused offline) ----------------
 
@@ -41,11 +53,27 @@ class FakeWorkspaceRepository:
     def save_outline(self, slug: str, outline: Outline) -> None:
         raise NotImplementedError
 
+    def begin_generation(self, slug: str, outline: Outline) -> None:
+        raise NotImplementedError
+
     def load_outline(self, slug: str) -> Outline | None:
         raise NotImplementedError
 
     def save_variants(self, slug: str, units: list[Unit]) -> None:
         raise NotImplementedError
+
+    def load_generation_status(self, slug: str) -> dict[str, UnitGenerationStatus] | None:
+        validate_slug(slug)
+        return deepcopy(self._progress.get(slug))
+
+    def save_generation_status(self, slug: str, statuses: dict[str, UnitGenerationStatus]) -> None:
+        validate_slug(slug)
+        self._progress[slug] = deepcopy(statuses)
+
+    def save_unit_variants(self, slug: str, unit: Unit) -> None:
+        validate_slug(slug)
+        self._units.setdefault(slug, {})[unit.id] = deepcopy(unit)
+        self._picks.get(slug, {}).pop(unit.id, None)
 
     def save_metrics(self, slug: str, metrics: RunMetrics) -> None:
         raise NotImplementedError
@@ -88,4 +116,7 @@ class FakeWorkspaceRepository:
 
     def load_application(self, slug: str) -> Application:
         validate_slug(slug)
-        return get_application()
+        application = deepcopy(get_application())
+        replacements = self._units.get(slug, {})
+        application.units = [deepcopy(replacements.get(unit.id, unit)) for unit in application.units]
+        return application

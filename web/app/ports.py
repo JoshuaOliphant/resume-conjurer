@@ -36,6 +36,7 @@ from app.domain import (
     Variant,
     WorkspaceInputs,
 )
+from app.generation_status import UnitGenerationStatus
 from app.metrics import CallMetrics, RunMetrics
 
 
@@ -127,12 +128,28 @@ class WorkspaceRepository(Protocol):
         """Persist the outline to applications/<slug>/outline.json."""
         ...
 
+    def begin_generation(self, slug: str, outline: Outline) -> None:
+        """Start an outline's draft set, restoring the prior outline if reset fails."""
+        ...
+
     def load_outline(self, slug: str) -> Outline | None:
         """Load the persisted outline, or None if generation has not produced it yet."""
         ...
 
     def save_variants(self, slug: str, units: list[Unit]) -> None:
         """Write applications/<slug>/variants.md from the generated units."""
+        ...
+
+    def load_generation_status(self, slug: str) -> dict[str, UnitGenerationStatus] | None:
+        """Load progress bound to the current outline; None for legacy workspaces."""
+        ...
+
+    def save_generation_status(self, slug: str, statuses: dict[str, UnitGenerationStatus]) -> None:
+        """Persist unit progress without duplicating variants or picks."""
+        ...
+
+    def save_unit_variants(self, slug: str, unit: Unit) -> None:
+        """Atomically replace one unit, retaining other variants and picks."""
         ...
 
     def set_pick(self, slug: str, unit_id: str, variant_id: str) -> None:

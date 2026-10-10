@@ -28,6 +28,7 @@ from app.deps import (
 from app.document_routes import DocumentUploadLimit, document_router
 from app.document_store import ConflictError, DocumentStore
 from app.domain import SUPPORT_CHECK_LABEL, LintCheck, support_check
+from app.generation_routes import generation_router
 from app.onboarding_routes import onboarding_router
 from app.onboarding_sdk import OnboardingSdk
 from app.ports import CompositionPort, GenerationPort, WorkspaceRepository
@@ -67,6 +68,7 @@ def create_app(
     app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
     templates = Jinja2Templates(directory=str(BASE / "templates"))
     source_lock = Lock()
+    app.include_router(generation_router(repo, run_manager, templates, SLUG, source_lock))
     app.include_router(document_router(documents, templates, run_manager, SLUG, source_lock))
     app.include_router(onboarding_router(documents, templates, onboarding or OnboardingSdk(), run_manager, SLUG, source_lock))
 
@@ -138,7 +140,7 @@ def create_app(
         response = templates.TemplateResponse(
             request, "_summon_progress.html", {"request": request, "status": status}
         )
-        if status.state == "done":
+        if status.state in ("done", "partial"):
             response.headers["HX-Redirect"] = "/outline"
         return response
 
@@ -157,7 +159,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "outline.html",
-            template_context(request, "outline", app_data=repo.load_application(SLUG)),
+            template_context(request, "outline", app_data=repo.load_application(SLUG), generation_status=run_manager.status(SLUG)),
         )
 
     @app.get("/curate", response_class=HTMLResponse)
@@ -185,6 +187,7 @@ def create_app(
                 unit=unit,
                 idx=idx,
                 total=len(units),
+                generation_status=run_manager.status(SLUG),
                 selected=repo.get_picks(SLUG).get(unit.id),
                 prev_idx=idx - 1 if idx > 0 else None,
             ),
