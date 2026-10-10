@@ -21,8 +21,8 @@ def test_incomplete_results_are_rejected(count, text, citation):
         validate_unit_variants(variants)
 
 
-def test_supported_and_unverified_references_are_not_semantically_graded():
-    citation = "master-resume.md L16-18; evidence.md L5"
+@pytest.mark.parametrize("citation", ["master-resume.md L16-18; evidence.md L5", "master-resume.md L16, L38; evidence.md L11", "evidence.md - Billing migration", "master-resume.md L16–18"])
+def test_supported_and_unverified_references_are_not_semantically_graded(citation):
     variant = Variant("u#1", "Built a service", (Evidence(citation, "", citation, False),))
     validate_unit_variants([replace(variant, id=f"u#{n}") for n in range(1, 5)])
     with pytest.raises(ValueError):

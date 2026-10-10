@@ -52,10 +52,6 @@
     "sha256": "cbbddf0a0f5ce83b1a2657e82d2e8898f136dc7f78a7d7f64c9a5ac9f17a98a6"
   },
   {
-    "path": "web/tests/test_generation_live.py",
-    "sha256": "7f40a2632409243ce1b077756be2613915e97d7c83aedcbd2f9b4854df0312a6"
-  },
-  {
     "path": "web/tests/test_ports.py",
     "sha256": "aff1fe5e8318ccf240a90bffc7393750e98a423dfc08fc8137016ced2130e457"
   }
