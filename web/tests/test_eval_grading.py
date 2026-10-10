@@ -5,6 +5,7 @@ import pytest
 from claude_agent_sdk.types import (
     AssistantMessage,
     ResultMessage,
+    ServerToolUseBlock,
     SystemMessage,
     TextBlock,
     ThinkingBlock,
@@ -213,10 +214,6 @@ def test_judge_win_scores_the_candidate_not_the_side(winner, candidate_on_a, exp
     assert grading.judge_win(winner, candidate_on_a) == expected
 
 
-class _UnknownBlock:
-    pass
-
-
 def test_transcript_becomes_report_turns_with_subagent_turns_labelled():
     messages = [
         SystemMessage(subtype="init", data={}),
@@ -231,7 +228,7 @@ def test_transcript_becomes_report_turns_with_subagent_turns_labelled():
         UserMessage(content=[ToolResultBlock(tool_use_id="t1", content=[{"type": "text", "text": "done"}, {"type": "image"}])]),
         UserMessage(content=[ToolResultBlock(tool_use_id="t2", content="plain"), ToolResultBlock(tool_use_id="t3")]),
         UserMessage(content="a string turn"),
-        AssistantMessage(content=[_UnknownBlock()], model="claude-opus-5-5"),
+        AssistantMessage(content=[ServerToolUseBlock(id="server1", name="web_search", input={"query": "test"})], model="claude-opus-5-5"),
     ]
 
     trace = grading.transcript_to_trace("PROMPT", messages)
@@ -244,7 +241,7 @@ def test_transcript_becomes_report_turns_with_subagent_turns_labelled():
     assert trace[5] == {"role": "tool_result", "content": "plain"}
     assert trace[6] == {"role": "tool_result", "content": ""}
     assert trace[7] == {"role": "user", "content": "a string turn"}
-    assert trace[8] == {"role": "assistant", "content": "[_UnknownBlock]"}
+    assert trace[8] == {"role": "assistant", "content": "[ServerToolUseBlock]"}
 
 
 def test_usage_delta_is_one_calls_tokens_per_model_from_session_totals():

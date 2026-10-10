@@ -21,7 +21,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from app.adapters.scripts_path import ensure_scripts_on_path
 
@@ -145,7 +145,15 @@ VOICE_RULES_BY_KIND = {
 
 VARIANT_CHECKS = ("fact_clean", "overclaim_free", "cite_ok", "voice", "lint_clean")
 
-METRICS = [
+
+class Metric(TypedDict):
+    id: str
+    label: str
+    kind: str
+    scale: int
+
+
+METRICS: list[Metric] = [
     {"id": "fact_clean", "label": "Fact clean", "kind": "float", "scale": 1},
     {"id": "overclaim_free", "label": "No overclaim", "kind": "float", "scale": 1},
     {"id": "cite_ok", "label": "Cites right", "kind": "float", "scale": 1},

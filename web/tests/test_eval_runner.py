@@ -5,11 +5,13 @@ import asyncio
 import json
 import shutil
 import urllib.error
+from email.message import Message
 from pathlib import Path
 
 import pytest
 from claude_agent_sdk.types import (
     AssistantMessage,
+    ModelUsage,
     ResultMessage,
     TextBlock,
     ToolResultBlock,
@@ -100,8 +102,10 @@ class FakePort:
         dispatch = [UserMessage(content=[ToolResultBlock(tool_use_id="t1", content=INTERRUPT)])] if self.interrupted else []
         # The SDK reports total_cost_usd and model_usage cumulatively over the client session.
         self.session_cost += 0.02
-        model_usage = {self.model: {"inputTokens": 5 * self.calls, "outputTokens": 1000 * self.calls,
-                                    "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}}
+        model_usage: dict[str, ModelUsage] = {self.model: {"inputTokens": 5 * self.calls, "outputTokens": 1000 * self.calls,
+                                    "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0,
+                                    "webSearchRequests": 0, "costUSD": self.session_cost,
+                                    "contextWindow": 200_000, "maxOutputTokens": 64_000}}
         self.last_transcript = [
             *dispatch,
             AssistantMessage(content=[TextBlock(text="## Unit")], model=self.model),
@@ -181,7 +185,7 @@ def test_harness_gate_refuses_until_approved_and_again_after_a_change(tmp_path):
 
 
 def _http_error(code):
-    return urllib.error.HTTPError("https://jev", code, "status", {}, None)
+    return urllib.error.HTTPError("https://jev", code, "status", Message(), None)
 
 
 @pytest.mark.parametrize(
