@@ -68,25 +68,28 @@ class RunManager:
             error = None
             conflict = False
             try:
-                saved = self._repo.load_generation_status(slug)
+                self._repo.load_generation_status(slug)
             except (OSError, ValueError) as exc:
                 logger.warning("could not recover generation progress for slug=%s: %s", slug, type(exc).__name__)
-                saved = None
                 conflict = isinstance(exc, GenerationStatusConflict)
                 error = "Could not recover generation progress. Check workspace storage."
             units = {unit.id: unit for unit in application.units}
             statuses = {}
             for ou in outline.units:
-                stored = saved.get(ou.unit_id) if saved else None
                 variants = units[ou.unit_id].variants
-                complete = not conflict and len(variants) == 4 and all(v.text.strip() for v in variants) and (stored is None or stored.state != "pending")
+                complete = not conflict and len(variants) == 4 and all(v.text.strip() for v in variants)
                 statuses[ou.unit_id] = UnitGenerationStatus(ou.unit_id, "succeeded" if complete else "failed", None if complete else "Generation was interrupted or incomplete. Retry this line.")
             status = RunStatus(units_total=len(statuses), units_done=sum(u.state == "succeeded" for u in statuses.values()), units=statuses, error=error)
             status.state = "error" if error else ("done" if status.units_done == status.units_total else "partial")
-            self._status[slug] = status
-            self._metrics[slug] = self._repo.load_metrics(slug) or RunMetrics(slug=slug, steps=[])
+            try:
+                metrics = self._repo.load_metrics(slug)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                logger.warning("could not recover generation metrics for slug=%s", slug)
+                metrics = None
+            self._metrics[slug] = metrics or RunMetrics(slug=slug, steps=[])
             self._support[slug] = self._repo.load_support(slug)
             self._generated[slug] = {key: units[key] for key, state in statuses.items() if state.state == "succeeded"}
+            self._status[slug] = status
             return status
 
     def _persist_progress(self, slug: str) -> None:
@@ -151,6 +154,11 @@ class RunManager:
             outline = self._repo.load_outline(slug)
             if outline is None:
                 raise ValueError("No outline available.")
+            self._status.pop(slug)
+            status = self.status(slug)
+            target = status.units.get(unit_id)
+            if target is None or target.state != "failed":
+                raise ValueError("This unit is not available for retry.")
             unit = next(u for u in outline.units if u.unit_id == unit_id)
             status.state = "running"
             status.error = None

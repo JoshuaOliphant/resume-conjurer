@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from app.domain import Variant
+from app.domain import Variant, label_for_unit_id
 
 
 @dataclass
@@ -14,6 +14,10 @@ class UnitGenerationStatus:
     unit_id: str
     state: Literal["pending", "generating", "succeeded", "failed"] = "pending"
     error: str | None = None
+
+    @property
+    def label(self) -> str:
+        return label_for_unit_id(self.unit_id)
 
 
 def validate_unit_variants(variants: list[Variant], expected: int = 4) -> None:

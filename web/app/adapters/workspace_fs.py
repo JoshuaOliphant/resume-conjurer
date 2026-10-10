@@ -401,7 +401,7 @@ class FsWorkspaceRepository:
             logger.warning("unreadable generation progress for slug=%s", slug)
             progress = None
         if progress is not None:
-            parsed = [unit for unit in parsed if unit.unit_id in contexts and progress.get(unit.unit_id, UnitGenerationStatus(unit.unit_id)).state not in ("pending", "failed")]
+            parsed = [unit for unit in parsed if unit.unit_id in contexts]
         support = self.load_support(slug)
         cited: dict[str, Evidence] = {}
 

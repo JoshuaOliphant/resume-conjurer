@@ -59,7 +59,7 @@ def test_partial_results_offer_keyboard_retry_and_preserve_successful_picks(part
     before = repo.get_picks(SLUG)
     outline = client.get("/outline")
     assert outline.status_code == 200
-    assert f"Retry {first.id}" in outline.text
+    assert f"Retry {first.label}" in outline.text
     assert 'type="submit"' in outline.text and 'aria-live="polite"' in outline.text
     assert "4 variants" in outline.text
     assert "Retry" in client.get("/curate/0").text
@@ -110,7 +110,7 @@ def test_restart_preserves_drafts_picks_and_failed_unit_retry(partial_applicatio
     assert resumed.status(SLUG).state == "partial"
     app = create_app(repo, FakeGenerationPort(), resumed, live=True)
     with SameOriginClient(app) as reopened:
-        assert f"Retry {first.id}" in reopened.get("/outline").text
+        assert f"Retry {first.label}" in reopened.get("/outline").text
         assert repo.get_picks(SLUG) == previous
         assert repo.load_application(SLUG).units[1].variants == variants
         reopened.post(f"/generate/retry/{first.id}")
@@ -138,8 +138,8 @@ def test_restart_marks_unfinished_attempt_retryable_without_generating(partial_a
     app = create_app(repo, resumed_gen, resumed, live=True)
     with SameOriginClient(app) as reopened:
         page = reopened.get("/outline")
-        assert "Retry cover_letter.opening" in page.text
-        assert "Generating cover_letter.opening" not in page.text
+        assert "Retry Opening" in page.text
+        assert "Generating Opening" not in page.text
 
 
 def test_saved_result_survives_missed_status_update(partial_application):
@@ -273,3 +273,45 @@ def test_retry_waits_for_an_inflight_recovery_snapshot(partial_application):
         snapshot.result(timeout=5)
         action.result(timeout=5)
     assert resumed.status(SLUG).state == "done"
+
+
+def test_complete_cli_drafts_remain_authoritative_with_failed_metadata(partial_application):
+    client, manager, repo, gen = partial_application
+    target = repo.load_application(SLUG).units[0]
+    outline = repo.load_outline(SLUG)
+    variants = asyncio.run(FakeGenerationPort().variants(SLUG, outline.units[0]))
+    repo.save_unit_variants(SLUG, replace(target, variants=variants))
+    repo.set_pick(SLUG, target.id, variants[1].id)
+    before = repo.get_picks(SLUG)
+    assert len(repo.load_application(SLUG).units[0].variants) == 4
+    calls = len(gen.calls)
+    assert client.post(f"/generate/retry/{target.id}").status_code == 404
+    assert len(gen.calls) == calls
+    assert repo.get_picks(SLUG) == before
+
+
+def test_removed_outline_target_is_refused_without_server_error(partial_application):
+    client, manager, repo, gen = partial_application
+    outline = repo.load_outline(SLUG)
+    repo.save_outline(SLUG, replace(outline, cover_letter_units=outline.cover_letter_units[1:]))
+    calls = len(gen.calls)
+    app = create_app(repo, gen, manager, live=True)
+    with SameOriginClient(app, raise_server_exceptions=False) as reopened:
+        assert reopened.post("/generate/retry/cover_letter.opening").status_code == 404
+    assert len(gen.calls) == calls
+
+
+def test_corrupt_optional_metrics_do_not_block_recovery_or_retry(partial_application, caplog):
+    client, manager, repo, gen = partial_application
+    (repo.root / "applications" / SLUG / "metrics.json").write_text("{")
+    resumed = RunManager(repo, FakeGenerationPort(), NoVerificationPort())
+    app = create_app(repo, FakeGenerationPort(), resumed, live=True)
+    with SameOriginClient(app, raise_server_exceptions=False) as reopened:
+        assert reopened.get("/outline").status_code == 200
+        assert resumed.status(SLUG).state == "partial"
+        assert resumed.metrics(SLUG) is not None
+        reopened.post("/generate/retry/cover_letter.opening")
+        assert reopened.portal is not None
+        reopened.portal.call(resumed.join, SLUG)
+        assert resumed.status(SLUG).state == "done"
+    assert "could not recover generation metrics" in caplog.text

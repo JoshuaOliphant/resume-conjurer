@@ -5,12 +5,12 @@
   {% if status.units_total %}<p>Summoned {{ status.units_done }} of {{ status.units_total }} lines.</p>{% else %}<p>Summoning the outline…</p>{% endif %}
   {% for unit_id, progress in status.units.items() %}
     {% if progress.state == "failed" %}
-    <div><p>{{ unit_id }}: {{ progress.error }}</p>
+    <div><p>{{ progress.label }}: {{ progress.error }}</p>
       <form method="post" action="/generate/retry/{{ unit_id }}" hx-post="/generate/retry/{{ unit_id }}" hx-target="#summon" hx-swap="outerHTML">
-        <button class="btn btn--quiet" type="submit"{% if status.state == "running" %} disabled{% endif %}>Retry {{ unit_id }}</button>
+        <button class="btn btn--quiet" type="submit"{% if status.state == "running" %} disabled{% endif %}>Retry {{ progress.label }}</button>
       </form>
     </div>
-    {% elif progress.state == "generating" %}<p>Generating {{ unit_id }}…</p>{% endif %}
+    {% elif progress.state == "generating" %}<p>Generating {{ progress.label }}…</p>{% endif %}
   {% endfor %}
   {% if status.state in ("done", "partial") %}<a class="btn btn--quiet" href="/outline">Review generated lines</a>{% endif %}
 </div>
