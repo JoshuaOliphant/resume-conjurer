@@ -63,6 +63,8 @@ def test_partial_results_offer_keyboard_retry_and_preserve_successful_picks(part
     assert 'type="submit"' in outline.text and 'aria-live="polite"' in outline.text
     assert "4 variants" in outline.text
     assert "Retry" in client.get("/curate/0").text
+    assert 'href="/curate/1"' in client.get("/curate/0").text
+    assert 'href="/curate/1"' in outline.text
     gen.calls.clear()
     response = client.post(f"/generate/retry/{first.id}")
     assert response.status_code == 200

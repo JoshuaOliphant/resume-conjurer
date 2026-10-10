@@ -65,6 +65,9 @@
     {% else %}
     <a class="btn btn--quiet" href="/outline">{{ i.icon("arrow-left") }} Outline</a>
     {% endif %}
+    {% if not unit.variants and idx + 1 < total %}
+    <a class="btn btn--quiet" href="/curate/{{ idx + 1 }}">Review next line {{ i.icon("arrow-right") }}</a>
+    {% endif %}
     <button class="btn btn--primary" type="submit" data-continue{% if not unit.variants %} disabled{% endif %}>
       {% if idx + 1 >= total %}Review your picks{% else %}Use this line{% endif %} {{ i.icon("arrow-right") }}
     </button>
