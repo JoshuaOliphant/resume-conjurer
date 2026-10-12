@@ -15,11 +15,14 @@ keeps each variant's number and citation so we can resolve its evidence trace.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import re
+import tempfile
 from collections.abc import Iterable, Mapping
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from app.adapters.scripts_path import ensure_scripts_on_path
@@ -37,6 +40,11 @@ from app.domain import (
     WorkspaceInputs,
     label_for_unit_id,
     validate_slug,
+)
+from app.generation_status import (
+    GenerationStatusConflict,
+    UnitGenerationStatus,
+    decode_unit_statuses,
 )
 from app.metrics import RunMetrics
 
@@ -181,7 +189,20 @@ class FsWorkspaceRepository:
             ],
         }
         path = self._app_dir(slug) / "outline.json"
-        path.write_text(json.dumps(data, indent=2) + "\n")
+        self._write_atomic(path, json.dumps(data, indent=2) + "\n")
+
+    def begin_generation(self, slug: str, outline: Outline) -> None:
+        path = self._app_dir(slug) / "outline.json"
+        previous = path.read_text() if path.exists() else None
+        try:
+            self.save_outline(slug, outline)
+            self.save_variants(slug, [])
+        except OSError:
+            if previous is None:
+                path.unlink(missing_ok=True)
+            else:
+                self._write_atomic(path, previous)
+            raise
 
     def load_outline(self, slug: str) -> Outline | None:
         path = self._app_dir(slug) / "outline.json"
@@ -228,7 +249,55 @@ class FsWorkspaceRepository:
                 lines.append("- [ ] Pick")
                 lines.append("")
         path = self._app_dir(slug) / "variants.md"
-        path.write_text("\n".join(lines))
+        self._write_atomic(path, "\n".join(lines))
+
+    def load_generation_status(self, slug: str) -> dict[str, UnitGenerationStatus] | None:
+        path = self._app_dir(slug) / "generation.json"
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError("Invalid generation progress.")
+        binding = data.get("outline")
+        if not isinstance(binding, str) or not re.fullmatch(r"[0-9a-f]{64}", binding):
+            raise ValueError("Invalid generation progress outline binding.")
+        outline_bytes = path.with_name("outline.json").read_bytes()
+        if binding != hashlib.sha256(outline_bytes).hexdigest():
+            raise GenerationStatusConflict("Generation progress belongs to a different outline.")
+        statuses = decode_unit_statuses(data.get("units"))
+        outline = json.loads(outline_bytes)
+        expected = {unit["unit_id"] for key in ("cover_letter_units", "resume_units") for unit in outline[key]}
+        if set(statuses) != expected:
+            raise ValueError("Generation progress does not cover the outline units.")
+        return statuses
+
+    def save_generation_status(self, slug: str, statuses: dict[str, UnitGenerationStatus]) -> None:
+        path = self._app_dir(slug) / "generation.json"
+        document = {"outline": hashlib.sha256(path.with_name("outline.json").read_bytes()).hexdigest(), "units": {key: asdict(value) for key, value in statuses.items()}}
+        self._write_atomic(path, json.dumps(document, indent=2) + "\n")
+
+    def save_unit_variants(self, slug: str, unit: Unit) -> None:
+        path = self._app_dir(slug) / "variants.md"
+        text = path.read_text() if path.exists() else "# Conjurer Variants\n\n"
+        block = [f"## Unit: {unit.id}", f"<!-- conjurer:unit id={unit.id} -->", ""]
+        for n, variant in enumerate(unit.variants, 1):
+            citation = "; ".join(item.id for item in variant.evidence_items)
+            block.extend([f"### Variant {n}: {citation}", "", variant.text, "", "*Axis: variant distinction*", "", "- [ ] Pick", ""])
+        replacement = "\n".join(block) + "\n"
+        pattern = re.compile(r"^## Unit: " + re.escape(unit.id) + r"[ \t]*\n.*?(?=^## Unit: |\Z)", re.M | re.S)
+        text = pattern.sub(lambda _: replacement, text) if pattern.search(text) else text.rstrip() + "\n\n" + replacement
+        self._write_atomic(path, text)
+
+    def _write_atomic(self, path: Path, text: str) -> None:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+            staged = Path(stream.name)
+            try:
+                stream.write(text)
+                stream.flush()
+                os.fsync(stream.fileno())
+                os.replace(staged, path)
+            finally:
+                staged.unlink(missing_ok=True)
 
     def set_pick(self, slug: str, unit_id: str, variant_id: str) -> None:
         target_n = int(variant_id.rsplit("#", 1)[1])
@@ -258,7 +327,7 @@ class FsWorkspaceRepository:
     def get_picks(self, slug: str) -> dict[str, str]:
         path = self._app_dir(slug) / "variants.md"
         picks: dict[str, str] = {}
-        for unit in parse_variants_md(path.read_text()):
+        for unit in parse_variants_md(path.read_text() if path.exists() else ""):
             for variant in unit.variants:
                 if variant.picked:
                     picks[unit.unit_id] = f"{unit.unit_id}#{variant.n}"
@@ -321,7 +390,18 @@ class FsWorkspaceRepository:
         contexts = {u.unit_id: u.description for u in outline.units}
         order = {u.unit_id: i for i, u in enumerate(outline.units)}
 
-        parsed = parse_variants_md((self._app_dir(slug) / "variants.md").read_text())
+        variant_path = self._app_dir(slug) / "variants.md"
+        parsed = parse_variants_md(variant_path.read_text() if variant_path.exists() else "")
+        try:
+            progress = self.load_generation_status(slug)
+        except GenerationStatusConflict:
+            progress = {}
+            parsed = []
+        except (OSError, ValueError):
+            logger.warning("unreadable generation progress for slug=%s", slug)
+            progress = None
+        if progress is not None:
+            parsed = [unit for unit in parsed if unit.unit_id in contexts]
         support = self.load_support(slug)
         cited: dict[str, Evidence] = {}
 
@@ -348,6 +428,10 @@ class FsWorkspaceRepository:
                 )
             )
 
+        present = {unit.id for unit in units}
+        for ou in outline.units:
+            if ou.unit_id not in present:
+                units.append(Unit(id=ou.unit_id, kind=ou.kind, label=label_for_unit_id(ou.unit_id), context=ou.description, variants=[]))
         units.sort(key=lambda u: order.get(u.id, len(order)))
 
         return Application(

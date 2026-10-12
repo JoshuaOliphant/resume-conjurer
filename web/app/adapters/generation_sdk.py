@@ -35,7 +35,7 @@ import composer  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_PLUGIN_DIR = REPO_ROOT / "plugins" / "conjurer"
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-sonnet-5-5"
 
 # The only tools the variant agent may use: read/search and subagent dispatch. This is a
 # deny-by-default allowlist, not a denylist — anything not named here (unknown built-ins,
@@ -177,6 +177,8 @@ class SdkGenerationPort:
         self._variant_client: Any = None
         # Metrics of the most recent call, for observability and the live cache assertion.
         self.last_call: CallMetrics | None = None
+        # Every SDK message of the most recent variant call, subagent turns included.
+        self.last_transcript: list[Any] = []
 
     def _base_options(self) -> dict[str, Any]:  # pragma: no cover - SDK wiring, live-tested
         # No permission_mode here; each client sets its own. The outline client can safely
@@ -187,6 +189,9 @@ class SdkGenerationPort:
             plugins=[{"type": "local", "path": str(self.plugin_dir)}],
             setting_sources=[],
             model=self.model,
+            # The CLI runs Agent-tool subagents in the background by default; the variant turn
+            # would end before the variant-generator returns, leaving no block to relay.
+            env={"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"},
         )
 
     async def outline(self, slug: str) -> Outline:  # pragma: no cover - live-tested
@@ -236,7 +241,9 @@ class SdkGenerationPort:
             await self._variant_client.connect()
         await self._variant_client.query(prompt)
         parts: list[str] = []
+        self.last_transcript = []
         async for msg in self._variant_client.receive_response():
+            self.last_transcript.append(msg)
             if isinstance(msg, AssistantMessage):
                 for block in msg.content:
                     if isinstance(block, TextBlock):
@@ -253,5 +260,6 @@ class SdkGenerationPort:
 
     async def aclose(self) -> None:  # pragma: no cover - live-tested
         if self._variant_client is not None:
-            await self._variant_client.disconnect()
+            client = self._variant_client
             self._variant_client = None
+            await client.disconnect()

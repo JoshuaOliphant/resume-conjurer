@@ -2,7 +2,7 @@
 # ABOUTME: Covers pooling master-resume.md and evidence.md lines and resolving citation strings.
 import pytest
 
-from citations import CitedLine, pool_lines, resolve_citation
+from citations import CitedLine, is_well_formed_citation, pool_lines, resolve_citation
 
 MASTER_RESUME = """# Jordan Rivera
 
@@ -73,18 +73,19 @@ def test_pool_lines_keys_non_blank_lines_by_file_and_line_number() -> None:
 )
 def test_resolve_citation_grounds_every_pooled_line(citation: str, expected_ids: list[str]) -> None:
     assert resolve_citation(citation, LINES) == [CitedLine(id, True) for id in expected_ids]
+    assert is_well_formed_citation(citation)
 
 
 @pytest.mark.parametrize(
-    "citation",
+    ("citation", "well_formed"),
     [
-        "master-resume.md",
-        "master-resume.md L999",
-        "master-resume.md L9-8",
-        "evidence.md - hobbies",
-        "master-resume.md - billing",
-        "notes.md L3",
-        "",
+        ("master-resume.md", False),
+        ("master-resume.md L999", True),
+        ("master-resume.md L9-8", False),
+        ("evidence.md - hobbies", True),
+        ("master-resume.md - billing", False),
+        ("notes.md L3", False),
+        ("", False),
     ],
     ids=[
         "no-line",
@@ -96,8 +97,9 @@ def test_resolve_citation_grounds_every_pooled_line(citation: str, expected_ids:
         "empty",
     ],
 )
-def test_resolve_citation_keeps_unresolvable_reference_ungrounded(citation: str) -> None:
+def test_resolve_citation_keeps_unresolvable_reference_ungrounded(citation: str, well_formed: bool) -> None:
     assert resolve_citation(citation, LINES) == [CitedLine(citation, False)]
+    assert is_well_formed_citation(citation) == well_formed
 
 
 def test_resolve_citation_grounds_what_it_can_in_a_partial_list() -> None:
@@ -109,3 +111,5 @@ def test_resolve_citation_grounds_what_it_can_in_a_partial_list() -> None:
 
 def test_bare_line_without_a_preceding_file_stays_ungrounded() -> None:
     assert resolve_citation("L8", LINES) == [CitedLine("L8", False)]
+    assert not is_well_formed_citation("L8")
+    assert not is_well_formed_citation("master-resume.md L0")

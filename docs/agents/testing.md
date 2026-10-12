@@ -86,3 +86,7 @@ Exclusions agreed so far (`[tool.coverage.report] exclude_lines` in each project
 - `if __name__ == "__main__":` and `if TYPE_CHECKING:`: never executed under test. Plugin CLI `main()` functions are covered through direct calls with real temporary files.
 - `raise NotImplementedError`: live-only methods on the offline fake repository, never called in
   `fake` mode.
+
+## Generation recovery
+
+Issue #41 maps initial generation, partial completion, targeted retry, and storage behavior to the existing run, repository, and route suites. Issue #42 maps restart recovery to `web/tests/test_generation_routes.py`, reusing the live-flow synthetic workspace. The issue comments hold the AC-to-node evidence tables. `web/tests/conftest.py` initializes the existing plugin script path so isolated test modules do not depend on collection order.

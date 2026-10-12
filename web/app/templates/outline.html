@@ -13,11 +13,12 @@
     <p class="frame__why">{{ app_data.frame.rationale }}</p>
   </div>
 
+  {% if generation_status.units %}{% set status = generation_status %}{% include "_summon_progress.html" %}{% endif %}
   <ol class="unit-list">
     {% for unit in app_data.units %}
     <li class="unit-row">
       <span class="tag {{ unit.tag_class }}">{{ unit.kind_label }}</span>
-      <span class="unit-row__label">{{ unit.label }}</span>
+      <a class="unit-row__label" href="/curate/{{ loop.index0 }}">{{ unit.label }}</a>
       <span class="unit-row__ctx">
         {{ unit.variants|length }} variants{% if unit.grounding_note %} · limited evidence{% endif %}
       </span>

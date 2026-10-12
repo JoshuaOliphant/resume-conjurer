@@ -104,6 +104,11 @@ Rationale in `web/BACKEND.md`; the empirically verified SDK contract in
   they share the cached prefix. Recreating it per unit throws that away; this is a design rule, not
   an optimization. The outline client is a one-shot `async with`, because it is called once per run.
 - **`setting_sources=[]`** isolates the SDK from this repo's own `.claude/` hooks and settings.
+- **`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`** in the client `env` keeps Agent-tool subagents
+  synchronous. Without it the CLI launches `conjurer:variant-generator` in the background, the
+  variant turn ends before the subagent returns, and the parent model invents a "verbatim" block
+  it never received: ungrounded variants in a format `variants_from_block` cannot parse. Found by
+  the variant-generation eval (`web/evals/`).
 
 ### Async run model
 
@@ -120,6 +125,10 @@ it, so do not bake further single-user assumptions into the domain model or rout
 
 ## Repo docs
 
+`knowledge/capture/daily/2026-10-09-generation-recovery.md` records per-unit retry, restart recovery, and CI verification findings.
+
+`CONTEXT.md` defines application, unit, variant, pick, and failed unit.
+
 `docs/document-workbench.md` covers live source imports, manual editing, revision history, and local-workspace limits.
 
 `docs/final-documents.md` covers explicit composition, editable final Markdown, stale notices, and revision-bound exports.
@@ -127,6 +136,8 @@ it, so do not bake further single-user assumptions into the domain model or rout
 `web/EXPORT.md` covers Professional DOCX/PDF rendering, supported content, font licenses, and format limits.
 
 `knowledge/capture/daily/2026-10-02-product-22.md` records runtime findings and review lessons from the product implementation.
+
+`knowledge/capture/daily/2026-10-06-variant-generation-eval.md` records the variant-generation eval's findings: the background-subagent defect, MCP token overhead, Jev question design, and judge calibration.
 
 `web/ONBOARDING.md` covers reviewed grimoire sources, bounded Claude drafting, local validation limits, and explicit acceptance.
 

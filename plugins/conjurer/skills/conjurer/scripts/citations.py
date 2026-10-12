@@ -84,3 +84,25 @@ def resolve_citation(citation: str, lines: Mapping[str, str]) -> list[CitedLine]
         keys = _resolve_reference(reference, file, lines) if reference and file else []
         cited.extend([CitedLine(key, True) for key in keys] or [CitedLine(text, False)])
     return cited
+
+
+def is_well_formed_citation(citation: str) -> bool:
+    """Check reference syntax without asserting that evidence exists or supports a claim."""
+    file: str | None = None
+    for text in _REFERENCE_SPLIT_RE.split(citation.strip()):
+        reference = _REFERENCE_RE.fullmatch(text)
+        if reference is None:
+            return False
+        if reference.group("file"):
+            file = reference.group("file")
+        if file not in (MASTER_RESUME, EVIDENCE):
+            return False
+        if reference.group("label") is not None:
+            if file != EVIDENCE:
+                return False
+        else:
+            start = int(reference.group("start"))
+            end = int(reference.group("end") or start)
+            if start < 1 or end < start:
+                return False
+    return True

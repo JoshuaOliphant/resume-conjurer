@@ -21,10 +21,10 @@ from pathlib import Path
 
 import pytest
 
+import composer
 from app.adapters.generation_sdk import SdkGenerationPort
 from app.domain import FRAMES, Outline
-
-import composer
+from app.generation_status import validate_unit_variants
 
 HERE = Path(__file__).parent
 FIXTURE_WORKSPACE = HERE / "fixtures" / "workspace"
@@ -66,11 +66,14 @@ def test_live_outline_and_variants_with_cache_hit():
             # Two units on the persistent variant client: the 2nd must hit the cache.
             first, second = outline.resume_units[0], outline.resume_units[1]
             v1 = await port.variants(SLUG, first, n=4)
-            assert v1, "expected variants for the first unit"
+            assert len(v1) == 4, "expected four variants for the first unit"
+            validate_unit_variants(v1)
             assert all(v.text.strip() for v in v1)
             assert all(v.evidence_items for v in v1)
 
-            await port.variants(SLUG, second, n=4)
+            v2 = await port.variants(SLUG, second, n=4)
+            assert len(v2) == 4
+            validate_unit_variants(v2)
             assert port.last_call is not None
             assert port.last_call.cache_read_tokens > 0, (
                 f"expected cache hit, got call={port.last_call}"
