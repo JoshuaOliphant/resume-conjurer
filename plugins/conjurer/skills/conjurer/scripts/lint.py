@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from glossary import GlossaryEntry, find_leaks, parse_glossary
+from glossary import GlossaryEntry, entries_named, parse_glossary
 
 EM_DASH_RE = re.compile(r"—")
 
@@ -152,7 +152,7 @@ def lint_glossary(text: str, source: Path, glossary: Sequence[GlossaryEntry]) ->
     return [
         Finding(source, i, "glossary-leak", f"{entry.internal_term}: {line.strip()}")
         for i, line in enumerate(text.splitlines(), start=1)
-        for entry in find_leaks(line, glossary)
+        for entry in entries_named(line, glossary)
     ]
 
 

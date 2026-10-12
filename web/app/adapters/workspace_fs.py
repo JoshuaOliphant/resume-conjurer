@@ -52,7 +52,7 @@ ensure_scripts_on_path()
 
 import citations  # noqa: E402
 import verify  # noqa: E402
-from glossary import GlossaryEntry, find_leaks, parse_glossary  # noqa: E402
+from glossary import GlossaryEntry, entries_named, parse_glossary  # noqa: E402
 from stitch import (  # noqa: E402
     PICK_LINE_RE,
     UNIT_MARKER_RE,
@@ -427,7 +427,7 @@ class FsWorkspaceRepository:
                     id=f"{punit.unit_id}#{pv.n}",
                     text=pv.content,
                     evidence_items=items,
-                    leaks=tuple(find_leaks(pv.content, glossary)),
+                    leaks=tuple(entries_named(pv.content, glossary)),
                 )
                 verdict = support.get(variant.id)
                 if verdict is not None and verdict.fingerprint == _claim_fingerprint(pv.content, items, pool, glossary):

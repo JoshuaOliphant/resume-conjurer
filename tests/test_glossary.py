@@ -2,7 +2,7 @@
 # ABOUTME: Covers well-formed and malformed rows, section bounds, and whole-word term matching.
 import pytest
 
-from glossary import GlossaryEntry, evidence_rows, find_leaks, parse_glossary
+from glossary import GlossaryEntry, entries_named, evidence_rows, parse_glossary
 
 GRIMOIRE = """# Grimoire
 
@@ -73,7 +73,7 @@ def test_parse_glossary_reads_rows_without_outer_pipes_and_with_a_lowercase_head
 def test_parse_glossary_reads_a_separator_only_alias_as_no_alias() -> None:
     entries, warnings = parse_glossary("## Glossary\n| sn-superpowers | - , — | internal developer platform |\n")
     assert (entries, warnings) == ([SUPERPOWERS], [])
-    assert find_leaks("I led a clean project.", entries) == []
+    assert entries_named("I led a clean project.", entries) == []
 
 
 def test_parse_glossary_warns_on_an_internal_term_with_no_letters_or_digits() -> None:
@@ -94,8 +94,8 @@ def test_parse_glossary_warns_on_an_internal_term_with_no_letters_or_digits() ->
         pytest.param("(MailAPI)", id="punctuation-bounded"),
     ],
 )
-def test_find_leaks_reports_the_internal_term_for_every_form(text: str) -> None:
-    assert find_leaks(text, [MAILAPI]) == [MAILAPI]
+def test_entries_named_reports_the_internal_term_for_every_form(text: str) -> None:
+    assert entries_named(text, [MAILAPI]) == [MAILAPI]
 
 
 @pytest.mark.parametrize(
@@ -107,13 +107,13 @@ def test_find_leaks_reports_the_internal_term_for_every_form(text: str) -> None:
         pytest.param("Built a transactional email API.", id="public-description-only"),
     ],
 )
-def test_find_leaks_respects_word_boundaries(text: str) -> None:
-    assert find_leaks(text, [MAILAPI, MAILSCAN]) == []
+def test_entries_named_respects_word_boundaries(text: str) -> None:
+    assert entries_named(text, [MAILAPI, MAILSCAN]) == []
 
 
-def test_find_leaks_lists_each_entry_once_in_glossary_order() -> None:
+def test_entries_named_lists_each_entry_once_in_glossary_order() -> None:
     text = "Moved mail-api and MailAPI onto sn-superpowers, then Mailscan onto MailAPI."
-    assert find_leaks(text, [MAILAPI, SUPERPOWERS, MAILSCAN]) == [MAILAPI, SUPERPOWERS, MAILSCAN]
+    assert entries_named(text, [MAILAPI, SUPERPOWERS, MAILSCAN]) == [MAILAPI, SUPERPOWERS, MAILSCAN]
 
 
 def test_evidence_rows_state_each_used_term_as_its_public_description_in_glossary_order() -> None:

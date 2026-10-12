@@ -17,7 +17,7 @@ from glossary import (  # noqa: E402
     GLOSSARY_HEADING_RE,
     SECTION_END_RE,
     GlossaryEntry,
-    find_leaks,
+    entries_named,
     parse_glossary,
 )
 
@@ -277,7 +277,7 @@ def with_scale_fact(master: str, offer: dict) -> str:
 
 def _after_term(line: str, entry: GlossaryEntry, scale: str) -> str:
     end = next(end for end in range(1, len(line) + 1)
-               if find_leaks(line[:end], [entry]) and (end == len(line) or not re.match(r"\w", line[end])))
+               if entries_named(line[:end], [entry]) and (end == len(line) or not re.match(r"\w", line[end])))
     return f"{line[:end]} ({scale}){line[end:]}"
 
 
@@ -290,7 +290,7 @@ def scale_offers(master: str, grimoire: str, rows: list[dict]) -> list[dict]:
         if row["label"] != "user-attested" or not row["scale"] or entry is None:
             continue
         for number, line in enumerate(master.splitlines(), start=1):
-            if BULLET.match(line) and row["scale"] not in line and find_leaks(line, [entry]):
+            if BULLET.match(line) and row["scale"] not in line and entries_named(line, [entry]):
                 offers.append({"row": index, "line": number, "term": row["internal_term"], "scale": row["scale"],
                                "before": line, "after": _after_term(line, entry, row["scale"])})
     return offers

@@ -28,7 +28,7 @@ from app.domain import (
 
 ensure_scripts_on_path()
 
-from glossary import GlossaryEntry, find_leaks  # noqa: E402
+from glossary import GlossaryEntry, entries_named  # noqa: E402
 
 # --- Evidence pool ---------------------------------------------------------
 # Lines lifted from the (fixture) master resume, keyed by id.
@@ -96,7 +96,7 @@ def _v(id: str, text: str, *evidence_ids: str, support: Support | None = None) -
         text=text,
         evidence_items=tuple(EVIDENCE[e] for e in evidence_ids),
         support=support,
-        leaks=tuple(find_leaks(text, GLOSSARY)),
+        leaks=tuple(entries_named(text, GLOSSARY)),
     )
 
 

@@ -1,5 +1,5 @@
-# ABOUTME: Reads the grimoire's Glossary table and finds glossary leaks in generated text.
-# ABOUTME: A leak is an internal term or alias appearing as a whole word, ignoring case, spaces, and hyphens.
+# ABOUTME: Reads the grimoire's Glossary table and finds the glossary entries a text names.
+# ABOUTME: A text names an entry when its internal term or an alias appears as a whole word, ignoring case, spaces, and hyphens.
 """The Glossary section is a `## Glossary` heading followed by a markdown table with the columns
 `Internal term | Aliases | Public description`, aliases comma-separated. The section ends at the
 next level-one or level-two heading.
@@ -89,7 +89,7 @@ def _entry_re(entry: GlossaryEntry) -> re.Pattern[str]:
     return re.compile(rf"(?<!\w)(?:{forms})(?!\w)", re.IGNORECASE)
 
 
-def find_leaks(text: str, entries: Sequence[GlossaryEntry]) -> list[GlossaryEntry]:
+def entries_named(text: str, entries: Sequence[GlossaryEntry]) -> list[GlossaryEntry]:
     """The entries whose internal term or an alias occurs in the text as a whole word."""
     return [entry for entry in entries if _entry_re(entry).search(text)]
 
@@ -98,5 +98,5 @@ def evidence_rows(cited: Sequence[str], entries: Sequence[GlossaryEntry]) -> lis
     """`<internal term> is a <public description>` for each entry the cited lines use, in glossary order."""
     return [
         f"{entry.internal_term} is a {entry.public_description}"
-        for entry in find_leaks("\n".join(cited), entries)
+        for entry in entries_named("\n".join(cited), entries)
     ]

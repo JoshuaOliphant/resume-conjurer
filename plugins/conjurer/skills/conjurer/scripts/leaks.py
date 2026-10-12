@@ -10,7 +10,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from glossary import find_leaks, parse_glossary
+from glossary import entries_named, parse_glossary
 from verify import variant_targets
 
 
@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> None:
 
     leaking = 0
     for variant_id, variant in variant_targets((args.app_dir / "variants.md").read_text()):
-        terms = [entry.internal_term for entry in find_leaks(variant.content, entries)]
+        terms = [entry.internal_term for entry in entries_named(variant.content, entries)]
         if terms:
             leaking += 1
             unit_id, _, n = variant_id.rpartition("#")

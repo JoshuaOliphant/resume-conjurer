@@ -16,7 +16,7 @@ from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.scripts_path import ensure_scripts_on_path
 from app.adapters.verification_fake import NoVerificationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
-from app.data import EVIDENCE, _v, get_application
+from app.data import EVIDENCE, GLOSSARY, _v, get_application
 from app.document_import import import_document
 from app.document_normalize import normalize_master_resume
 from app.document_routes import MAX_UPLOAD_REQUEST_BYTES, DocumentUploadLimit
@@ -897,7 +897,7 @@ def test_curate_notes_a_glossary_leak_and_keeps_the_variant_pickable(client):
 
 
 def test_curate_notes_each_glossary_leak_after_the_claim_check_note():
-    mailapi = GlossaryEntry("MailAPI", (), "transactional email API")
+    mailapi, = GLOSSARY
     snowsk8s = GlossaryEntry("snowsk8s", (), "internal Kubernetes platform")
     variant = Variant(id="bullet#1", text="Moved MailAPI onto snowsk8s.", evidence_items=(EVIDENCE["billing-migration"],),
                       support=Support(verdict="adds_detail", note="Adds detail your evidence doesn't state"),

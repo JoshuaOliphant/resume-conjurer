@@ -2,15 +2,15 @@
 # ABOUTME: `rows <workspace>` counts entries and exits 1 on any malformed row; `lines <workspace> <term>` prints `L<n>\t<line>`.
 """Implementation of `python3 glossary_check.py rows|lines <workspace> [<internal term>]`.
 
-`lines` matches the term and its aliases with the glossary leak rule (`glossary.find_leaks`), so
-the lines /grimoire offers for a scale fact are exactly the lines the leak check would flag.
+`lines` matches the term and its aliases with `glossary.entries_named`, the rule the glossary leak
+check uses, so the lines /grimoire offers for a scale fact are exactly the lines it would flag.
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-from glossary import find_leaks, parse_glossary
+from glossary import entries_named, parse_glossary
 
 
 def _rows(workspace: Path) -> None:
@@ -29,7 +29,7 @@ def _lines(parser: argparse.ArgumentParser, workspace: Path, internal_term: str)
         parser.error(f"{internal_term} is not an internal term in the Glossary of {workspace / 'grimoire.md'}")
     lines = (workspace / "master-resume.md").read_text().splitlines()
     for line_no, line in enumerate(lines, start=1):
-        if find_leaks(line, matching):
+        if entries_named(line, matching):
             print(f"L{line_no}\t{line}")
 
 
