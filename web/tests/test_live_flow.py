@@ -956,13 +956,14 @@ def test_real_jev_verdict_persists_and_reaches_live_curate_and_review(workspace)
     repo.save_variants(SLUG, units)
     for chosen_unit in units:
         repo.set_pick(SLUG, chosen_unit.id, chosen_unit.variants[0].id)
-    pool = repo.load_inputs(SLUG).evidence_pool
+    inputs = repo.load_inputs(SLUG)
+    pool = inputs.evidence_pool
     verifier = JevVerificationPort(os.environ["TYPESAFE_API_KEY"])
-    verdicts = asyncio.run(verifier.verify(unit, pool))
+    verdicts = asyncio.run(verifier.verify(unit, pool, inputs.glossary))
     assert verdicts[variant.id].verdict == "adds_detail", verdicts[variant.id]
     assert verdicts[variant.id].unsourced_numbers == ("25",)
 
-    repo.save_support(SLUG, verdicts, units, pool)
+    repo.save_support(SLUG, verdicts, units, pool, inputs.glossary)
     assert FsWorkspaceRepository(workspace).load_support(SLUG) == verdicts
     hydrated = repo.load_application(SLUG).units[1].variants[0]
     assert hydrated.support == verdicts[variant.id]

@@ -31,6 +31,7 @@ from app.domain import (
 from app.metrics import CallMetrics, RunMetrics, StepMetrics
 from app.runs import RunManager
 from app.schemas import SUPPORT_SCHEMA
+from glossary import GlossaryEntry
 
 SLUG = "globex-staff-platform"
 FIXTURE_WORKSPACE = Path(__file__).parent / "fixtures" / "workspace"
@@ -86,6 +87,27 @@ def test_load_inputs_reads_all_sources(repo: FsWorkspaceRepository) -> None:
     assert "Staff Platform Engineer" in inputs.jd
     assert "Every generated bullet" in inputs.evidence
     assert inputs.grimoire  # grimoire.md was read (non-empty)
+
+
+GLOSSARY = (
+    "\n## Glossary\n\n| Internal term | Aliases | Public description |\n|---|---|---|\n"
+    "| MailAPI | Mail API | transactional email API |\n"
+)
+MAILAPI = GlossaryEntry("MailAPI", ("Mail API",), "transactional email API")
+
+
+def _add_mailapi(workspace: Path, description: str = "transactional email API") -> None:
+    """Name MailAPI on master-resume L16 and map it in the grimoire's Glossary."""
+    master = workspace / "master-resume.md"
+    master.write_text(master.read_text().replace("billing platform from a monolith", "MailAPI from a monolith"))
+    grimoire = workspace / "grimoire.md"
+    grimoire.write_text(grimoire.read_text().split("\n## Glossary")[0] + GLOSSARY.replace("transactional email API", description))
+
+
+def test_load_inputs_parses_the_grimoire_glossary(repo: FsWorkspaceRepository, workspace: Path) -> None:
+    assert repo.load_inputs(SLUG).glossary == ()
+    _add_mailapi(workspace)
+    assert repo.load_inputs(SLUG).glossary == (MAILAPI,)
 
 
 def test_load_inputs_indexes_real_line_numbers(repo: FsWorkspaceRepository) -> None:
@@ -578,7 +600,7 @@ def test_save_support_stamps_fingerprints_that_load_application_matches(
         "resume.northwind.billing.bullet_1#9": Support(verdict="traced"),
     }
     pool = repo.load_inputs(SLUG).evidence_pool
-    repo.save_support(SLUG, support, _sample_units(pool), pool)
+    repo.save_support(SLUG, support, _sample_units(pool), pool, ())
 
     cli = _cli_rows(workspace, {"cover_letter.opening#1": ("", []), "cover_letter.opening#2": ("", [])})
     stamped = {
@@ -592,6 +614,30 @@ def test_save_support_stamps_fingerprints_that_load_application_matches(
     assert variants["cover_letter.opening#2"].support == stamped["cover_letter.opening#2"]
 
 
+def test_load_application_drops_verdicts_when_the_cited_terms_glossary_row_changes(
+    repo: FsWorkspaceRepository, workspace: Path
+) -> None:
+    _add_mailapi(workspace)
+    repo.save_outline(SLUG, _sample_outline())
+    inputs = repo.load_inputs(SLUG)
+    units = _sample_units(inputs.evidence_pool)
+    repo.save_variants(SLUG, units)
+    support = {variant.id: Support(verdict="traced") for unit in units for variant in unit.variants}
+    repo.save_support(SLUG, support, units, inputs.evidence_pool, inputs.glossary)
+
+    mailapi_line = inputs.evidence_pool["master-resume.md L16"].text
+    saved = repo.load_support(SLUG)
+    assert saved["cover_letter.opening#1"].fingerprint == verify.fingerprint(
+        "I led the migration end to end.", [mailapi_line, "MailAPI is a transactional email API"]
+    )
+    assert {v.id for unit in repo.load_application(SLUG).units for v in unit.variants if v.support} == set(support)
+
+    _add_mailapi(workspace, "outbound email API")
+
+    attached = {v.id for unit in repo.load_application(SLUG).units for v in unit.variants if v.support}
+    assert attached == {"cover_letter.opening#2"}
+
+
 def test_save_support_writes_the_documented_support_json(
     repo: FsWorkspaceRepository, workspace: Path
 ) -> None:
@@ -599,7 +645,7 @@ def test_save_support_writes_the_documented_support_json(
     repo.save_variants(SLUG, _sample_units(repo.load_inputs(SLUG).evidence_pool))
     pool = repo.load_inputs(SLUG).evidence_pool
     support = {"cover_letter.opening#1": Support(verdict="unchecked")}
-    repo.save_support(SLUG, support, _sample_units(pool), pool)
+    repo.save_support(SLUG, support, _sample_units(pool), pool, ())
     document = json.loads((workspace / "applications" / SLUG / "support.json").read_text())
     jsonschema.validate(document, SUPPORT_SCHEMA)
     assert document["model"] == verify.JEV_MODEL
@@ -691,7 +737,7 @@ def test_save_support_fingerprints_a_saved_transient_citation_like_the_cli(
     repo.save_outline(SLUG, _sample_outline())
     unit = Unit(id="cover_letter.opening", kind="cover_paragraph", label="Opening", context="c", variants=[variant])
     repo.save_variants(SLUG, [unit])
-    repo.save_support(SLUG, {variant.id: Support(verdict="traced")}, [unit], repo.load_inputs(SLUG).evidence_pool)
+    repo.save_support(SLUG, {variant.id: Support(verdict="traced")}, [unit], repo.load_inputs(SLUG).evidence_pool, ())
     expected = _cli_rows(workspace, {variant.id: ("traced", [])})[variant.id]["fingerprint"]
     assert repo.load_support(SLUG)[variant.id].fingerprint == expected
 
@@ -751,7 +797,7 @@ def test_save_support_keeps_the_checked_snapshot_after_workspace_edits(repo, wor
     master = workspace / "master-resume.md"
     master.write_text(master.read_text().replace("billing platform from a monolith", "an unrelated project"))
 
-    repo.save_support(SLUG, {variant.id: support}, units, pool)
+    repo.save_support(SLUG, {variant.id: support}, units, pool, ())
 
     assert repo.load_support(SLUG)[variant.id].fingerprint == fingerprint
     loaded = repo.load_application(SLUG)
@@ -792,7 +838,7 @@ def test_save_support_preserves_a_verifiers_fingerprint_for_an_edited_claim(repo
     repo.save_variants(SLUG, units)
 
     repo.save_support(
-        SLUG, {variant.id: Support(verdict="traced", fingerprint=checked_fingerprint)}, units, pool
+        SLUG, {variant.id: Support(verdict="traced", fingerprint=checked_fingerprint)}, units, pool, ()
     )
 
     assert repo.load_support(SLUG)[variant.id].fingerprint == checked_fingerprint

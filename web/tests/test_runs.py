@@ -282,14 +282,21 @@ class RecordingRepo(FsWorkspaceRepository):
 
     saved_support: dict[str, Support] | None = None
 
-    def save_support(self, slug, support, units, pool):
+    def save_support(self, slug, support, units, pool, glossary):
         self.saved_support = support
-        super().save_support(slug, support, units, pool)
+        super().save_support(slug, support, units, pool, glossary)
 
 
 def test_run_verifies_each_unit_after_its_variants_and_saves_support_after_variants(workspace):
     events: list[tuple[str, str]] = []
     pools: list[set[str]] = []
+    glossaries: list[tuple] = []
+    grimoire = workspace / "grimoire.md"
+    grimoire.write_text(
+        grimoire.read_text()
+        + "\n## Glossary\n\n| Internal term | Aliases | Public description |\n|---|---|---|\n"
+        + "| MailAPI | Mail API | transactional email API |\n"
+    )
 
     class LoggingGen(FakeGenerationPort):
         async def variants(self, slug, unit: OutlineUnit, n: int = 4):
@@ -297,19 +304,20 @@ def test_run_verifies_each_unit_after_its_variants_and_saves_support_after_varia
             return await super().variants(slug, unit, n)
 
     class LoggingVerifier(FakeVerificationPort):
-        async def verify(self, unit, pool):
+        async def verify(self, unit, pool, glossary):
             events.append(("verify", unit.id))
             pools.append(set(pool))
-            return await super().verify(unit, pool)
+            glossaries.append(glossary)
+            return await super().verify(unit, pool, glossary)
 
     class LoggingRepo(RecordingRepo):
         def save_unit_variants(self, slug, unit):
             events.append(("save_variants", unit.id))
             super().save_unit_variants(slug, unit)
 
-        def save_support(self, slug, support, units, pool):
+        def save_support(self, slug, support, units, pool, glossary):
             events.append(("save_support", slug))
-            super().save_support(slug, support, units, pool)
+            super().save_support(slug, support, units, pool, glossary)
 
     scripted = {"cover_letter.opening#1": FLAGGED, "resume.fixture.bullet_1#2": TRACED}
     repo = LoggingRepo(workspace)
@@ -326,15 +334,17 @@ def test_run_verifies_each_unit_after_its_variants_and_saves_support_after_varia
     per_unit = [event for unit_id in unit_ids for event in (("variants", unit_id), ("save_variants", unit_id), ("verify", unit_id), ("save_support", SLUG))]
     assert events == per_unit
     assert pools == [set(repo.load_inputs(SLUG).evidence_pool)] * len(unit_ids)
+    assert glossaries == [repo.load_inputs(SLUG).glossary] * len(unit_ids)
+    assert glossaries[0][0].internal_term == "MailAPI"
     assert repo.saved_support == scripted
 
 
 def test_failing_verifier_marks_its_unit_unchecked_and_the_run_still_finishes(workspace, caplog):
     class FailsOnOpening(FakeVerificationPort):
-        async def verify(self, unit, pool):
+        async def verify(self, unit, pool, glossary):
             if unit.id == "cover_letter.opening":
                 raise TimeoutError("jev timed out")
-            return await super().verify(unit, pool)
+            return await super().verify(unit, pool, glossary)
 
     repo = RecordingRepo(workspace)
     verifier = FailsOnOpening({"resume.fixture.bullet_1#1": TRACED})
@@ -517,7 +527,7 @@ def test_run_does_not_attach_verdicts_after_evidence_changes_during_verification
             self.changed = False
             self.fingerprints = {}
 
-        async def verify(self, unit, pool):
+        async def verify(self, unit, pool, glossary):
             support = {}
             for variant in unit.variants:
                 fingerprint = verify.fingerprint(variant.text, cited_lines(variant.evidence_items, pool))

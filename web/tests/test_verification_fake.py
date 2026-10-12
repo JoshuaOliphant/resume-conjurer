@@ -19,22 +19,22 @@ def test_fake_returns_the_scripted_verdicts_for_the_units_variants_only():
     verifier = FakeVerificationPort(
         {"cover-open-1": FLAGGED, "cover-open-2": TRACED, "bullet-migration-1": FLAGGED}
     )
-    verdicts = asyncio.run(verifier.verify(UNIT, EVIDENCE))
+    verdicts = asyncio.run(verifier.verify(UNIT, EVIDENCE, ()))
     assert verdicts == {"cover-open-1": FLAGGED, "cover-open-2": TRACED}
 
 
 def test_fake_without_a_script_has_no_verdicts():
-    assert asyncio.run(FakeVerificationPort().verify(UNIT, EVIDENCE)) == {}
+    assert asyncio.run(FakeVerificationPort().verify(UNIT, EVIDENCE, ())) == {}
 
 
 def test_fake_raises_the_scripted_error():
     verifier = FakeVerificationPort({"cover-open-1": FLAGGED}, error=TimeoutError("jev timed out"))
     with pytest.raises(TimeoutError, match="jev timed out"):
-        asyncio.run(verifier.verify(UNIT, EVIDENCE))
+        asyncio.run(verifier.verify(UNIT, EVIDENCE, ()))
 
 
 def test_no_verification_port_returns_no_verdicts():
-    assert asyncio.run(NoVerificationPort().verify(UNIT, EVIDENCE)) == {}
+    assert asyncio.run(NoVerificationPort().verify(UNIT, EVIDENCE, ())) == {}
 
 
 @pytest.mark.parametrize(
