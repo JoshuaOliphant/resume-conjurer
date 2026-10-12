@@ -92,6 +92,7 @@ class Variant:
     text: str
     evidence_items: tuple[Evidence, ...] = ()
     support: Support | None = None
+    leaks: tuple[GlossaryEntry, ...] = ()
 
     def evidence(self) -> list[Evidence]:
         # Method (not the raw field) so templates keep calling ``v.evidence()``.

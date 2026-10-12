@@ -38,6 +38,9 @@
         {% if flagged %}
         <p class="variant__note">{{ v.support.note }}</p>
         {% endif %}
+        {% for leak in v.leaks %}
+        <p class="variant__note">Uses internal term "{{ leak.internal_term }}"; say "{{ leak.public_description }}".</p>
+        {% endfor %}
         <details class="trace"{% if flagged %} open{% endif %}>
           <summary>{{ i.icon("chevron", "chev") }} Evidence
             ({{ traces|length }} {{ "trace" if traces|length == 1 else "traces" }})</summary>

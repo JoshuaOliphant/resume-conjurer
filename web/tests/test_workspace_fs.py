@@ -614,6 +614,24 @@ def test_save_support_stamps_fingerprints_that_load_application_matches(
     assert variants["cover_letter.opening#2"].support == stamped["cover_letter.opening#2"]
 
 
+def test_load_application_flags_each_variant_that_uses_a_glossary_internal_term(
+    repo: FsWorkspaceRepository, workspace: Path
+) -> None:
+    _add_mailapi(workspace)
+    repo.save_outline(SLUG, _sample_outline())
+    units = _sample_units(repo.load_inputs(SLUG).evidence_pool)
+    units[0].variants[0] = replace(units[0].variants[0], text="I led the Mail API migration end to end.")
+    repo.save_variants(SLUG, units)
+
+    leaks = {v.id: v.leaks for unit in repo.load_application(SLUG).units for v in unit.variants}
+
+    assert leaks == {
+        "cover_letter.opening#1": (MAILAPI,),
+        "cover_letter.opening#2": (),
+        "resume.northwind.billing.bullet_1#1": (),
+    }
+
+
 def test_load_application_drops_verdicts_when_the_cited_terms_glossary_row_changes(
     repo: FsWorkspaceRepository, workspace: Path
 ) -> None:

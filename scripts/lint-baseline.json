@@ -28,10 +28,6 @@
     "sha256": "677410749fb2568178667fd80db4fb320af511a811d516674afb81dcdb825f46"
   },
   {
-    "path": "web/app/data.py",
-    "sha256": "b1dc191bbfcb05f258adb733edd6395619c72cfdbae0a650dbb63528af26d218"
-  },
-  {
     "path": "web/app/deps.py",
     "sha256": "2565e4c56fc4d2321c209298004d0bd7a13dcb0b7059266c429db4df36426604"
   },

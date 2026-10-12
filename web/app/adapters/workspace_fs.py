@@ -52,7 +52,7 @@ ensure_scripts_on_path()
 
 import citations  # noqa: E402
 import verify  # noqa: E402
-from glossary import GlossaryEntry, parse_glossary  # noqa: E402
+from glossary import GlossaryEntry, find_leaks, parse_glossary  # noqa: E402
 from stitch import (  # noqa: E402
     PICK_LINE_RE,
     UNIT_MARKER_RE,
@@ -423,7 +423,12 @@ class FsWorkspaceRepository:
             for pv in punit.variants:
                 items = resolve_citation(pv.citation, pool)
                 cited.update((item.id, item) for item in items)
-                variant = Variant(id=f"{punit.unit_id}#{pv.n}", text=pv.content, evidence_items=items)
+                variant = Variant(
+                    id=f"{punit.unit_id}#{pv.n}",
+                    text=pv.content,
+                    evidence_items=items,
+                    leaks=tuple(find_leaks(pv.content, glossary)),
+                )
                 verdict = support.get(variant.id)
                 if verdict is not None and verdict.fingerprint == _claim_fingerprint(pv.content, items, pool, glossary):
                     variant = replace(variant, support=verdict)
