@@ -28,10 +28,6 @@
     "sha256": "617ab72e53763b98ecc7dd23e522f4898a7fe72a5126bb8e2187e33b7bcdb91e"
   },
   {
-    "path": "tests/test_new_workspace.py",
-    "sha256": "64e623b0d4eb93543c51f7f5b6b901433161b8a2a3b330f8448e64dc7938e545"
-  },
-  {
     "path": "tests/test_stitch.py",
     "sha256": "45a9739bad3207c2438186ec9b5608637cec00c73f8905ea6e7587bb8a9ad598"
   },
