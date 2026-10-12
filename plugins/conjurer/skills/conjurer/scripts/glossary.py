@@ -12,6 +12,7 @@ from dataclasses import dataclass
 GLOSSARY_HEADING_RE = re.compile(r"^##\s+Glossary\s*$", re.IGNORECASE)
 SECTION_END_RE = re.compile(r"^#{1,2}\s")
 SEPARATOR_CELL_RE = re.compile(r"^:?-+:?$")
+WORD_RE = re.compile(r"\w")
 COLUMNS = 3
 
 
@@ -36,11 +37,13 @@ def _row_entry(cells: list[str]) -> GlossaryEntry | str:
     internal_term, aliases, public_description = cells
     if not internal_term:
         return "missing internal term"
+    if not WORD_RE.search(internal_term):
+        return "internal term has no letters or digits"
     if not public_description:
         return "missing public description"
     return GlossaryEntry(
         internal_term,
-        tuple(alias.strip() for alias in aliases.split(",") if alias.strip()),
+        tuple(alias.strip() for alias in aliases.split(",") if WORD_RE.search(alias)),
         public_description,
     )
 

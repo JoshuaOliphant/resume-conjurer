@@ -70,6 +70,19 @@ def test_parse_glossary_reads_rows_without_outer_pipes_and_with_a_lowercase_head
     assert parse_glossary(grimoire) == ([MAILAPI], [])
 
 
+def test_parse_glossary_reads_a_separator_only_alias_as_no_alias() -> None:
+    entries, warnings = parse_glossary("## Glossary\n| sn-superpowers | - , — | internal developer platform |\n")
+    assert (entries, warnings) == ([SUPERPOWERS], [])
+    assert find_leaks("I led a clean project.", entries) == []
+
+
+def test_parse_glossary_warns_on_an_internal_term_with_no_letters_or_digits() -> None:
+    assert parse_glossary("## Glossary\n| - | | message relay |\n") == (
+        [],
+        ["Glossary line 2: internal term has no letters or digits"],
+    )
+
+
 @pytest.mark.parametrize(
     "text",
     [

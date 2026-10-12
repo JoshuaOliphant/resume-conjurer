@@ -149,7 +149,8 @@ python3 <SKILL_DIR>/scripts/leaks.py <app_dir> <workspace>
 ```
 
 Reads the `## Glossary` table in `<workspace>/grimoire.md` (columns `Internal term | Aliases |
-Public description`, aliases comma-separated; the section ends at the next `## ` heading). A
+Public description`, aliases comma-separated; the section ends at the next `# ` or `## ` heading; an alias with no letters or digits,
+such as `-`, means no alias). A
 variant leaks when an internal term or alias appears as a whole word, ignoring case, spaces, and
 hyphens. Prints `<unit_id> #<n>\t<internal terms>` per leaking variant and exits 1, or
 `No glossary leaks.` and exits 0. A row with an empty internal term or public description is
