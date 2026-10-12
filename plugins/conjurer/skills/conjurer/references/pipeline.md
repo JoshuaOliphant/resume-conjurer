@@ -86,7 +86,9 @@ no key.
 For each variant, Jev (`jev-1.13.0`, pinned because the thresholds were tuned on it) answers two
 questions: how the variant's grounded cited lines relate to it (asked only when it has one), and
 whether it states a fact that the whole evidence pool (every line of `master-resume.md` and
-`evidence.md`) does not. The script writes `<app_dir>/support.json` and prints one line per
+`evidence.md`) does not. When a grounded cited line uses a glossary internal term, the term's
+glossary row from `<workspace>/grimoire.md`, stated as `<internal term> is a <public description>`,
+joins both the cited lines and the pool for that variant. The script writes `<app_dir>/support.json` and prints one line per
 flagged variant, `<unit_id>#<n>: <note>`. Mention those notes while curating. A flag is a note,
 never a reason to hide, reorder, or regenerate a variant, and an unflagged variant is not
 "verified true": the check only tests consistency with the user's own evidence.
@@ -118,9 +120,10 @@ never a reason to hide, reorder, or regenerate a variant, and an unflagged varia
   failed. `unstated` is the probability that the variant states a fact the pool does not; `null`
   when the check failed.
 - `unsourced_numbers` lists numbers (digits or number words) in the variant that its cited lines
-  never state. It only names a value in the note; it never decides the verdict.
+  never state. Glossary rows add a meaning, never a number, so they are not read here. It only names a value in the note; it never decides the verdict.
 - `fingerprint` is the sha256 hex digest of the UTF-8 text of the variant followed by each
-  resolved cited line, joined by `\n`. **A row whose fingerprint no longer matches the variant is
+  resolved cited line, then each glossary row those lines use, joined by `\n`. Editing a glossary
+  row therefore invalidates the verdicts of variants citing its term. **A row whose fingerprint no longer matches the variant is
   ignored**, so a hand-edited variant reads as "no verdict", never as a stale one.
   Web saves preserve the checker's fingerprint. Verdicts without a fingerprint use the checked
   units and evidence snapshot; saving never substitutes evidence edited after the check.

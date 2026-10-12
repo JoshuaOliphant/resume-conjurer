@@ -157,3 +157,15 @@ def test_lint_cli_reports_usage_clean_and_flagged_documents(tmp_path, monkeypatc
         "resume.md:1\tfiller:just\tI just shipped it.\n"
         "resume.md:2\tglossary-leak\tsn-superpowers: - Built sn-superpowers.\n"
     )
+
+
+def test_lint_cli_without_a_glossary_section_reports_no_glossary_leak(tmp_path, monkeypatch, capsys):
+    app_dir = tmp_path / "applications" / "globex-staff-platform"
+    app_dir.mkdir(parents=True)
+    (tmp_path / "grimoire.md").write_text("# Grimoire\n\n## Voice\n\nPlain.\n")
+    (app_dir / "resume.md").write_text("- Moved MailAPI onto the new cluster.\n")
+    monkeypatch.setattr(sys, "argv", ["lint.py", str(app_dir), str(tmp_path)])
+
+    lint.main()
+
+    assert capsys.readouterr() == ("No style issues found.\n", "")

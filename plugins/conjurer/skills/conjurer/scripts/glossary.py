@@ -89,3 +89,11 @@ def _entry_re(entry: GlossaryEntry) -> re.Pattern[str]:
 def find_leaks(text: str, entries: Sequence[GlossaryEntry]) -> list[GlossaryEntry]:
     """The entries whose internal term or an alias occurs in the text as a whole word."""
     return [entry for entry in entries if _entry_re(entry).search(text)]
+
+
+def evidence_rows(cited: Sequence[str], entries: Sequence[GlossaryEntry]) -> list[str]:
+    """`<internal term> is a <public description>` for each entry the cited lines use, in glossary order."""
+    return [
+        f"{entry.internal_term} is a {entry.public_description}"
+        for entry in find_leaks("\n".join(cited), entries)
+    ]

@@ -2,7 +2,7 @@
 # ABOUTME: Covers well-formed and malformed rows, section bounds, and whole-word term matching.
 import pytest
 
-from glossary import GlossaryEntry, find_leaks, parse_glossary
+from glossary import GlossaryEntry, evidence_rows, find_leaks, parse_glossary
 
 GRIMOIRE = """# Grimoire
 
@@ -101,3 +101,23 @@ def test_find_leaks_respects_word_boundaries(text: str) -> None:
 def test_find_leaks_lists_each_entry_once_in_glossary_order() -> None:
     text = "Moved mail-api and MailAPI onto sn-superpowers, then Mailscan onto MailAPI."
     assert find_leaks(text, [MAILAPI, SUPERPOWERS, MAILSCAN]) == [MAILAPI, SUPERPOWERS, MAILSCAN]
+
+
+def test_evidence_rows_state_each_used_term_as_its_public_description_in_glossary_order() -> None:
+    cited = ["- Moved Mailscan onto the new cluster.", "- Ran the mail-api on-call rotation."]
+    assert evidence_rows(cited, [MAILAPI, SUPERPOWERS, MAILSCAN]) == [
+        "MailAPI is a transactional email API",
+        "Mailscan is a inbound mail scanning service",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("cited", "entries"),
+    [
+        pytest.param(["- Built a transactional email API."], [MAILAPI], id="no-internal-term"),
+        pytest.param(["- Moved MailAPI onto the new cluster."], [], id="no-glossary"),
+        pytest.param([], [MAILAPI], id="no-cited-lines"),
+    ],
+)
+def test_evidence_rows_are_empty_when_the_cited_lines_use_no_glossary_term(cited, entries) -> None:
+    assert evidence_rows(cited, entries) == []
