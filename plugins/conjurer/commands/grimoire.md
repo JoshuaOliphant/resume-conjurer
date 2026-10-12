@@ -95,7 +95,7 @@ names the term, so the claim check can cite it.
 For each confirmed term with a scale fact, list the master-resume lines that name it:
 
 ```bash
-python3 <SKILL_DIR>/scripts/glossary_check.py bullets <workspace> "<internal term>"
+python3 <SKILL_DIR>/scripts/glossary_check.py lines <workspace> "<internal term>"
 ```
 
 It prints `L<n>\t<line>` for every line naming the term or one of its aliases, matched by the same

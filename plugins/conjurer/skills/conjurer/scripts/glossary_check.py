@@ -1,9 +1,9 @@
 # ABOUTME: /grimoire glossary checks: confirm the Glossary table parses, and list master-resume lines naming a term.
-# ABOUTME: `rows <workspace>` counts entries and exits 1 on any malformed row; `bullets <workspace> <term>` prints `L<n>\t<line>`.
-"""Implementation of `python3 glossary_check.py rows|bullets <workspace> [<internal term>]`.
+# ABOUTME: `rows <workspace>` counts entries and exits 1 on any malformed row; `lines <workspace> <term>` prints `L<n>\t<line>`.
+"""Implementation of `python3 glossary_check.py rows|lines <workspace> [<internal term>]`.
 
-`bullets` matches the term and its aliases with the glossary leak rule (`glossary.find_leaks`), so
-the bullets /grimoire offers for a scale fact are exactly the lines the leak check would flag.
+`lines` matches the term and its aliases with the glossary leak rule (`glossary.find_leaks`), so
+the lines /grimoire offers for a scale fact are exactly the lines the leak check would flag.
 """
 
 import argparse
@@ -22,7 +22,7 @@ def _rows(workspace: Path) -> None:
         raise SystemExit(1)
 
 
-def _bullets(parser: argparse.ArgumentParser, workspace: Path, internal_term: str) -> None:
+def _lines(parser: argparse.ArgumentParser, workspace: Path, internal_term: str) -> None:
     entries, _ = parse_glossary((workspace / "grimoire.md").read_text())
     matching = [entry for entry in entries if entry.internal_term == internal_term]
     if not matching:
@@ -38,15 +38,15 @@ def main(argv: list[str] | None = None) -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     rows = commands.add_parser("rows", help="Count the Glossary entries; exit 1 on any malformed row.")
     rows.add_argument("workspace", type=Path)
-    bullets = commands.add_parser("bullets", help="Print each master-resume line naming an internal term.")
-    bullets.add_argument("workspace", type=Path)
-    bullets.add_argument("internal_term")
+    lines = commands.add_parser("lines", help="Print each master-resume line naming an internal term.")
+    lines.add_argument("workspace", type=Path)
+    lines.add_argument("internal_term")
     args = parser.parse_args(argv)
 
     if args.command == "rows":
         _rows(args.workspace)
     else:
-        _bullets(parser, args.workspace, args.internal_term)
+        _lines(parser, args.workspace, args.internal_term)
 
 
 if __name__ == "__main__":

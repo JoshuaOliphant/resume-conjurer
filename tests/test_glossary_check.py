@@ -1,4 +1,4 @@
-# ABOUTME: Tests for the /grimoire glossary checks: the Glossary table parses, and which bullets name a term.
+# ABOUTME: Tests for the /grimoire glossary checks: the Glossary table parses, and which master-resume lines name a term.
 # ABOUTME: Drives glossary_check.main against a temporary workspace with a real grimoire and master resume.
 import pytest
 
@@ -53,8 +53,8 @@ def test_rows_fails_on_a_malformed_row_and_names_its_line(workspace, capsys):
     )
 
 
-def test_bullets_prints_each_resume_line_naming_the_term_or_an_alias(workspace, capsys):
-    glossary_check.main(["bullets", str(workspace), "MailAPI"])
+def test_lines_prints_each_resume_line_naming_the_term_or_an_alias(workspace, capsys):
+    glossary_check.main(["lines", str(workspace), "MailAPI"])
 
     assert capsys.readouterr() == (
         "L8\t- Built MailAPI, the transactional email service, on Kafka and Kubernetes.\n"
@@ -63,8 +63,8 @@ def test_bullets_prints_each_resume_line_naming_the_term_or_an_alias(workspace, 
     )
 
 
-def test_bullets_rejects_a_term_missing_from_the_glossary(workspace, capsys):
+def test_lines_rejects_a_term_missing_from_the_glossary(workspace, capsys):
     with pytest.raises(SystemExit, match="2"):
-        glossary_check.main(["bullets", str(workspace), "Ledgerline"])
+        glossary_check.main(["lines", str(workspace), "Ledgerline"])
 
     assert "Ledgerline is not an internal term in the Glossary" in capsys.readouterr().err
