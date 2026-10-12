@@ -200,8 +200,8 @@ def check_variant(
 
     Glossary rows add a meaning, never a number, so `unsourced_numbers` reads only `cited`.
     """
-    rows = evidence_rows(cited, glossary)
-    evidence = [*cited, *rows]
+    evidence = cited_evidence(cited, glossary)
+    rows = evidence[len(cited):]
     try:
         reading = _read(claim, evidence, [*pool, *rows], api_key, url)
     except (OSError, HTTPException, ValueError, KeyError, TypeError) as error:
