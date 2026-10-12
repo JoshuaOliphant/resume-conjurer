@@ -8,11 +8,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from threading import RLock
 
-from app.domain import Evidence, Support, Unit, label_for_unit_id
+from app.domain import Support, Unit, WorkspaceInputs, label_for_unit_id
 from app.generation_status import (
     GenerationStatusConflict,
     UnitGenerationStatus,
@@ -132,11 +131,11 @@ class RunManager:
             await task
 
     async def _check_claims(
-        self, slug: str, unit: Unit, pool: Mapping[str, Evidence]
+        self, slug: str, unit: Unit, inputs: WorkspaceInputs
     ) -> dict[str, Support]:
         """The unit's support verdicts; every variant reads ``unchecked`` when the check fails."""
         try:
-            return await self._verifier.verify(unit, pool)
+            return await self._verifier.verify(unit, inputs.evidence_pool, inputs.glossary)
         except Exception as exc:
             logger.warning(
                 "claim check failed for slug=%s unit=%s: %r", slug, unit.id, exc
@@ -174,7 +173,7 @@ class RunManager:
             self._tasks[slug] = task
             return status
 
-    async def _generate_unit(self, slug, ou, run_metrics, pool):
+    async def _generate_unit(self, slug, ou, run_metrics, inputs):
         target = self._status[slug].units[ou.unit_id]
         target.state = "generating"
         self._persist_progress(slug)
@@ -202,9 +201,11 @@ class RunManager:
         self._persist_progress(slug)
         self._status[slug].units_done = sum(u.state == "succeeded" for u in self._status[slug].units.values())
         support = self._support.setdefault(slug, {})
-        support.update(await self._check_claims(slug, unit, pool))
+        support.update(await self._check_claims(slug, unit, inputs))
         try:
-            self._repo.save_support(slug, support, list(self._generated[slug].values()), pool)
+            self._repo.save_support(
+                slug, support, list(self._generated[slug].values()), inputs.evidence_pool, inputs.glossary
+            )
         except OSError as exc:
             logger.warning("could not save support.json for slug=%s: %r", slug, exc)
 
@@ -242,17 +243,17 @@ class RunManager:
             self._repo.begin_generation(slug, outline)
             self._status[slug] = RunStatus(state="running", units_total=len(outline.units), units={u.unit_id: UnitGenerationStatus(u.unit_id) for u in outline.units})
             self._persist_progress(slug)
-            pool = self._repo.load_inputs(slug).evidence_pool
+            inputs = self._repo.load_inputs(slug)
             for ou in outline.units:
-                await self._generate_unit(slug, ou, run_metrics, pool)
+                await self._generate_unit(slug, ou, run_metrics, inputs)
             self._complete(slug)
         except Exception:
             self._fail_storage(slug)
 
     async def _retry(self, slug, ou):
         try:
-            pool = self._repo.load_inputs(slug).evidence_pool
-            await self._generate_unit(slug, ou, self._metrics[slug], pool)
+            inputs = self._repo.load_inputs(slug)
+            await self._generate_unit(slug, ou, self._metrics[slug], inputs)
             self._complete(slug)
         except Exception:
             self._fail_storage(slug)

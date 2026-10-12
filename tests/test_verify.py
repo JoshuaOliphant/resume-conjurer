@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 import verify
+from glossary import GlossaryEntry
 from verify import Reading
 
 MIGRATION = "- Led the migration of the billing platform from a monolith to event-driven services; invoice generation dropped from ~40s to under 2s."
@@ -35,6 +36,14 @@ MASTER_RESUME = f"""# Jordan Rivera
 
 {MENTORSHIP}
 """
+
+GRIMOIRE = "# Grimoire\n\n## Voice\n\nPlain.\n"
+MAILAPI_ONCALL = ONCALL.replace("billing on-call rotation", "MailAPI on-call rotation")
+MAILAPI_ROW = "MailAPI is a transactional email API"
+GLOSSARY_GRIMOIRE = (
+    "# Grimoire\n\n## Glossary\n\n| Internal term | Aliases | Public description |\n|---|---|---|\n"
+    "| MailAPI | Mail API | transactional email API |\n"
+)
 
 EVIDENCE_MD = f"""# Evidence for globex-staff-platform
 
@@ -179,6 +188,7 @@ def jev():
 @pytest.fixture
 def workspace(tmp_path):
     (tmp_path / "master-resume.md").write_text(MASTER_RESUME)
+    (tmp_path / "grimoire.md").write_text(GRIMOIRE)
     app_dir = tmp_path / "applications" / "globex-staff-platform"
     app_dir.mkdir(parents=True)
     (app_dir / "evidence.md").write_text(EVIDENCE_MD)
@@ -300,7 +310,7 @@ def test_ask_jev_times_out(jev):
 
 def test_check_variant_reads_cited_lines_then_pool(jev):
     pool = [MIGRATION, ONCALL, TEMPLATE]
-    row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], pool, "sk-test", url=jev.url)
+    row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], pool, "sk-test", url=jev.url, glossary=[])
     assert row == {
         "verdict": "adds_detail",
         "relation": "partly_supports",
@@ -315,8 +325,20 @@ def test_check_variant_reads_cited_lines_then_pool(jev):
     )
 
 
+def test_check_variant_adds_glossary_rows_as_meaning_but_never_as_a_number(jev):
+    row_text = "billing platform is a platform run by 12 engineers"
+    glossary = [GlossaryEntry("billing platform", (), "platform run by 12 engineers")]
+
+    row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [ONCALL], "sk-test", url=jev.url, glossary=glossary)
+
+    assert row["unsourced_numbers"] == ["12"]
+    assert row["fingerprint"] == verify.fingerprint(TEAM_SIZE_CLAIM, [MIGRATION, row_text])
+    states = [body["state"]["evidence"] for body in jev.questions_for(TEAM_SIZE_CLAIM)]
+    assert sorted(states) == sorted([[MIGRATION, row_text], [ONCALL, row_text]])
+
+
 def test_check_variant_without_a_grounded_line_asks_only_the_pool(jev):
-    row = verify.check_variant(f"- {UNRESOLVED_CLAIM}", [], [MIGRATION], "sk-test", url=jev.url)
+    row = verify.check_variant(f"- {UNRESOLVED_CLAIM}", [], [MIGRATION], "sk-test", url=jev.url, glossary=[])
     assert row["verdict"] == "untraced"
     assert (row["relation"], row["relation_confidence"], row["unstated"]) == (None, None, 0.3)
     assert [list(r["body"]["questions"]) for r in jev.requests] == [["unstated"]]
@@ -334,7 +356,7 @@ def test_check_variant_without_a_grounded_line_asks_only_the_pool(jev):
 def test_check_variant_records_a_failed_request_as_unchecked(jev, caplog, status, raw_body, missing_bytes, error):
     jev.status, jev.raw_body, jev.missing_bytes = status, raw_body, missing_bytes
     with caplog.at_level(logging.WARNING, logger="verify"):
-        row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [MIGRATION], "sk-test", url=jev.url)
+        row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [MIGRATION], "sk-test", url=jev.url, glossary=[])
     assert row["verdict"] == "unchecked"
     assert (row["relation"], row["relation_confidence"], row["unstated"]) == (None, None, None)
     assert row["unsourced_numbers"] == ["12"]
@@ -347,7 +369,7 @@ def test_check_variant_records_a_failed_request_as_unchecked(jev, caplog, status
 def test_check_variant_rejects_invalid_relation_choices(jev, caplog, choice):
     jev.responses[("relation", TEAM_SIZE_CLAIM)]["answers"]["relation"]["choice"] = choice
     with caplog.at_level(logging.WARNING, logger="verify"):
-        row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [MIGRATION], "sk-test", url=jev.url)
+        row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [MIGRATION], "sk-test", url=jev.url, glossary=[])
     assert row["verdict"] == "unchecked"
     assert (row["relation"], row["relation_confidence"], row["unstated"]) == (None, None, None)
     (record,) = caplog.records
@@ -362,7 +384,7 @@ def test_check_variant_rejects_invalid_relation_choices(jev, caplog, choice):
 def test_check_variant_rejects_invalid_probabilities(jev, caplog, question, field, value):
     jev.responses[(question, TEAM_SIZE_CLAIM)]["answers"][question][field] = value
     with caplog.at_level(logging.WARNING, logger="verify"):
-        row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [MIGRATION], "sk-test", url=jev.url)
+        row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [MIGRATION], "sk-test", url=jev.url, glossary=[])
     assert row["verdict"] == "unchecked"
     assert (row["relation"], row["relation_confidence"], row["unstated"]) == (None, None, None)
     (record,) = caplog.records
@@ -375,7 +397,7 @@ def test_check_variant_accepts_relation_choices_and_probability_boundaries(jev, 
     relation = jev.responses[("relation", TEAM_SIZE_CLAIM)]["answers"]["relation"]
     relation["choice"], relation["confidence"] = choice, value
     jev.responses[("unstated", TEAM_SIZE_CLAIM)]["answers"]["unstated"]["noul"] = value
-    row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [MIGRATION], "sk-test", url=jev.url)
+    row = verify.check_variant(TEAM_SIZE_CLAIM, [MIGRATION], [MIGRATION], "sk-test", url=jev.url, glossary=[])
     assert row["verdict"] == verify.verdict_for(Reading(choice, value, value), has_trace=True)
     assert (row["relation"], row["relation_confidence"], row["unstated"]) == (choice, value, value)
 
@@ -402,6 +424,46 @@ def test_verify_app_dir_writes_one_row_per_variant(jev, workspace):
     pool_evidence = next(r["body"]["state"]["evidence"] for r in jev.requests if "unstated" in r["body"]["questions"])
     assert "**Billing Platform** — 2021 to present" in pool_evidence
     assert COST_RECEIPT in pool_evidence
+
+
+@pytest.mark.parametrize(
+    ("grimoire", "rows"),
+    [
+        pytest.param(GLOSSARY_GRIMOIRE, [MAILAPI_ROW], id="glossary-maps-the-cited-term"),
+        pytest.param(GRIMOIRE, [], id="no-glossary-section"),
+    ],
+)
+def test_verify_app_dir_adds_glossary_rows_only_to_variants_citing_the_term(jev, workspace, grimoire, rows):
+    root, app_dir = workspace
+    (root / "master-resume.md").write_text(MASTER_RESUME.replace(ONCALL, MAILAPI_ONCALL))
+    (root / "grimoire.md").write_text(grimoire)
+
+    document = verify.verify_app_dir(app_dir, root, "sk-test", url=jev.url)
+
+    paging = f"- {PAGING_CLAIM}"
+    evidence = {question: body["state"]["evidence"] for body in jev.questions_for(paging) for question in body["questions"]}
+    assert evidence["relation"] == [MAILAPI_ONCALL, *rows]
+    assert COST_RECEIPT in evidence["unstated"]
+    assert [line for line in evidence["unstated"] if line == MAILAPI_ROW] == rows
+    paging_row = document["variants"]["resume.northwind.billing.bullet_1#1"]
+    assert paging_row["fingerprint"] == verify.fingerprint(paging, [MAILAPI_ONCALL, *rows])
+    assert paging_row["unsourced_numbers"] == ["80"]
+    unrelated = [r["body"]["state"]["evidence"] for r in jev.requests if r["body"]["state"]["claim"] != paging]
+    assert all(MAILAPI_ROW not in evidence for evidence in unrelated)
+    assert document["variants"]["cover_letter.opening#1"]["fingerprint"] == verify.fingerprint(TEMPLATE_CLAIM, [TEMPLATE])
+
+
+def test_verify_app_dir_fingerprint_changes_when_the_cited_terms_glossary_row_changes(jev, workspace):
+    root, app_dir = workspace
+    (root / "master-resume.md").write_text(MASTER_RESUME.replace(ONCALL, MAILAPI_ONCALL))
+    (root / "grimoire.md").write_text(GLOSSARY_GRIMOIRE)
+    before = verify.verify_app_dir(app_dir, root, "sk-test", url=jev.url)["variants"]
+
+    (root / "grimoire.md").write_text(GLOSSARY_GRIMOIRE.replace("transactional email API", "outbound email API"))
+    after = verify.verify_app_dir(app_dir, root, "sk-test", url=jev.url)["variants"]
+
+    changed = {vid for vid in before if before[vid]["fingerprint"] != after[vid]["fingerprint"]}
+    assert changed == {"resume.northwind.billing.bullet_1#1"}
 
 
 def test_verify_app_dir_picks_only_checks_picks_and_keeps_other_rows(jev, workspace):

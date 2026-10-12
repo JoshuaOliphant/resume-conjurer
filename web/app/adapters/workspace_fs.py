@@ -21,7 +21,7 @@ import logging
 import os
 import re
 import tempfile
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -52,6 +52,7 @@ ensure_scripts_on_path()
 
 import citations  # noqa: E402
 import verify  # noqa: E402
+from glossary import GlossaryEntry, parse_glossary  # noqa: E402
 from stitch import (  # noqa: E402
     PICK_LINE_RE,
     UNIT_MARKER_RE,
@@ -96,9 +97,11 @@ def cited_lines(items: Iterable[Evidence], pool: Mapping[str, Evidence]) -> list
     return [line.text for item in items for line in resolve_citation(item.id, pool) if line.grounded]
 
 
-def _claim_fingerprint(text: str, items: Iterable[Evidence], pool: Mapping[str, Evidence]) -> str:
-    """The support.json fingerprint of a variant: its text and the pooled lines it cites."""
-    return verify.fingerprint(text, cited_lines(items, pool))
+def _claim_fingerprint(
+    text: str, items: Iterable[Evidence], pool: Mapping[str, Evidence], glossary: Sequence[GlossaryEntry]
+) -> str:
+    """The support.json fingerprint of a variant: its text, its cited pooled lines, and their glossary rows."""
+    return verify.fingerprint(text, verify.cited_evidence(cited_lines(items, pool), glossary))
 
 
 def _all_flagged(variants: list[Variant]) -> bool:
@@ -157,6 +160,7 @@ class FsWorkspaceRepository:
             key: Evidence(id=key, text=line, source=key)
             for key, line in citations.pool_lines(master_resume, evidence).items()
         }
+        glossary, _ = parse_glossary(grimoire)
 
         return WorkspaceInputs(
             grimoire=grimoire,
@@ -164,6 +168,7 @@ class FsWorkspaceRepository:
             jd=jd,
             evidence=evidence,
             evidence_pool=evidence_pool,
+            glossary=tuple(glossary),
         )
 
     def save_jd(self, slug: str, jd: str) -> None:
@@ -348,11 +353,16 @@ class FsWorkspaceRepository:
     # --- support -----------------------------------------------------------
 
     def save_support(
-        self, slug: str, support: dict[str, Support], units: list[Unit], pool: Mapping[str, Evidence]
+        self,
+        slug: str,
+        support: dict[str, Support],
+        units: list[Unit],
+        pool: Mapping[str, Evidence],
+        glossary: Sequence[GlossaryEntry],
     ) -> None:
-        """Write verdicts against the evidence snapshot used for their checks."""
+        """Write verdicts against the evidence and glossary snapshot used for their checks."""
         fingerprints = {
-            variant.id: _claim_fingerprint(variant.text, variant.evidence_items, pool)
+            variant.id: _claim_fingerprint(variant.text, variant.evidence_items, pool, glossary)
             for unit in units
             for variant in unit.variants
         }
@@ -386,6 +396,7 @@ class FsWorkspaceRepository:
             raise FileNotFoundError(f"No outline.json for {slug!r}; run generation first.")
         inputs = self.load_inputs(slug)
         pool = inputs.evidence_pool
+        glossary = inputs.glossary
 
         contexts = {u.unit_id: u.description for u in outline.units}
         order = {u.unit_id: i for i, u in enumerate(outline.units)}
@@ -414,7 +425,7 @@ class FsWorkspaceRepository:
                 cited.update((item.id, item) for item in items)
                 variant = Variant(id=f"{punit.unit_id}#{pv.n}", text=pv.content, evidence_items=items)
                 verdict = support.get(variant.id)
-                if verdict is not None and verdict.fingerprint == _claim_fingerprint(pv.content, items, pool):
+                if verdict is not None and verdict.fingerprint == _claim_fingerprint(pv.content, items, pool, glossary):
                     variant = replace(variant, support=verdict)
                 variants.append(variant)
             units.append(
