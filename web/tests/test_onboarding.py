@@ -11,12 +11,18 @@ from app.onboarding import (
     claim_ledger,
     delivery_status,
     empty_state,
+    glossary_row,
     review_draft,
     reviewed_snippets,
+    scale_offers,
     source_lines,
     source_questions,
+    validate_glossary,
     validate_proposal,
+    with_glossary,
+    with_scale_fact,
 )
+from glossary import parse_glossary
 
 ANSWERS = {"roles": "Seek Staff Engineer ownership.", "examples": "implemented the billing migration.",
            "voice": "Use direct language.\nKeep claims grounded.\nLead with outcomes.\nWrite short letters.\nAvoid hype."}
@@ -25,7 +31,8 @@ ANSWERS = {"roles": "Seek Staff Engineer ownership.", "examples": "implemented t
 def _payload():
     phrases = [(ANSWERS["roles"], "answer.roles L1"), *[(text, f"answer.voice L{index}") for index, text in enumerate(ANSWERS["voice"].splitlines(), 1)]]
     return {"sections": [{"title": title, "items": [{"text": phrase, "kind": "preference", "source_id": source_id,
-                         "quote": phrase, "status": "unknown"}]} for title, (phrase, source_id) in zip(SECTIONS, phrases, strict=True)]}
+                         "quote": phrase, "status": "unknown"}]} for title, (phrase, source_id) in zip(SECTIONS, phrases, strict=True)],
+            "glossary": []}
 
 
 @pytest.fixture
@@ -55,7 +62,7 @@ def test_exact_source_lines_and_outbound_prompt_exclude_unselected_originals(sta
         ("master-resume.md L1", "# Casey"), ("master-resume.md L3", "Saved 42%"),
         ("original-hash L1", "Voice only"), ("original-hash L3", "grew revenue 80%")]
     state["selected"] = [sources[1]]
-    prompt = build_prompt(state)
+    prompt = build_prompt(state, "# Casey\n\nSaved 42%")
     assert "Saved 42%" in prompt and "master-hash" in prompt
     assert all(line in prompt for answer in ANSWERS.values() for line in answer.splitlines())
     assert "grew revenue 80%" not in prompt and "original-hash" not in prompt
@@ -83,11 +90,12 @@ def test_conflicting_metrics_status_dates_and_duplicates_remain_questions():
 @pytest.mark.parametrize("change,error", [
     (lambda value: None, "malformed"), (lambda value: {"sections": "bad"}, "malformed"),
     (lambda value: {**value, "draft": "I grew revenue 80%", "claims": []}, "malformed"),
-    (lambda value: {"sections": []}, "omitted"),
-    (lambda value: {"sections": [None] * 6}, "omitted"),
-    (lambda value: {"sections": list(reversed(value["sections"]))}, "reordered"),
-    (lambda value: {"sections": [{**section, "items": []} for section in value["sections"]]}, "empty"),
-    (lambda value: {"sections": [{**section, "items": "bad"} for section in value["sections"]]}, "empty"),
+    (lambda value: {"sections": value["sections"]}, "malformed"),
+    (lambda value: {**value, "sections": []}, "omitted"),
+    (lambda value: {**value, "sections": [None] * 6}, "omitted"),
+    (lambda value: {**value, "sections": list(reversed(value["sections"]))}, "reordered"),
+    (lambda value: {**value, "sections": [{**section, "items": []} for section in value["sections"]]}, "empty"),
+    (lambda value: {**value, "sections": [{**section, "items": "bad"} for section in value["sections"]]}, "empty"),
 ])
 def test_malformed_or_unledgered_model_text_cannot_become_a_draft(change, error):
     with pytest.raises(ValueError, match=error):
@@ -310,3 +318,92 @@ def test_supported_style_punctuation_survives_local_review(state):
     state["claims"] = review_draft(state, draft)
     assert state["claims"][-1]["label"] == "user-attested"
     assert acceptance_questions(state, draft, "master-hash", True) == []
+
+
+MAILAPI_MASTER = "# Casey\n\n- Saved 42%\n- Built MailAPI routing on Kafka and Kubernetes\n"
+MAILAPI_ROW = {"internal_term": "MailAPI", "aliases": ["Mail API"], "public_description": "the company's internal email-delivery API"}
+
+
+@pytest.fixture
+def glossary_state(state):
+    rows = validate_glossary({"glossary": [MAILAPI_ROW]})
+    state.update(glossary=rows, draft=with_glossary(state["draft"], rows), proposal=with_glossary(state["proposal"], rows))
+    return state
+
+
+def test_draft_prompt_carries_the_whole_master_resume_and_excludes_public_technologies(state):
+    prompt = build_prompt(state, MAILAPI_MASTER)
+    assert [source["text"] for source in state["selected"]] == ["# Casey", "- Saved 42%"]
+    assert "Built MailAPI routing on Kafka and Kubernetes" in prompt
+    assert "Glossary" in prompt and "Kafka, Kubernetes, FastAPI" in prompt
+    assert "no numbers" in prompt
+
+
+def test_proposed_glossary_rows_are_needs_review_until_accepted_or_edited(glossary_state):
+    assert glossary_state["glossary"] == [{**MAILAPI_ROW, "label": "needs review", "scale": ""}]
+    entries, warnings = parse_glossary(glossary_state["draft"])
+    assert [(entry.internal_term, entry.aliases) for entry in entries] == [("MailAPI", ("Mail API",))] and warnings == []
+    assert any("MailAPI needs review" in question for question in acceptance_questions(glossary_state, glossary_state["draft"], "master-hash", False))
+    glossary_state["glossary"][0] = glossary_row("MailAPI", "Mail API", "an internal email-delivery API", scale="40M msgs/day")
+    draft = with_glossary(glossary_state["draft"], glossary_state["glossary"])
+    assert "| MailAPI | Mail API | an internal email-delivery API |" in draft
+    assert acceptance_questions(glossary_state, draft, "master-hash", False) == []
+    assert all(entry["source_id"] != "Manual edit" for entry in claim_ledger(glossary_state, draft, "master-hash"))
+    hand_edited = draft.replace("an internal email-delivery API", "an email API")
+    assert any("MailAPI needs review" in question for question in acceptance_questions(glossary_state, hand_edited, "master-hash", True))
+    malformed = draft.replace("| MailAPI | Mail API |", "| MailAPI |")
+    assert any("Glossary line" in question for question in acceptance_questions(glossary_state, malformed, "master-hash", True))
+
+
+def test_glossary_section_is_replaced_in_place_and_omitted_when_empty(glossary_state):
+    rows = glossary_state["glossary"]
+    draft = with_glossary(glossary_state["draft"] + "## Notes\n\n- Use calm language.\n", rows)
+    assert draft.count("## Glossary") == 1 and "## Notes" in draft
+    assert "## Glossary" not in with_glossary(draft, [])
+    assert with_glossary("", rows).startswith("## Glossary")
+
+
+@pytest.mark.parametrize("rows,error", [
+    ("bad", "malformed glossary"), (None, "malformed glossary"), ([None], "malformed glossary"), ([{**MAILAPI_ROW, "aliases": "Mail API"}], "malformed glossary"),
+    ([{**MAILAPI_ROW, "internal_term": 7}], "malformed glossary"), ([{**MAILAPI_ROW, "extra": ""}], "malformed glossary"),
+    ([{**MAILAPI_ROW, "internal_term": "Mail|API"}], "malformed glossary"), ([{**MAILAPI_ROW, "aliases": ["Mail, API"]}], "malformed glossary"),
+    ([{**MAILAPI_ROW, "public_description": ""}], "malformed glossary"), ([{**MAILAPI_ROW, "public_description": "one\ntwo"}], "malformed glossary"),
+    ([MAILAPI_ROW] * 65, "too many glossary rows"),
+])
+def test_malformed_glossary_rows_cannot_become_a_draft(rows, error):
+    with pytest.raises(ValueError, match=error):
+        validate_glossary({"glossary": rows})
+    with pytest.raises(ValueError, match="malformed glossary"):
+        validate_glossary(rows)
+
+
+@pytest.mark.parametrize("term,aliases,description,scale,error", [
+    ("MailAPI", "", "serves 40 teams", "", "no numbers"),
+    ("MailAPI", "", "an email API", "40M\nmsgs", "one line"),
+    ("", "", "an email API", "", "internal term and a public description"),
+    ("Mail|API", "", "an email API", "", "cannot contain"),
+])
+def test_accepted_glossary_rows_hold_no_numbers_and_one_line_scale_facts(term, aliases, description, scale, error):
+    with pytest.raises(ValueError, match=error):
+        glossary_row(term, aliases, description, scale=scale)
+
+
+def test_scale_offers_prefill_every_master_bullet_naming_an_accepted_term():
+    master = ("# Casey\n\nMailAPI team lead\n- Built MailAPI routing\n- Scaled mail-api, the MailAPIs predecessor\n"
+              "- Ran MailAPI (40M msgs/day) on-call\n- Built Hermes\n")
+    grimoire = "# Grimoire\n\n## Glossary\n\n| Internal term | Aliases | Public description |\n|---|---|---|\n| MailAPI | mail-api | an email API |\n| Hermes | | a queue |\n"
+    rows = [glossary_row("MailAPI", "mail-api", "an email API", scale="40M msgs/day"),
+            glossary_row("Hermes", "", "a queue"), {**glossary_row("Nimbus", "", "a cache", scale="9 nodes")}]
+    offers = scale_offers(master, grimoire, rows)
+    assert [(offer["row"], offer["line"], offer["after"]) for offer in offers] == [
+        (0, 4, "- Built MailAPI (40M msgs/day) routing"),
+        (0, 5, "- Scaled mail-api (40M msgs/day), the MailAPIs predecessor"),
+    ]
+    rows[0]["label"] = "needs review"
+    assert scale_offers(master, grimoire, rows) == []
+
+
+def test_scale_fact_edit_changes_only_the_offered_line():
+    master = "# Casey\r\n- Built MailAPI routing\r\n- Other\r\n"
+    offer = {"line": 2, "after": "- Built MailAPI (40M msgs/day) routing"}
+    assert with_scale_fact(master, offer) == "# Casey\r\n- Built MailAPI (40M msgs/day) routing\r\n- Other\r\n"

@@ -29,3 +29,10 @@ def test_invalid_persisted_state_is_not_silently_reset(tmp_path, value):
     (tmp_path / "onboarding.json").write_text(json.dumps(value))
     with pytest.raises(ValueError, match="unreadable"):
         OnboardingStore(tmp_path).read()
+
+
+def test_state_saved_before_glossary_rows_reads_with_no_rows(tmp_path):
+    legacy = empty_state()
+    del legacy["glossary"]
+    (tmp_path / "onboarding.json").write_text(json.dumps(legacy))
+    assert OnboardingStore(tmp_path).read()[0] == empty_state()
