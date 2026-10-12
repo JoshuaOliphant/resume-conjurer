@@ -104,6 +104,38 @@ def test_lint_clean_documents_return_no_checks(
     assert port.lint(SLUG) == []
 
 
+def test_lint_fails_on_a_glossary_leak_in_the_stitched_resume(
+    repo: FsWorkspaceRepository, port: ScriptCompositionPort, workspace: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    grimoire = workspace / "grimoire.md"
+    grimoire.write_text(
+        grimoire.read_text()
+        + "\n## Glossary\n\n| Internal term | Aliases | Public description |\n|---|---|---|\n"
+        "| sn-superpowers | | internal developer platform |\n| Hermes | | |\n"
+    )
+    units = _units_with_lint_trip()
+    units[1].variants[0] = Variant(
+        id="resume.northwind.billing.bullet_1#1", text="- Moved billing onto sn-superpowers.", evidence_items=()
+    )
+    repo.save_variants(SLUG, units)
+    repo.set_pick(SLUG, "cover_letter.opening", "cover_letter.opening#2")
+    repo.set_pick(SLUG, "resume.northwind.billing.bullet_1", "resume.northwind.billing.bullet_1#1")
+    port.stitch(SLUG)
+    resume_lines = (workspace / "applications" / SLUG / "resume.md").read_text().splitlines()
+    leak_line = resume_lines.index("- Moved billing onto sn-superpowers.") + 1
+
+    assert port.lint(SLUG) == [
+        LintCheck(
+            label="glossary-leak",
+            detail=f"resume.md:{leak_line} sn-superpowers: - Moved billing onto sn-superpowers.",
+            passed=False,
+        )
+    ]
+    assert [record.getMessage() for record in caplog.records] == [
+        f"Glossary line {len(grimoire.read_text().splitlines())}: missing public description"
+    ]
+
+
 def test_export_writes_readable_documents_without_pandoc(
     repo: FsWorkspaceRepository, port: ScriptCompositionPort, workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

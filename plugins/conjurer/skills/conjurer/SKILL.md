@@ -69,6 +69,12 @@ they are available whenever the conjurer plugin is installed.
      `TYPESAFE_API_KEY` it prints that the check was skipped; carry on. Otherwise it prints one
      line per flagged variant; mention each flag, in plain words, when presenting that variant
      while curating. Never hide or drop a flagged variant.
+   - **4c. Glossary leak check**: `python3 <SKILL_DIR>/scripts/leaks.py applications/<slug> <workspace>`.
+     It prints one line per variant that uses an internal term from the grimoire's Glossary,
+     `<unit_id> #<n>` then the internal term, and warns on stderr about any malformed glossary
+     row. When presenting a flagged variant, say in plain words that it uses the internal term and
+     that an outside reader would need the glossary's public description instead. Never hide or
+     drop a flagged variant; the user can still pick it and reword it.
 5. **Curate**: present the variants conversationally. When the user picks, mark exactly one
    `- [x] Pick` per unit in `variants.md`.
 6. **Stitch**: `python3 <SKILL_DIR>/scripts/stitch.py applications/<slug> <workspace>/master-resume.md`.
@@ -76,8 +82,9 @@ they are available whenever the conjurer plugin is installed.
    - **6b. Check the picks**: `python3 <SKILL_DIR>/scripts/verify.py applications/<slug> <workspace> --picks`.
      Tell the user about any picked line it flags; the fix is to edit the line or add the fact to
      the master resume.
-7. **Lint**: `python3 <SKILL_DIR>/scripts/lint.py applications/<slug>`. Report findings; fix any
-   and re-run until clean.
+7. **Lint**: `python3 <SKILL_DIR>/scripts/lint.py applications/<slug> <workspace>`. Report
+   findings; fix any and re-run until clean. A `glossary-leak` finding names an internal term that
+   reached the final document; replace it with the glossary's public description.
 8. **Export (optional)**: offer to export the finished documents for submission with
    `python3 <SKILL_DIR>/scripts/export_docs.py applications/<slug> pdf docx`. This uses `pandoc`
    if it is installed; if not, it reports that the markdown sources are the deliverable. Tell the
@@ -93,7 +100,7 @@ is not in the evidence, say it is unsupported rather than fabricating it.
 
 - **`references/pipeline.md`** — outline schema, strategic frames, variants.md format, exact commands.
 - **`scripts/`** — `new_workspace.py`, `init_app.py`, `stitch.py`, `lint.py`, `verify.py` (claim
-  check, optional `TYPESAFE_API_KEY`), `extract_text.py` (docx ingest), `export_docs.py` (PDF/docx
+  check, optional `TYPESAFE_API_KEY`), `leaks.py` (glossary leak check), `extract_text.py` (docx ingest), `export_docs.py` (PDF/docx
   export).
 - **`agents/variant-generator.md`** (plugin agent) — the per-unit generator.
 - Workspace setup: the `/conjurer:grimoire` and `/conjurer:master-resume` commands.

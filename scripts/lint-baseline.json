@@ -1,9 +1,5 @@
 [
   {
-    "path": "plugins/conjurer/skills/conjurer/scripts/lint.py",
-    "sha256": "9cd3d2afa71e3ab804ead5eb067044dc5380993baad3e42e5ec6eebe863c6211"
-  },
-  {
     "path": "plugins/conjurer/skills/conjurer/scripts/stitch.py",
     "sha256": "1b48fbfe4d87b57ab6413e8e380db1f26c93c7a9927affab93f8fb3a923fdb00"
   },
@@ -22,10 +18,6 @@
   {
     "path": "tests/test_init_app.py",
     "sha256": "cdf1a1f6f55e740fc17835daaabf9a3ee7479330ee1f471559648d66fd1d3748"
-  },
-  {
-    "path": "tests/test_lint.py",
-    "sha256": "617ab72e53763b98ecc7dd23e522f4898a7fe72a5126bb8e2187e33b7bcdb91e"
   },
   {
     "path": "tests/test_new_workspace.py",

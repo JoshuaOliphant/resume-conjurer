@@ -1,10 +1,14 @@
 # ABOUTME: Tests for the grimoire-checklist linter (regex style checks).
 # ABOUTME: Verifies each rule fires and clean text passes.
-from pathlib import Path
 import sys
+from pathlib import Path
+
+import pytest
 
 import lint
-import pytest
+from glossary import GlossaryEntry
+
+SUPERPOWERS = GlossaryEntry("sn-superpowers", ("superpowers platform",), "internal developer platform")
 
 
 def test_em_dash_flagged():
@@ -99,7 +103,7 @@ def test_lint_app_dir_routes_cover_letter_and_resume(tmp_path):
     (tmp_path / "cover_letter.md").write_text(cover_words)
     # Resume is clean and short — no length rule should fire for it.
     (tmp_path / "resume.md").write_text("I led the migration effort.")
-    findings = lint.lint_app_dir(tmp_path)
+    findings = lint.lint_app_dir(tmp_path, [])
     length_findings = [f for f in findings if f.rule == "length"]
     assert length_findings, "Expected a length finding from cover_letter.md"
     assert all(f.file.name == "cover_letter.md" for f in length_findings), (
@@ -108,9 +112,21 @@ def test_lint_app_dir_routes_cover_letter_and_resume(tmp_path):
 
 
 def test_lint_app_dir_accepts_missing_documents(tmp_path):
-    assert lint.lint_app_dir(tmp_path) == []
+    assert lint.lint_app_dir(tmp_path, [SUPERPOWERS]) == []
     (tmp_path / "cover_letter.md").write_text("I just shipped it.")
-    assert [f.rule for f in lint.lint_app_dir(tmp_path)] == ["filler:just"]
+    assert [f.rule for f in lint.lint_app_dir(tmp_path, [SUPERPOWERS])] == ["filler:just"]
+
+
+def test_lint_app_dir_reports_a_glossary_leak_by_document_line_and_term(tmp_path):
+    (tmp_path / "resume.md").write_text("# Jordan Rivera\n\n### Sn-Superpowers\n- Built sn-superpowers for 40 teams.\n")
+    (tmp_path / "cover_letter.md").write_text("I built a developer platform.\n")
+
+    findings = lint.lint_app_dir(tmp_path, [SUPERPOWERS])
+
+    assert findings == [
+        lint.Finding(tmp_path / "resume.md", 3, "glossary-leak", "sn-superpowers: ### Sn-Superpowers"),
+        lint.Finding(tmp_path / "resume.md", 4, "glossary-leak", "sn-superpowers: - Built sn-superpowers for 40 teams."),
+    ]
 
 
 def test_short_cover_letter_has_no_length_finding():
@@ -124,11 +140,20 @@ def test_lint_cli_reports_usage_clean_and_flagged_documents(tmp_path, monkeypatc
         lint.main()
     assert "usage: python3 lint.py" in capsys.readouterr().err
 
-    monkeypatch.setattr(sys, "argv", ["lint.py", str(tmp_path)])
+    app_dir = tmp_path / "applications" / "globex-staff-platform"
+    app_dir.mkdir(parents=True)
+    (tmp_path / "grimoire.md").write_text(
+        "## Glossary\n\n| Internal term | Aliases | Public description |\n|---|---|---|\n"
+        "| sn-superpowers | | internal developer platform |\n| Hermes | | |\n"
+    )
+    monkeypatch.setattr(sys, "argv", ["lint.py", str(app_dir), str(tmp_path)])
     lint.main()
-    assert capsys.readouterr().out == "No style issues found.\n"
+    assert capsys.readouterr() == ("No style issues found.\n", "Glossary line 6: missing public description\n")
 
-    (tmp_path / "resume.md").write_text("I just shipped it.\n")
+    (app_dir / "resume.md").write_text("I just shipped it.\n- Built sn-superpowers.\n")
     with pytest.raises(SystemExit, match="1"):
         lint.main()
-    assert capsys.readouterr().out == "resume.md:1\tfiller:just\tI just shipped it.\n"
+    assert capsys.readouterr().out == (
+        "resume.md:1\tfiller:just\tI just shipped it.\n"
+        "resume.md:2\tglossary-leak\tsn-superpowers: - Built sn-superpowers.\n"
+    )
