@@ -142,6 +142,19 @@ logged and leave generation and curation available without verdicts.
 | `not_covered` | `says_nothing` and `unstated` ≥ 0.5 | "The cited line doesn't cover this" |
 | `unchecked` | a Jev request timed out (5 s) or failed | "Couldn't check this line" |
 
+## Glossary leak check (step 4c)
+
+```bash
+python3 <SKILL_DIR>/scripts/leaks.py <app_dir> <workspace>
+```
+
+Reads the `## Glossary` table in `<workspace>/grimoire.md` (columns `Internal term | Aliases |
+Public description`, aliases comma-separated; the section ends at the next `## ` heading). A
+variant leaks when an internal term or alias appears as a whole word, ignoring case, spaces, and
+hyphens. Prints `<unit_id> #<n>\t<internal terms>` per leaking variant and exits 1, or
+`No glossary leaks.` and exits 0. A row with an empty internal term or public description is
+skipped with a `Glossary line N: ...` warning on stderr.
+
 ## Curation (step 5)
 
 Present variants conversationally, one unit at a time or grouped. When the user chooses, edit
@@ -151,11 +164,12 @@ Present variants conversationally, one unit at a time or grouped. When the user 
 
 ```bash
 python3 <SKILL_DIR>/scripts/stitch.py <app_dir> <workspace>/master-resume.md
-python3 <SKILL_DIR>/scripts/lint.py <app_dir>
+python3 <SKILL_DIR>/scripts/lint.py <app_dir> <workspace>
 python3 <SKILL_DIR>/scripts/export_docs.py <app_dir> pdf docx
 ```
 
-Stitch writes `cover_letter.md` and `resume.md`. Lint prints findings; fix any and re-run. Export
+Stitch writes `cover_letter.md` and `resume.md`. Lint prints findings, including a `glossary-leak`
+for any internal term from the Glossary in `<workspace>/grimoire.md`; fix any and re-run. Export
 produces PDF/docx via pandoc when installed, otherwise reports that the markdown is the deliverable.
 
 ## Ingesting an existing resume (first-run bootstrap)
