@@ -12,7 +12,7 @@ from threading import Event
 import pytest
 from fastapi.testclient import TestClient
 from test_document_import import _docx, _pdf
-from test_onboarding import ANSWERS
+from test_onboarding import ANSWERS, MAILAPI_ROW, _payload
 from test_onboarding_sdk import SdkBoundary, _result
 
 from app.adapters.composition import ScriptCompositionPort
@@ -1191,7 +1191,7 @@ def _draft_onboarding(client, workspace):
 
     state, revision = OnboardingStore(workspace).read()
     return client.post("/onboarding/draft", data={"revision": revision,
-                       "prompt_hash": hashlib.sha256(build_prompt(state).encode()).hexdigest()}, follow_redirects=False)
+                       "prompt_hash": hashlib.sha256(build_prompt(state, DocumentStore(workspace).read("master-resume.md")).encode()).hexdigest()}, follow_redirects=False)
 
 
 def test_onboarding_resume_only_review_draft_edit_accept_history_reload(onboarding_client, workspace):
@@ -1328,10 +1328,10 @@ def test_onboarding_mutations_allow_matching_origin_without_fetch_site(onboardin
     assert store.read()[0]["optional_sources"]
 
 
-@pytest.mark.parametrize("path", ["/onboarding/sources", "/onboarding/review", "/onboarding/draft", "/onboarding/edit", "/onboarding/accept", "/onboarding/review-draft"])
+@pytest.mark.parametrize("path", ["/onboarding/sources", "/onboarding/review", "/onboarding/draft", "/onboarding/edit", "/onboarding/accept", "/onboarding/review-draft", "/onboarding/glossary"])
 def test_onboarding_mutations_refuse_cross_site_and_running_generation(onboarding_client, path):
     client, boundary, manager = onboarding_client
-    data = {"kind": "career fact", "roles": "Roles", "examples": "Examples", "voice": "Voice", "revision": "irrelevant", "prompt_hash": "x", "draft": "Text"}
+    data = {"kind": "career fact", "roles": "Roles", "examples": "Examples", "voice": "Voice", "revision": "irrelevant", "prompt_hash": "x", "draft": "Text", "row": "0"}
     assert client.post(path, data=data, headers={"origin": "https://hostile.example"}).status_code == 403
     assert client.post(path, data=data, headers={"sec-fetch-site": "cross-site"}).status_code == 403
     assert client.post(path, data=data, headers={"sec-fetch-site": "none"}).status_code == 403
@@ -1339,6 +1339,94 @@ def test_onboarding_mutations_refuse_cross_site_and_running_generation(onboardin
     manager._status[SLUG] = RunStatus(state="running")
     assert client.post(path, data=data, headers={"sec-fetch-site": "same-origin"}).status_code == 409
     assert client.post(path, data=data, headers={"sec-fetch-site": "same-site"}).status_code == 409
+    assert not boundary.calls
+
+
+def _draft_with_mailapi(client, workspace, boundary):
+    documents = DocumentStore(workspace)
+    master = documents.read("master-resume.md").replace(
+        "- Owned the billing on-call rotation;", "- Built MailAPI routing for customer email.\n- Owned the billing on-call rotation;")
+    documents.save("master-resume.md", master, documents.revision("master-resume.md"))
+    boundary.messages = [_result(payload={**_payload(), "glossary": [MAILAPI_ROW]})]
+    assert _review_onboarding(client, workspace).status_code == 303
+    assert _draft_onboarding(client, workspace).status_code == 303
+
+
+def _save_glossary_row(client, workspace, **changes):
+    _, revision = OnboardingStore(workspace).read()
+    data = {"revision": revision, "row": "0", "internal_term": "MailAPI", "aliases": "Mail API",
+            "public_description": "an internal email-delivery API", **changes}
+    return client.post("/onboarding/glossary", data=data, follow_redirects=False)
+
+
+def test_onboarding_draft_proposes_glossary_rows_from_the_whole_master_resume(onboarding_client, workspace):
+    client, boundary, _ = onboarding_client
+    _draft_with_mailapi(client, workspace, boundary)
+    assert len(boundary.calls) == 1
+    assert "Built MailAPI routing for customer email." in boundary.calls[0]
+    state, revision = OnboardingStore(workspace).read()
+    assert all("MailAPI" not in source["text"] for source in state["selected"])
+    assert [(row["internal_term"], row["label"]) for row in state["glossary"]] == [("MailAPI", "needs review")]
+    assert "| MailAPI | Mail API |" in state["draft"]
+    assert "needs review · MailAPI" in client.get("/onboarding").text
+    response = client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"],
+                           "draft": state["draft"], "attest_edits": "true"})
+    assert response.status_code == 422 and "MailAPI needs review" in response.text
+    assert "MailAPI" not in DocumentStore(workspace).read("grimoire.md")
+
+
+def test_onboarding_routes_an_accepted_scale_fact_to_the_master_resume_editor(onboarding_client, workspace):
+    client, boundary, _ = onboarding_client
+    _draft_with_mailapi(client, workspace, boundary)
+    assert _save_glossary_row(client, workspace).status_code == 303
+    assert "How big is MailAPI?" in client.get("/onboarding").text
+    assert _save_glossary_row(client, workspace, scale="40M msgs/day").status_code == 303
+    state, revision = OnboardingStore(workspace).read()
+    documents = DocumentStore(workspace)
+    master, master_revision = documents.read_with_revision("master-resume.md")
+    assert "| MailAPI | Mail API | an internal email-delivery API |" in state["draft"]
+    assert client.post("/onboarding/accept", data={"revision": revision, "grimoire_revision": state["grimoire_revision"],
+                       "draft": state["draft"]}, follow_redirects=False).status_code == 303
+    page = client.get("/onboarding?saved=true").text
+    edited_bullet = "- Built MailAPI (40M msgs/day) routing for customer email."
+    line = master.splitlines().index("- Built MailAPI routing for customer email.") + 1
+    assert edited_bullet in page and f"/onboarding/scale?row=0&amp;line={line}" in page
+    editor = client.get(f"/onboarding/scale?row=0&line={line}")
+    assert editor.status_code == 200 and "Accept scale fact edit" in editor.text and edited_bullet in editor.text
+    assert documents.read("master-resume.md") == master
+    edited_master = master.replace("- Built MailAPI routing", "- Built MailAPI (40M msgs/day) routing")
+    assert client.post("/documents/save", data={"document_name": "master-resume.md", "text": edited_master,
+                       "revision": master_revision}, follow_redirects=False).status_code == 303
+    assert documents.read("master-resume.md") == edited_master
+    assert master_revision in documents.history("master-resume.md")
+    assert "Scale facts for your master résumé" not in client.get("/onboarding").text
+    assert client.get(f"/onboarding/scale?row=0&line={line}").status_code == 404
+    assert len(boundary.calls) == 1
+
+
+def test_onboarding_glossary_row_errors_keep_the_saved_rows(onboarding_client, workspace):
+    client, boundary, _ = onboarding_client
+    _draft_with_mailapi(client, workspace, boundary)
+    store = OnboardingStore(workspace)
+    before = store.read()
+    response = _save_glossary_row(client, workspace, public_description="serves 40 teams")
+    assert response.status_code == 400 and "no numbers" in response.text
+    assert _save_glossary_row(client, workspace, row="3").status_code == 400
+    assert _save_glossary_row(client, workspace, revision="stale").status_code == 409
+    assert store.read() == before
+    assert _save_glossary_row(client, workspace, remove="true").status_code == 303
+    state, _ = store.read()
+    assert state["glossary"] == [] and "## Glossary" not in state["draft"]
+
+
+def test_onboarding_refuses_a_draft_request_over_the_outbound_bound(onboarding_client, workspace):
+    client, boundary, _ = onboarding_client
+    documents = DocumentStore(workspace)
+    master = documents.read("master-resume.md") + "\n## Projects\n\n" + "".join(f"- Built internal project {i} for the platform team.\n" for i in range(1500))
+    documents.save("master-resume.md", master, documents.revision("master-resume.md"))
+    assert _review_onboarding(client, workspace).status_code == 303
+    response = _draft_onboarding(client, workspace)
+    assert response.status_code == 400 and "over the 64 KiB bound" in response.text and "whole master resume" in response.text
     assert not boundary.calls
 
 

@@ -1,13 +1,17 @@
 # ABOUTME: Exercises the real onboarding SDK adapter against an injected external client boundary.
 # ABOUTME: Proves request permissions, single-call accounting, and unsuccessful result handling.
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from claude_agent_sdk.types import ResultMessage
-from test_onboarding import _payload
+from test_onboarding import ANSWERS, _payload
 
+from app.onboarding import build_prompt, empty_state, source_lines, validate_glossary
 from app.onboarding_sdk import OnboardingSdk
+
+GLOSSARY_MASTER = Path(__file__).parent / "fixtures" / "glossary-master-resume.md"
 
 
 def _result(payload=None, **values):
@@ -56,6 +60,7 @@ def test_sdk_only_receives_reviewed_prompt_and_records_actual_measurements():
     assert options.tools == options.allowed_tools == options.setting_sources == options.skills == options.plugins == []
     assert options.permission_mode == "dontAsk" and options.strict_mcp_config
     assert options.max_turns == 3 and options.max_budget_usd == 0.10
+    assert options.output_format["schema"]["required"] == ["sections", "glossary"]
     assert metrics == {"elapsed_ms": metrics["elapsed_ms"], "input_tokens": 120, "output_tokens": 80, "cost_usd": 0.012}
     assert metrics["elapsed_ms"] >= 0
 
@@ -75,3 +80,15 @@ def test_missing_usage_and_cost_are_reported_unavailable():
                                       num_turns=1, session_id="synthetic", structured_output=_payload())]
     _, metrics = asyncio.run(OnboardingSdk(boundary).draft("Synthetic input"))
     assert metrics["cost_usd"] is metrics["input_tokens"] is metrics["output_tokens"] is None
+
+
+@pytest.mark.live
+def test_live_draft_proposes_internal_terms_but_not_public_technologies():
+    master = GLOSSARY_MASTER.read_text()
+    state = empty_state()
+    state["answers"] = ANSWERS.copy()
+    state["selected"] = [source for source in source_lines(master, "fixture", []) if "support team" in source["text"]]
+    payload, _ = asyncio.run(OnboardingSdk().draft(build_prompt(state, master)))
+    terms = {row["internal_term"].casefold() for row in validate_glossary(payload)}
+    assert "mailapi" in terms
+    assert terms.isdisjoint({"kafka", "kubernetes", "fastapi"})

@@ -30,7 +30,7 @@
     </form>
   </details>
 
-  <section class="documents__preview"><h2>Exact text to send to Claude</h2><p>Destination: Claude through the Claude Agent SDK. One tool-free request, at most 3 turns and $0.10, with a 90-second timeout. The full request is below; uploaded originals and unselected lines stay local.</p><pre id="claude-payload">{{ prompt }}</pre></section>
+  <section class="documents__preview"><h2>Exact text to send to Claude</h2><p>Destination: Claude through the Claude Agent SDK. One tool-free request, at most 3 turns and $0.10, with a 90-second timeout. The full request is below. It carries your whole master résumé so Claude can propose glossary rows for internal terms; uploaded originals and unselected optional-source lines stay local.</p><pre id="claude-payload">{{ prompt }}</pre></section>
   <form method="post" action="/onboarding/draft" hx-boost="false"><input type="hidden" name="revision" value="{{ revision }}"><input type="hidden" name="prompt_hash" value="{{ prompt_hash }}"><button class="btn btn--primary" type="submit">Draft with Claude</button></form>
 
   {% if state.metrics %}<p>Actual draft call: {{ state.metrics.elapsed_ms }} ms · input {{ state.metrics.input_tokens }} tokens · output {{ state.metrics.output_tokens }} tokens · billed cost {% if state.metrics.cost_usd is not none %}${{ state.metrics.cost_usd }}{% else %}unavailable{% endif %}.</p>{% endif %}
@@ -43,7 +43,25 @@
     <label><input type="checkbox" name="attest_edits" value="true"> I attest my manual edits. They are not independently verified.</label>
     <div class="actions"><button class="btn btn--ghost" type="submit">Save draft locally</button><button class="btn btn--ghost" type="submit" formaction="/onboarding/review-draft">Re-review exact source spans locally</button><button class="btn btn--primary" type="submit" formaction="/onboarding/accept">Accept grimoire</button><button class="btn btn--quiet" type="submit" name="discard" value="true">Discard draft</button></div>
   </form>
+  {% if state.glossary %}
+  <section aria-labelledby="glossary-heading"><h2 id="glossary-heading">Glossary rows</h2><p>Claude proposed these internal terms from your whole master résumé. Each row stays needs review until you accept or edit it here. The glossary holds no numbers; once a row is accepted, give the term's scale and Conjurer offers it for your master résumé.</p>
+    {% for row in state.glossary %}<form method="post" action="/onboarding/glossary" hx-boost="false">
+      <input type="hidden" name="revision" value="{{ revision }}"><input type="hidden" name="row" value="{{ loop.index0 }}">
+      <p>{{ row.label }} · {{ row.internal_term }}</p>
+      <div class="field"><label class="field__label" for="term-{{ loop.index0 }}">Internal term</label><input id="term-{{ loop.index0 }}" name="internal_term" value="{{ row.internal_term }}" required></div>
+      <div class="field"><label class="field__label" for="aliases-{{ loop.index0 }}">Aliases, comma-separated</label><input id="aliases-{{ loop.index0 }}" name="aliases" value="{{ row.aliases | join(', ') }}"></div>
+      <div class="field"><label class="field__label" for="description-{{ loop.index0 }}">Public description</label><input id="description-{{ loop.index0 }}" name="public_description" value="{{ row.public_description }}" required></div>
+      {% if row.label == "user-attested" %}<div class="field"><label class="field__label" for="scale-{{ loop.index0 }}">How big is {{ row.internal_term }}? Scale fact, such as volume, users, or teams</label><input id="scale-{{ loop.index0 }}" name="scale" value="{{ row.scale }}"></div>{% endif %}
+      <div class="actions"><button class="btn btn--ghost" type="submit">{{ "Save row" if row.label == "user-attested" else "Accept row" }}</button><button class="btn btn--quiet" type="submit" name="remove" value="true" formnovalidate>Remove row</button></div>
+    </form>{% endfor %}
+  </section>
+  {% endif %}
   <section><h2>Claim ledger</h2>{% for claim in ledger %}<details><summary>{{ claim.label }} · {{ claim.status }} · {{ claim.text }}</summary><p>{{ claim.source_id }} · source revision {{ claim.revision }}</p><blockquote>{{ claim.quote }}</blockquote>{% if claim.flags %}<ul>{% for flag in claim.flags %}<li>{{ flag }}</li>{% endfor %}</ul>{% endif %}</details>{% endfor %}</section>
+  {% endif %}
+  {% if scale_offers %}
+  <section aria-labelledby="scale-heading"><h2 id="scale-heading">Scale facts for your master résumé</h2><p>Each bullet below names an accepted glossary term. Your master résumé changes only when you accept an edit in its editor.</p>
+    <ul>{% for offer in scale_offers %}<li><p>{{ offer.term }} · master-resume.md L{{ offer.line }}</p><pre>{{ offer.after }}</pre><a href="/onboarding/scale?row={{ offer.row }}&amp;line={{ offer.line }}">Review this edit in the master-résumé editor</a></li>{% endfor %}</ul>
+  </section>
   {% endif %}
 </div>
 {% endblock %}

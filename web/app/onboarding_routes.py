@@ -20,11 +20,16 @@ from app.onboarding import (
     bounded_snippets,
     build_prompt,
     claim_ledger,
+    glossary_row,
     review_draft,
     reviewed_snippets,
+    scale_offers,
     source_lines,
     source_questions,
+    validate_glossary,
     validate_proposal,
+    with_glossary,
+    with_scale_fact,
 )
 from app.onboarding_sdk import OnboardingSdk
 from app.onboarding_store import OnboardingStore
@@ -67,7 +72,7 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
             state, revision = draft_store.read()
         master, master_revision = source_store.read_with_revision("master-resume.md")
         try:
-            prompt = build_prompt(state)
+            prompt = build_prompt(state, master)
             available = source_lines(master, master_revision, state["optional_sources"])
             questions = acceptance_questions(state, state["draft"], master_revision, True) if state["claims"] else source_questions(reviewed_snippets(state))
         except ValueError as exc:
@@ -79,6 +84,7 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
                                    selected_ids={source["id"] for source in state["selected"]},
                                    questions=questions,
                                    ledger=claim_ledger(state, state["draft"], master_revision),
+                                   scale_offers=scale_offers(master, source_store.read("grimoire.md"), state["glossary"]),
                                    prompt=prompt, prompt_hash=hashlib.sha256(prompt.encode()).hexdigest())
         return templates.TemplateResponse(request, "onboarding.html", context, status_code=status)
 
@@ -176,19 +182,26 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
         with source_lock:
             source_store, draft_store = writable(request)
             state, current = draft_store.read()
+            master, master_revision = source_store.read_with_revision("master-resume.md")
             try:
-                prompt = build_prompt(state)
+                prompt = build_prompt(state, master)
             except ValueError as exc:
                 return render(request, state=state, revision=revision, status=400, error=str(exc))
-            if current != revision or hashlib.sha256(prompt.encode()).hexdigest() != prompt_hash or state["master_revision"] != source_store.revision("master-resume.md"):
+            if current != revision or hashlib.sha256(prompt.encode()).hexdigest() != prompt_hash or state["master_revision"] != master_revision:
                 return render(request, state=state, revision=revision, status=409, error="Reviewed sources changed. Re-review the exact outbound text before drafting.")
-            if not all(state["answers"].values()) or len(prompt.encode()) > MAX_PROMPT_BYTES:
-                return render(request, state=state, revision=revision, status=400, error="Complete the answers and select at most 64 KiB of outbound text.")
+            if not all(state["answers"].values()):
+                return render(request, state=state, revision=revision, status=400, error="Complete the answers before drafting.")
+            if len(prompt.encode()) > MAX_PROMPT_BYTES:
+                return render(request, state=state, revision=revision, status=400,
+                              error=f"The draft request is {len(prompt.encode()) // 1024 + 1} KiB, over the 64 KiB bound. "
+                                    "It carries your whole master resume, so shorten the master resume or select fewer excerpts. Nothing was sent.")
             active = True
         try:
             payload, metrics = asyncio.run(asyncio.wait_for(sdk.draft(prompt), timeout=90))
-            proposal, claims = validate_proposal(payload, reviewed_snippets(state))
-            state.update(proposal=proposal, claims=claims, metrics=metrics)
+            sections, claims = validate_proposal(payload, reviewed_snippets(state))
+            glossary = validate_glossary(payload)
+            proposal = with_glossary(sections, glossary)
+            state.update(proposal=proposal, claims=claims, glossary=glossary, metrics=metrics)
             if not state["draft"]:
                 state["draft"] = proposal
             with source_lock:
@@ -212,7 +225,7 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
             state, _ = draft_store.read()
             state["draft"] = "" if discard else state["proposal"] if use_proposal else draft
             if not state["draft"]:
-                state.update(proposal="", claims=[], metrics={})
+                state.update(proposal="", claims=[], glossary=[], metrics={})
             try:
                 draft_store.save(state, revision)
             except ConflictError:
@@ -220,6 +233,42 @@ def onboarding_router(documents: DocumentStore | None, templates: Jinja2Template
             except ValueError as exc:
                 return render(request, state=state, revision=revision, status=400, error=str(exc))
         return RedirectResponse("/onboarding", status_code=303)
+
+    @router.post("/onboarding/glossary")
+    def review_glossary_row(request: Request, revision: str = Form(...), row: int = Form(...),
+                            internal_term: str = Form(""), aliases: str = Form(""), public_description: str = Form(""),
+                            scale: str = Form(""), remove: bool = Form(False)):
+        with source_lock:
+            _, draft_store = writable(request)
+            state, _ = draft_store.read()
+            try:
+                if not 0 <= row < len(state["glossary"]):
+                    raise ValueError("That glossary row no longer exists. Reload the page.")
+                if remove:
+                    del state["glossary"][row]
+                else:
+                    state["glossary"][row] = glossary_row(internal_term, aliases, public_description, scale=scale)
+                state["draft"] = with_glossary(state["draft"], state["glossary"])
+                draft_store.save(state, revision)
+            except ConflictError:
+                return render(request, state=state, revision=revision, status=409, error="Onboarding changed in another tab. Your glossary row remains below; reload before saving.")
+            except ValueError as exc:
+                return render(request, state=state, revision=revision, status=400, error=str(exc))
+        return RedirectResponse("/onboarding", status_code=303)
+
+    @router.get("/onboarding/scale")
+    def scale_fact_edit(request: Request, row: int, line: int):
+        source_store, draft_store = configured()
+        state, _ = draft_store.read()
+        master, master_revision = source_store.read_with_revision("master-resume.md")
+        offer = next((offer for offer in scale_offers(master, source_store.read("grimoire.md"), state["glossary"])
+                      if offer["row"] == row and offer["line"] == line), None)
+        if offer is None:
+            raise HTTPException(404, "That scale fact edit is no longer offered. Return to onboarding.")
+        context = template_context(request, "entry", document_name="master-resume.md", document_text=master,
+                                   revision=master_revision, import_key="scale", import_text=with_scale_fact(master, offer),
+                                   scale_offer=offer)
+        return templates.TemplateResponse(request, "documents.html", context)
 
     @router.post("/onboarding/review-draft")
     def review_edited_draft(request: Request, revision: str = Form(...), draft: str = Form("")):

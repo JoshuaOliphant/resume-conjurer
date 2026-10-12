@@ -19,8 +19,12 @@ DRAFT_SCHEMA = {
             "source_id": {"type": "string"}, "quote": {"type": "string"},
             "status": {"type": "string", "enum": [*STATUSES, "unknown"]}},
             "required": ["text", "kind", "source_id", "quote", "status"], "additionalProperties": False}}},
-        "required": ["title", "items"], "additionalProperties": False}}},
-    "required": ["sections"], "additionalProperties": False,
+        "required": ["title", "items"], "additionalProperties": False}},
+        "glossary": {"type": "array", "items": {"type": "object", "properties": {
+            "internal_term": {"type": "string"}, "aliases": {"type": "array", "items": {"type": "string"}},
+            "public_description": {"type": "string"}},
+            "required": ["internal_term", "aliases", "public_description"], "additionalProperties": False}}},
+    "required": ["sections", "glossary"], "additionalProperties": False,
 }
 
 
