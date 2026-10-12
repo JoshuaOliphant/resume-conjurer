@@ -23,6 +23,10 @@ outline, and one unit (its `unit_id` and `description`) plus N.
    names what makes it distinct.
 4. **Ownership language.** Lead with strong verbs (Architected, Led, Engineered, Built, Drove,
    Spearheaded). Never weak verbs (worked on, helped with, contributed to).
+5. **Outside reader.** Never write a Glossary internal term or any of its aliases; instead,
+   write its public description from the grimoire's Glossary, even when the cited line names the
+   internal term. Keep every number the cited lines give (volume, users, teams), because the
+   public description carries no scale of its own.
 
 ## Variant Axes
 
@@ -33,7 +37,7 @@ For **cover letter** units:
 - Register: confident-direct vs confident-warm
 
 For **resume bullet** units:
-- Which detail leads (technology, scope, outcome, ownership signal)
+- Which detail leads (what the system does in public terms, scope, outcome, ownership signal)
 - Which action verb opens the bullet (vary across the verb bank)
 - What gets quantified (a different number or scope)
 - The implicit angle: technical depth vs cross-team adoption vs ownership-under-ambiguity

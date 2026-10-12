@@ -32,7 +32,7 @@ FIXTURE_WORKSPACE = Path(__file__).parent / "fixtures" / "workspace"
 VARIANT_GENERATOR_MD = DEFAULT_PLUGIN_DIR / "agents" / "variant-generator.md"
 EXAMPLE_CITATION_RE = re.compile(r"`((?:master-resume|evidence)\.md L[^`<]+)`")
 LEAD_BULLET = OutlineUnit(unit_id="resume.acme.bullet_1", kind="resume_bullet", description="Lead bullet")
-CITATION_INSTRUCTIONS = {
+GENERATOR_INSTRUCTIONS = {
     "web-variant-prompt": build_variant_prompt(SLUG, LEAD_BULLET),
     "variant-generator-md": VARIANT_GENERATOR_MD.read_text(),
 }
@@ -156,7 +156,7 @@ def test_build_variant_prompt_dispatches_the_subagent_with_both_evidence_sources
     assert f"applications/{SLUG}/evidence.md" in prompt
 
 
-@pytest.mark.parametrize("instructions", CITATION_INSTRUCTIONS.values(), ids=CITATION_INSTRUCTIONS.keys())
+@pytest.mark.parametrize("instructions", GENERATOR_INSTRUCTIONS.values(), ids=GENERATOR_INSTRUCTIONS.keys())
 def test_generator_is_asked_to_cite_every_line_it_uses(instructions: str):
     assert "`master-resume.md L<n>`" in instructions
     assert "`evidence.md L<n>`" in instructions
@@ -164,7 +164,14 @@ def test_generator_is_asked_to_cite_every_line_it_uses(instructions: str):
     assert "separated by `; `" in instructions
 
 
-@pytest.mark.parametrize("instructions", CITATION_INSTRUCTIONS.values(), ids=CITATION_INSTRUCTIONS.keys())
+@pytest.mark.parametrize("instructions", GENERATOR_INSTRUCTIONS.values(), ids=GENERATOR_INSTRUCTIONS.keys())
+def test_generator_writes_public_descriptions_for_glossary_terms_and_keeps_scale_facts(instructions: str):
+    assert "Never write a Glossary internal term or any of its aliases" in instructions
+    assert "write its public description from the grimoire's Glossary" in instructions
+    assert "Keep every number the cited lines give" in instructions
+
+
+@pytest.mark.parametrize("instructions", GENERATOR_INSTRUCTIONS.values(), ids=GENERATOR_INSTRUCTIONS.keys())
 def test_every_example_citation_resolves_fully_against_the_evidence_pool(instructions: str):
     pool = FsWorkspaceRepository(FIXTURE_WORKSPACE).load_inputs(SLUG).evidence_pool
     examples = EXAMPLE_CITATION_RE.findall(instructions)
