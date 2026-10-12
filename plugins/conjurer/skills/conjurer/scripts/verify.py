@@ -3,8 +3,9 @@
 """Implementation of `python3 verify.py <app_dir> <workspace> [--picks]`.
 
 Each variant gets two Jev readings: how its cited lines relate to it (a Choice), and whether it
-states a fact the whole evidence pool does not (a Noul). `verdict_for` turns the readings into a
-support verdict. The check is advisory: without TYPESAFE_API_KEY it is skipped, and a failed
+states a fact the whole evidence pool does not (a Noul). When the cited lines use a glossary
+internal term, the term's glossary row joins both the cited lines and the pool. `verdict_for`
+turns the readings into a support verdict. The check is advisory: without TYPESAFE_API_KEY it is skipped, and a failed
 request marks that variant `unchecked` instead of failing the run.
 """
 
@@ -15,12 +16,14 @@ import logging
 import os
 import re
 import urllib.request
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.client import HTTPException
 from pathlib import Path
 
 import citations
+from glossary import GlossaryEntry, evidence_rows, parse_glossary
 from stitch import Variant, parse_variants_md
 
 JEV_MODEL = "jev-1.13.0"
@@ -179,10 +182,28 @@ def _read(claim: str, cited: list[str], pool: list[str], api_key: str, url: str)
     return Reading(relation=relation, relation_confidence=confidence, unstated=unstated)
 
 
-def check_variant(claim: str, cited: list[str], pool: list[str], api_key: str, url: str = JEV_URL) -> dict:
-    """One support.json row for a variant; `unchecked` when any request fails."""
+def cited_evidence(cited: list[str], glossary: Sequence[GlossaryEntry]) -> list[str]:
+    """The cited lines, then the glossary row of each internal term they use."""
+    return [*cited, *evidence_rows(cited, glossary)]
+
+
+def check_variant(
+    claim: str,
+    cited: list[str],
+    pool: list[str],
+    api_key: str,
+    url: str = JEV_URL,
+    *,
+    glossary: Sequence[GlossaryEntry],
+) -> dict:
+    """One support.json row for a variant; `unchecked` when any request fails.
+
+    Glossary rows add a meaning, never a number, so `unsourced_numbers` reads only `cited`.
+    """
+    evidence = cited_evidence(cited, glossary)
+    rows = evidence[len(cited):]
     try:
-        reading = _read(claim, cited, pool, api_key, url)
+        reading = _read(claim, evidence, [*pool, *rows], api_key, url)
     except (OSError, HTTPException, ValueError, KeyError, TypeError) as error:
         logger.warning("Claim check failed for %r: %s", claim, error)
         reading = Reading(relation=None, relation_confidence=None, unstated=None)
@@ -192,7 +213,7 @@ def check_variant(claim: str, cited: list[str], pool: list[str], api_key: str, u
         "relation_confidence": reading.relation_confidence,
         "unstated": reading.unstated,
         "unsourced_numbers": unsourced_numbers(claim, "\n".join(cited)),
-        "fingerprint": fingerprint(claim, cited),
+        "fingerprint": fingerprint(claim, evidence),
     }
 
 
@@ -224,6 +245,7 @@ def verify_app_dir(
         (workspace / "master-resume.md").read_text(), (app_dir / "evidence.md").read_text()
     )
     pool = list(lines.values())
+    glossary, _ = parse_glossary((workspace / "grimoire.md").read_text())
     targets = variant_targets((app_dir / "variants.md").read_text(), picks_only)
 
     def check(variant: Variant) -> dict:
@@ -232,7 +254,7 @@ def verify_app_dir(
             for line in citations.resolve_citation(variant.citation, lines)
             if line.grounded
         ]
-        return check_variant(variant.content, cited, pool, api_key, url)
+        return check_variant(variant.content, cited, pool, api_key, url, glossary=glossary)
 
     with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
         rows = list(executor.map(check, [variant for _, variant in targets]))

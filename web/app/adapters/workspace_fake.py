@@ -16,8 +16,9 @@ The generation-persistence methods (``load_inputs`` / ``save_outline`` / ``load_
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 from app.data import get_application
 from app.domain import (
@@ -31,6 +32,9 @@ from app.domain import (
 )
 from app.generation_status import UnitGenerationStatus
 from app.metrics import RunMetrics
+
+if TYPE_CHECKING:
+    from glossary import GlossaryEntry
 
 
 class FakeWorkspaceRepository:
@@ -82,7 +86,12 @@ class FakeWorkspaceRepository:
         raise NotImplementedError
 
     def save_support(
-        self, slug: str, support: dict[str, Support], units: list[Unit], pool: Mapping[str, Evidence]
+        self,
+        slug: str,
+        support: dict[str, Support],
+        units: list[Unit],
+        pool: Mapping[str, Evidence],
+        glossary: Sequence[GlossaryEntry],
     ) -> None:
         raise NotImplementedError
 

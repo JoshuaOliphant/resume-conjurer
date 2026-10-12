@@ -1,9 +1,5 @@
 [
   {
-    "path": "plugins/conjurer/skills/conjurer/scripts/lint.py",
-    "sha256": "9cd3d2afa71e3ab804ead5eb067044dc5380993baad3e42e5ec6eebe863c6211"
-  },
-  {
     "path": "plugins/conjurer/skills/conjurer/scripts/stitch.py",
     "sha256": "1b48fbfe4d87b57ab6413e8e380db1f26c93c7a9927affab93f8fb3a923fdb00"
   },
@@ -24,24 +20,12 @@
     "sha256": "cdf1a1f6f55e740fc17835daaabf9a3ee7479330ee1f471559648d66fd1d3748"
   },
   {
-    "path": "tests/test_lint.py",
-    "sha256": "617ab72e53763b98ecc7dd23e522f4898a7fe72a5126bb8e2187e33b7bcdb91e"
-  },
-  {
-    "path": "tests/test_new_workspace.py",
-    "sha256": "64e623b0d4eb93543c51f7f5b6b901433161b8a2a3b330f8448e64dc7938e545"
-  },
-  {
     "path": "tests/test_stitch.py",
     "sha256": "45a9739bad3207c2438186ec9b5608637cec00c73f8905ea6e7587bb8a9ad598"
   },
   {
     "path": "web/app/adapters/generation_fake.py",
     "sha256": "677410749fb2568178667fd80db4fb320af511a811d516674afb81dcdb825f46"
-  },
-  {
-    "path": "web/app/data.py",
-    "sha256": "b1dc191bbfcb05f258adb733edd6395619c72cfdbae0a650dbb63528af26d218"
   },
   {
     "path": "web/app/deps.py",

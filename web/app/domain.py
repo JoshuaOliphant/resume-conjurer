@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from glossary import GlossaryEntry
 
 UnitKind = Literal["resume_bullet", "cover_paragraph"]
 
@@ -89,6 +92,7 @@ class Variant:
     text: str
     evidence_items: tuple[Evidence, ...] = ()
     support: Support | None = None
+    leaks: tuple[GlossaryEntry, ...] = ()
 
     def evidence(self) -> list[Evidence]:
         # Method (not the raw field) so templates keep calling ``v.evidence()``.
@@ -244,3 +248,4 @@ class WorkspaceInputs:
     jd: str
     evidence: str
     evidence_pool: dict[str, Evidence]
+    glossary: tuple[GlossaryEntry, ...]

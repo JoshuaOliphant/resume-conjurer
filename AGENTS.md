@@ -20,7 +20,8 @@ contract that keeps them interchangeable:
   (`- [x] Pick`, exactly one per unit). Never introduce a second pick store.
 - `support.json` — the claim check's verdicts, schema in the "Claim check" section of
   `pipeline.md`, mirrored as `SUPPORT_SCHEMA` in `web/app/schemas.py`. A row applies only while
-  its fingerprint (`verify.fingerprint`) matches the variant's text and cited lines.
+  its fingerprint (`verify.fingerprint`) matches the variant's text, cited lines, and the glossary
+  rows those lines use.
 
 Change either format and you must change it in both places, or the CLI and web flows silently
 diverge on the same workspace.

@@ -18,6 +18,8 @@ class OnboardingStore:
         if not text:
             return empty_state(), revision
         state = json.loads(text)
+        if isinstance(state, dict):
+            state.setdefault("glossary", [])
         defaults = empty_state()
         if not isinstance(state, dict) or any(key not in state or not isinstance(state[key], type(value)) for key, value in defaults.items()):
             raise ValueError("Onboarding state is unreadable; recover its revision history before continuing.")

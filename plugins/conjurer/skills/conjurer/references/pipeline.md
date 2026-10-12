@@ -86,7 +86,9 @@ no key.
 For each variant, Jev (`jev-1.13.0`, pinned because the thresholds were tuned on it) answers two
 questions: how the variant's grounded cited lines relate to it (asked only when it has one), and
 whether it states a fact that the whole evidence pool (every line of `master-resume.md` and
-`evidence.md`) does not. The script writes `<app_dir>/support.json` and prints one line per
+`evidence.md`) does not. When a grounded cited line uses a glossary internal term, the term's
+glossary row from `<workspace>/grimoire.md`, stated as `<internal term> is a <public description>`,
+joins both the cited lines and the pool for that variant. The script writes `<app_dir>/support.json` and prints one line per
 flagged variant, `<unit_id>#<n>: <note>`. Mention those notes while curating. A flag is a note,
 never a reason to hide, reorder, or regenerate a variant, and an unflagged variant is not
 "verified true": the check only tests consistency with the user's own evidence.
@@ -118,9 +120,10 @@ never a reason to hide, reorder, or regenerate a variant, and an unflagged varia
   failed. `unstated` is the probability that the variant states a fact the pool does not; `null`
   when the check failed.
 - `unsourced_numbers` lists numbers (digits or number words) in the variant that its cited lines
-  never state. It only names a value in the note; it never decides the verdict.
+  never state. Glossary rows add a meaning, never a number, so they are not read here. It only names a value in the note; it never decides the verdict.
 - `fingerprint` is the sha256 hex digest of the UTF-8 text of the variant followed by each
-  resolved cited line, joined by `\n`. **A row whose fingerprint no longer matches the variant is
+  resolved cited line, then each glossary row those lines use, joined by `\n`. Editing a glossary
+  row therefore invalidates the verdicts of variants citing its term. **A row whose fingerprint no longer matches the variant is
   ignored**, so a hand-edited variant reads as "no verdict", never as a stale one.
   Web saves preserve the checker's fingerprint. Verdicts without a fingerprint use the checked
   units and evidence snapshot; saving never substitutes evidence edited after the check.
@@ -142,6 +145,20 @@ logged and leave generation and curation available without verdicts.
 | `not_covered` | `says_nothing` and `unstated` ≥ 0.5 | "The cited line doesn't cover this" |
 | `unchecked` | a Jev request timed out (5 s) or failed | "Couldn't check this line" |
 
+## Glossary leak check (step 4c)
+
+```bash
+python3 <SKILL_DIR>/scripts/leaks.py <app_dir> <workspace>
+```
+
+Reads the `## Glossary` table in `<workspace>/grimoire.md` (columns `Internal term | Aliases |
+Public description`, aliases comma-separated; the section ends at the next `# ` or `## ` heading; an alias with no letters or digits,
+such as `-`, means no alias). A
+variant leaks when an internal term or alias appears as a whole word, ignoring case, spaces, and
+hyphens. Prints `<unit_id> #<n>\t<internal terms>` per leaking variant and exits 1, or
+`No glossary leaks.` and exits 0. A row with an empty internal term or public description is
+skipped with a `Glossary line N: ...` warning on stderr.
+
 ## Curation (step 5)
 
 Present variants conversationally, one unit at a time or grouped. When the user chooses, edit
@@ -151,11 +168,12 @@ Present variants conversationally, one unit at a time or grouped. When the user 
 
 ```bash
 python3 <SKILL_DIR>/scripts/stitch.py <app_dir> <workspace>/master-resume.md
-python3 <SKILL_DIR>/scripts/lint.py <app_dir>
+python3 <SKILL_DIR>/scripts/lint.py <app_dir> <workspace>
 python3 <SKILL_DIR>/scripts/export_docs.py <app_dir> pdf docx
 ```
 
-Stitch writes `cover_letter.md` and `resume.md`. Lint prints findings; fix any and re-run. Export
+Stitch writes `cover_letter.md` and `resume.md`. Lint prints findings, including a `glossary-leak`
+for any internal term from the Glossary in `<workspace>/grimoire.md`; fix any and re-run. Export
 produces PDF/docx via pandoc when installed, otherwise reports that the markdown is the deliverable.
 
 ## Ingesting an existing resume (first-run bootstrap)

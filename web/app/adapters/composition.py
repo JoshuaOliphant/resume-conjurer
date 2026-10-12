@@ -8,11 +8,13 @@ modules import each other by bare name (``stitch`` imports ``composer``), so tha
 directory is added to ``sys.path`` once at import time.
 
 ``lint`` depends on ``stitch`` having run, because the linter reads the stitched
-``cover_letter.md`` / ``resume.md`` from disk.
+``cover_letter.md`` / ``resume.md`` from disk. It also reads the workspace ``grimoire.md`` so a
+glossary leak fails the review like any other finding.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -23,8 +25,11 @@ from app.professional_export import ExportError, export_document
 
 ensure_scripts_on_path()
 
+from glossary import parse_glossary  # noqa: E402
 from lint import lint_app_dir  # noqa: E402
 from stitch import stitch_app_dir  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 EXPORT_FILENAMES = {
     f"{document}.{extension}"
@@ -50,7 +55,10 @@ class ScriptCompositionPort:
         )
 
     def lint(self, slug: str) -> list[LintCheck]:
-        findings = lint_app_dir(self._app_dir(slug))
+        glossary, warnings = parse_glossary((self.root / "grimoire.md").read_text(encoding="utf-8"))
+        for warning in warnings:
+            logger.warning(warning)
+        findings = lint_app_dir(self._app_dir(slug), glossary)
         return [
             LintCheck(
                 label=finding.rule,

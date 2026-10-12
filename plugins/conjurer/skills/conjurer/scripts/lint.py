@@ -1,19 +1,23 @@
 # ABOUTME: Regex-based grimoire style linter for cover_letter.md and resume.md.
-# ABOUTME: Covers the pure-regex/counting checks from the grimoire's 10-point checklist.
-"""Implementation of `conjure lint <app_dir>`.
+# ABOUTME: Covers the pure-regex/counting checks from the grimoire's checklist and fails on glossary leaks.
+"""Implementation of `python3 lint.py <app_dir> <workspace>`.
 
 Runs the grimoire's regex-based style checks against final cover letter and resume
-documents. Returns the list of findings; the CLI is responsible for printing.
+documents, and fails on any glossary leak from `<workspace>/grimoire.md`. Returns the list
+of findings; the CLI is responsible for printing.
 
 The grimoire's full 10-point checklist includes checks that need an LLM (vague
 impact detection) and checks that belong at variant-generation time (citation
 discipline). This module covers the checks that are pure regex or counting.
 """
 
-import sys
 import re
+import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+from glossary import GlossaryEntry, entries_named, parse_glossary
 
 EM_DASH_RE = re.compile(r"—")
 
@@ -143,22 +147,38 @@ def lint_text(text: str, source: Path, is_cover_letter: bool = False) -> list[Fi
     return findings
 
 
-def lint_app_dir(app_dir: Path) -> list[Finding]:
+def lint_glossary(text: str, source: Path, glossary: Sequence[GlossaryEntry]) -> list[Finding]:
+    """One glossary-leak finding per internal term on each line, headers and labels included."""
+    return [
+        Finding(source, i, "glossary-leak", f"{entry.internal_term}: {line.strip()}")
+        for i, line in enumerate(text.splitlines(), start=1)
+        for entry in entries_named(line, glossary)
+    ]
+
+
+def lint_app_dir(app_dir: Path, glossary: Sequence[GlossaryEntry]) -> list[Finding]:
     findings: list[Finding] = []
     cover = app_dir / "cover_letter.md"
     resume = app_dir / "resume.md"
     if cover.exists():
-        findings.extend(lint_text(cover.read_text(), cover, is_cover_letter=True))
+        text = cover.read_text()
+        findings.extend(lint_text(text, cover, is_cover_letter=True))
+        findings.extend(lint_glossary(text, cover, glossary))
     if resume.exists():
-        findings.extend(lint_text(resume.read_text(), resume, is_cover_letter=False))
+        text = resume.read_text()
+        findings.extend(lint_text(text, resume, is_cover_letter=False))
+        findings.extend(lint_glossary(text, resume, glossary))
     return findings
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        print("usage: python3 lint.py <app_dir>", file=sys.stderr)
+    if len(sys.argv) != 3:
+        print("usage: python3 lint.py <app_dir> <workspace>", file=sys.stderr)
         raise SystemExit(2)
-    findings = lint_app_dir(Path(sys.argv[1]))
+    glossary, warnings = parse_glossary((Path(sys.argv[2]) / "grimoire.md").read_text())
+    for warning in warnings:
+        print(warning, file=sys.stderr)
+    findings = lint_app_dir(Path(sys.argv[1]), glossary)
     if not findings:
         print("No style issues found.")
         return

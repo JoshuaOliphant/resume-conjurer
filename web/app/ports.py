@@ -21,9 +21,9 @@ typed contract.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from app.domain import (
     Application,
@@ -38,6 +38,9 @@ from app.domain import (
 )
 from app.generation_status import UnitGenerationStatus
 from app.metrics import CallMetrics, RunMetrics
+
+if TYPE_CHECKING:
+    from glossary import GlossaryEntry
 
 
 @runtime_checkable
@@ -73,8 +76,14 @@ class GenerationPort(Protocol):
 class VerificationPort(Protocol):
     """The claim check. Judges each variant of a unit against the evidence it cites."""
 
-    async def verify(self, unit: Unit, pool: Mapping[str, Evidence]) -> dict[str, Support]:
-        """Support verdicts for ``unit``'s variants, keyed by variant id; ``pool`` is the evidence pool."""
+    async def verify(
+        self, unit: Unit, pool: Mapping[str, Evidence], glossary: Sequence[GlossaryEntry]
+    ) -> dict[str, Support]:
+        """Support verdicts for ``unit``'s variants, keyed by variant id.
+
+        ``pool`` is the evidence pool; ``glossary`` supplies the rows that join the evidence of
+        a variant whose cited lines use an internal term.
+        """
         ...
 
     async def aclose(self) -> None:
@@ -161,9 +170,14 @@ class WorkspaceRepository(Protocol):
         ...
 
     def save_support(
-        self, slug: str, support: dict[str, Support], units: list[Unit], pool: Mapping[str, Evidence]
+        self,
+        slug: str,
+        support: dict[str, Support],
+        units: list[Unit],
+        pool: Mapping[str, Evidence],
+        glossary: Sequence[GlossaryEntry],
     ) -> None:
-        """Write verdicts using checked units and their evidence snapshot for missing fingerprints."""
+        """Write verdicts using checked units and their evidence and glossary snapshot for missing fingerprints."""
         ...
 
     def load_support(self, slug: str) -> dict[str, Support]:

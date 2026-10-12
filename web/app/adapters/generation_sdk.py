@@ -89,6 +89,9 @@ def build_variant_prompt(slug: str, unit: OutlineUnit, n: int = 4) -> str:
         "`master-resume.md L<n>` or `evidence.md L<n>` references (line ranges allowed) "
         "separated by `; `, for example `master-resume.md L16` or "
         "`master-resume.md L16-18; evidence.md L11`.\n"
+        "Write for an outside reader. Never write a Glossary internal term or any of its aliases; "
+        "instead, write its public description from the grimoire's Glossary, even when the cited "
+        "line names the internal term. Keep every number the cited lines give.\n"
         f"Unit: {unit.unit_id} - {unit.description}\n"
         "Return the variant-generator's '## Unit:' block verbatim as your final message."
     )

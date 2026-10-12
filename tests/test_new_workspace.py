@@ -1,7 +1,15 @@
 # ABOUTME: Tests for workspace bootstrap — scaffolding missing template files into a directory.
 # ABOUTME: Verifies it fills an empty dir, coexists with existing files, and never clobbers.
-import new_workspace
+import re
 import sys
+
+import new_workspace
+
+
+def _section(markdown, heading):
+    match = re.search(rf"^## {heading}\n(.*?)(?=^## |\Z)", markdown, re.MULTILINE | re.DOTALL)
+    assert match, f"no ## {heading} section"
+    return match.group(1)
 
 
 def test_scaffolds_empty_dir(tmp_path):
@@ -9,6 +17,23 @@ def test_scaffolds_empty_dir(tmp_path):
     assert (ws / "grimoire.md").exists()
     assert (ws / "master-resume.md").exists()
     assert (ws / "applications").is_dir()
+
+
+def test_scaffolded_grimoire_writes_for_an_outside_reader(tmp_path):
+    grimoire = (new_workspace.new_workspace(tmp_path / "ws") / "grimoire.md").read_text()
+
+    table_rows = [line for line in _section(grimoire, "Glossary").splitlines() if line.startswith("|")]
+    header = [cell.strip() for cell in table_rows[0].strip("|").split("|")]
+    assert header == ["Internal term", "Aliases", "Public description"]
+    assert len(table_rows) >= 3, "the template shows one example row under the header and separator"
+
+    voice = _section(grimoire, "Voice")
+    assert "outside reader" in voice
+    assert "Glossary's public description" in voice
+    assert "keep the number" in voice
+    assert "Name the technology, the system" not in grimoire
+
+    assert "Glossary leak check" in _section(grimoire, "Linter Checklist")
 
 
 def test_scaffolds_into_non_empty_dir(tmp_path):

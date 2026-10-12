@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING
 
 from app.domain import Evidence, Support, Unit
+
+if TYPE_CHECKING:
+    from glossary import GlossaryEntry
 
 
 class FakeVerificationPort:
@@ -17,7 +21,9 @@ class FakeVerificationPort:
         self._verdicts = verdicts or {}
         self._error = error
 
-    async def verify(self, unit: Unit, pool: Mapping[str, Evidence]) -> dict[str, Support]:
+    async def verify(
+        self, unit: Unit, pool: Mapping[str, Evidence], glossary: Sequence[GlossaryEntry]
+    ) -> dict[str, Support]:
         if self._error is not None:
             raise self._error
         return {
@@ -33,7 +39,9 @@ class FakeVerificationPort:
 class NoVerificationPort:
     """Checks nothing, so no variant carries a verdict."""
 
-    async def verify(self, unit: Unit, pool: Mapping[str, Evidence]) -> dict[str, Support]:
+    async def verify(
+        self, unit: Unit, pool: Mapping[str, Evidence], glossary: Sequence[GlossaryEntry]
+    ) -> dict[str, Support]:
         return {}
 
     async def aclose(self) -> None:

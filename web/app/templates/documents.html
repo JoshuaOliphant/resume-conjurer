@@ -25,6 +25,10 @@
     {% if import_key == "recovery" %}
     <h2 id="import-heading">Recover your unsaved changes</h2>
     <p>Your submitted text is below. Copy it before reloading the saved document to compare and apply your changes.</p>
+    {% elif import_key == "scale" %}
+    <h2 id="import-heading">Review the scale fact edit</h2>
+    <p>Onboarding prefilled {{ scale_offer.term }}'s scale fact, {{ scale_offer.scale }}, into master-resume.md L{{ scale_offer.line }}. Your saved master résumé is unchanged until you accept this edit. Adjust the wording first if it reads awkwardly.</p>
+    <pre>{{ scale_offer.after }}</pre>
     {% else %}
     <h2 id="import-heading">Review the imported text</h2>
     <p>Your saved {{ "master résumé" if document_name == "master-resume.md" else "grimoire" }} is unchanged. Edit this preview, then save it when you are ready. The source file was converted to editable text; its original layout is not retained.</p>
@@ -55,9 +59,9 @@
       <textarea class="textarea documents__editor" id="document-text" name="text" aria-describedby="document-hint" rows="24" required>{{ import_text if import_key else document_text }}</textarea>
     </div>
     <div class="actions">
-      <button class="btn btn--primary" type="submit">{{ "Save imported text" if import_key and import_key != "recovery" else "Save changes" }}</button>
+      <button class="btn btn--primary" type="submit">{{ "Accept scale fact edit" if import_key == "scale" else "Save imported text" if import_key and import_key != "recovery" else "Save changes" }}</button>
       {% if document_name == "master-resume.md" %}<button class="btn btn--ghost" type="submit" formaction="/documents/normalize">Prepare master resume</button>{% endif %}
-      {% if import_key %}<a class="btn btn--quiet" href="/documents?name={{ document_name | urlencode }}">{{ "Reload saved document" if import_key == "recovery" else "Cancel import" }}</a>{% endif %}
+      {% if import_key == "scale" %}<a class="btn btn--quiet" href="/onboarding">Back to onboarding</a>{% elif import_key %}<a class="btn btn--quiet" href="/documents?name={{ document_name | urlencode }}">{{ "Reload saved document" if import_key == "recovery" else "Cancel import" }}</a>{% endif %}
     </div>
   </form>
 

@@ -4,6 +4,7 @@
 import asyncio
 import hashlib
 import re
+from html import unescape
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,7 @@ from app.adapters.generation_fake import FakeGenerationPort
 from app.adapters.scripts_path import ensure_scripts_on_path
 from app.adapters.verification_fake import NoVerificationPort
 from app.adapters.workspace_fake import FakeWorkspaceRepository
-from app.data import EVIDENCE, _v, get_application
+from app.data import EVIDENCE, GLOSSARY, _v, get_application
 from app.document_import import import_document
 from app.document_normalize import normalize_master_resume
 from app.document_routes import MAX_UPLOAD_REQUEST_BYTES, DocumentUploadLimit
@@ -28,6 +29,7 @@ ensure_scripts_on_path()
 
 import verify  # noqa: E402
 from composer import resume_unit_ids  # noqa: E402
+from glossary import GlossaryEntry  # noqa: E402
 
 
 class SameOriginClient(TestClient):
@@ -813,6 +815,11 @@ def _cards(html: str) -> dict[str, str]:
     return {card.split('value="', 1)[1].split('"', 1)[0]: card for card in cards}
 
 
+def _notes(card: str) -> list[str]:
+    """The plain-text notes on one variant card, in page order."""
+    return [unescape(note) for note in re.findall(r'<p class="variant__note">(.*?)</p>', card)]
+
+
 def _page(variants: list[Variant], path: str) -> str:
     """One page rendered for an application holding a single unit with these variants."""
     unit = Unit(id="resume.northwind.billing.bullet_1", kind="resume_bullet", label="Billing bullet",
@@ -869,6 +876,40 @@ def test_curate_notes_the_fixture_overreaches(client):
         assert note in cards[flagged_id]
         assert note not in cards[clean_id]
     assert "the last three years" in _cards(client.get("/curate/0").text)["cover-open-1"]
+
+
+def test_curate_notes_a_glossary_leak_and_keeps_the_variant_pickable(client):
+    units = get_application().units
+    idx, unit = next((i, u) for i, u in enumerate(units) if any(v.leaks for v in u.variants))
+    leaky = next(v for v in unit.variants if v.leaks)
+
+    cards = _cards(client.get(f"/curate/{idx}").text)
+
+    assert list(cards) == [v.id for v in unit.variants]
+    assert "MailAPI" in cards[leaky.id].split('class="variant__foot"', 1)[0]
+    assert {variant_id: _notes(card) for variant_id, card in cards.items()} == {
+        v.id: ['Uses internal term "MailAPI"; say "transactional email API".'] if v is leaky else [] for v in unit.variants
+    }
+
+    r = client.post(f"/curate/{idx}", data={"variant_id": leaky.id}, follow_redirects=False)
+    assert r.status_code == 303
+    assert 'checked' in _cards(client.get(f"/curate/{idx}").text)[leaky.id].split("<input", 1)[1].split(">", 1)[0]
+
+
+def test_curate_notes_each_glossary_leak_after_the_claim_check_note():
+    mailapi, = GLOSSARY
+    snowsk8s = GlossaryEntry("snowsk8s", (), "internal Kubernetes platform")
+    variant = Variant(id="bullet#1", text="Moved MailAPI onto snowsk8s.", evidence_items=(EVIDENCE["billing-migration"],),
+                      support=Support(verdict="adds_detail", note="Adds detail your evidence doesn't state"),
+                      leaks=(mailapi, snowsk8s))
+
+    card = _cards(_page([variant], "/curate/0"))["bullet#1"]
+
+    assert _notes(card) == [
+        "Adds detail your evidence doesn't state",
+        'Uses internal term "MailAPI"; say "transactional email API".',
+        'Uses internal term "snowsk8s"; say "internal Kubernetes platform".',
+    ]
 
 
 def test_curate_out_of_range_goes_to_review(client):

@@ -14,8 +14,21 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
-from app.domain import Application, Evidence, Frame, FRAMES, LintCheck, Support, Unit, Variant
+from app.adapters.scripts_path import ensure_scripts_on_path
+from app.domain import (
+    FRAMES,
+    Application,
+    Evidence,
+    Frame,
+    LintCheck,
+    Support,
+    Unit,
+    Variant,
+)
 
+ensure_scripts_on_path()
+
+from glossary import GlossaryEntry, entries_named  # noqa: E402
 
 # --- Evidence pool ---------------------------------------------------------
 # Lines lifted from the (fixture) master resume, keyed by id.
@@ -35,7 +48,7 @@ EVIDENCE: dict[str, Evidence] = {
     ),
     "oncall-reliability": Evidence(
         id="oncall-reliability",
-        text="Owned the billing on-call rotation; cut paging volume 60% by adding "
+        text="Owned the billing on-call rotation; cut MailAPI paging volume 60% by adding "
         "idempotency keys and a dead-letter replay tool.",
         source="master-resume → Experience → Senior Engineer, Northwind",
     ),
@@ -65,6 +78,9 @@ EVIDENCE: dict[str, Evidence] = {
     ),
 }
 
+# The fixture grimoire's Glossary: the paging line names the internal mail service.
+GLOSSARY = (GlossaryEntry("MailAPI", (), "transactional email API"),)
+
 
 def _v(id: str, text: str, *evidence_ids: str, support: Support | None = None) -> Variant:
     """Build a Variant with its evidence resolved from the fixture pool.
@@ -80,6 +96,7 @@ def _v(id: str, text: str, *evidence_ids: str, support: Support | None = None) -
         text=text,
         evidence_items=tuple(EVIDENCE[e] for e in evidence_ids),
         support=support,
+        leaks=tuple(entries_named(text, GLOSSARY)),
     )
 
 
@@ -198,8 +215,8 @@ def _units() -> list[Unit]:
                 ),
                 _v(
                     "bullet-reliability-4",
-                    "Reduced on-call load 60% on the billing platform by closing the "
-                    "retry-safety gaps that caused most pages.",
+                    "Reduced MailAPI on-call load 60% by closing the retry-safety gaps "
+                    "that caused most pages.",
                     "oncall-reliability",
                 ),
             ],

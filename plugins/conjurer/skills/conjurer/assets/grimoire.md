@@ -1,6 +1,6 @@
 ---
 title: Grimoire (template)
-status: v0.1
+status: v0.2
 ---
 
 # Grimoire
@@ -28,9 +28,15 @@ ownership, not assistance: "I led", "I architected", "I built" — not "I contri
 ## Voice
 
 - **First person, always.** "I built", "I designed", "I led". Never "we" or passive voice.
-- **Specificity over abstraction.** Name the technology, the system, the number. "the billing
-  service" not "the API"; "Python 2 to 3" not "modernized the stack"; "12k requests/sec" not
-  "high traffic."
+- **Write for an outside reader.** The reader is a recruiter or hiring manager who has never
+  worked at your employer. Describe an internal system by what it does, using the
+  Glossary's public description, and keep the number that gives it scale: "a payment-processing
+  API handling 12k requests/sec", not the codename the team calls it. Internal project names,
+  hostnames, tool and function names, release labels, and team acronyms never appear in
+  application prose.
+- **Specificity over vagueness.** Keep the public technologies, the numbers, and the outcomes.
+  "Python 2 to 3" not "modernized the stack"; "Kafka" not "a messaging tool"; "12k requests/sec"
+  not "high traffic."
 - **No em dashes. Ever.** Restructure into two sentences, use a semicolon, or use a comma.
 - **No "not just X, it's Y"** correlative constructions. Pick the stronger half. State it directly.
 - **No filler**: cut "just", "actually", "a bit", "really", "basically", "pretty much", "kind of",
@@ -40,6 +46,19 @@ ownership, not assistance: "I led", "I architected", "I built" — not "I contri
   specific.
 - **No self-deprecation**: "I built a small tool", "nothing fancy". State what was built.
 - **No disclaimers**: "I could be wrong, but", "this is just my opinion". State the claim.
+
+## Glossary
+
+Each internal term your master resume uses, with the public description an outside reader
+understands: what the thing does plus an industry category. Aliases are other spellings of the
+same term, comma-separated. Numbers stay out of this table; they belong in the master-resume
+bullet that names the term, so every variant can cite them.
+
+| Internal term | Aliases | Public description |
+|---|---|---|
+| Ledgerline | ledgerline-svc, LL | billing platform that invoices customers and reconciles payments |
+
+<!-- The row above is a fictional example. Replace it with your own internal terms. -->
 
 ## Claim Discipline (Truth Constraint)
 
@@ -56,14 +75,15 @@ evidence pool. The lint pass and curation verify the citation.
 ## Resume Bullet Patterns
 
 ```
-<Action verb> <specific system/scope> <quantified outcome or distinguishing detail>,
-<technical specifics> <impact on team / org / production>.
+<Action verb> <what the system does, in public terms, with its scale> <quantified outcome or
+distinguishing detail>, <technical specifics> <impact on team / org / production>.
 ```
 
 Examples (fictional — replace with your own strongest bullets):
 
-- "Architected the billing-service migration from a monolith to event-driven microservices over
-  an 18-month roadmap, cutting invoice-generation latency from 40s to under 2s across 3 regions."
+- "Architected the migration of a billing platform invoicing 2M customers a month from a monolith
+  to event-driven microservices over an 18-month roadmap, cutting invoice-generation latency from
+  40s to under 2s across 3 regions."
 - "Built the data-quality framework adopted by 6 analytics teams, catching schema drift before it
   reached dashboards and reducing data incidents by 70%."
 - "Led the on-call tooling rewrite that lifted incident-triage accuracy from 60% to 92% and cut
@@ -137,3 +157,4 @@ Under 350 words total. The linter flags cover letters over that.
 8. Vague-impact check: every bullet has a specific noun and a specific outcome
 9. Citation check: every claim has an evidence source
 10. Length check: cover letter under 350 words
+11. Glossary leak check: no Glossary internal term or alias appears; each is replaced by its public description
