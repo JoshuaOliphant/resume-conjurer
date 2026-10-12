@@ -26,7 +26,7 @@ the four strategic frames), Anti-Patterns, Linter Checklist.
    - Voice tendencies and any phrases the user clearly favors or avoids (-> Voice)
 
 3. **Interview for the Glossary** (below). It reads `master-resume.md` from the same workspace;
-   if there is none, say so, skip this step, and suggest `/conjurer:master-resume` first.
+   if there is none, say so, skip this step and step 7, and suggest `/conjurer:master-resume` first.
 
 4. **Pre-fill the universal sections** (Voice rules, Anti-Patterns, Linter Checklist) from the
    template defaults. Present them and let the user tweak.
@@ -36,7 +36,17 @@ the four strategic frames), Anti-Patterns, Linter Checklist.
    - Strategic angle: which of scale / friction / conviction / multiplier fits your typical targets?
    - Strong bullets: confirm or supply 3-5 real bullets that exemplify your best work.
 
-6. **Write `grimoire.md`** to the workspace. Show a diff or summary of what changed.
+6. **Write `grimoire.md`** to the workspace. Show a diff or summary of what changed. If the
+   Glossary changed, confirm the table parses cleanly:
+
+   ```bash
+   python3 <SKILL_DIR>/scripts/glossary_check.py rows <workspace>
+   ```
+
+   It prints the entry count and exits 1 with a `Glossary line N: ...` warning per malformed row.
+   Every confirmed term must be counted; fix any row a warning names and run it again.
+
+7. **Work each scale fact into the master resume** (below), now that the Glossary is on disk.
 
 Keep every claim truthful to what the user actually said or what the ingested material supports.
 Do not invent accomplishments to fill the template.
@@ -44,7 +54,7 @@ Do not invent accomplishments to fill the template.
 ## Glossary interview
 
 The Glossary maps each internal term in the master resume to a public description an outside
-reader (a recruiter or hiring manager who never worked at the applicant's employer) understands.
+reader (a recruiter or hiring manager who never worked at the user's employer) understands.
 The table holds no numbers. A scale fact lives only in the master resume, in every bullet that
 names the term, so the claim check can cite it.
 
@@ -64,38 +74,40 @@ names the term, so the claim check can cite it.
       - "Created syseng-oncall, cutting mean time to acknowledge by half."
    ```
 
-2. **Settle each candidate, one at a time.** Ask the applicant to confirm or reject it. For a
+2. **Settle each candidate, one at a time.** Ask the user to confirm or reject it. For a
    confirmed term, ask in turn:
    - **Public description**: what the thing does plus an industry category, such as
      "transactional email API". If the answer contains a number, move the number to the scale fact
      and ask for the description without it.
    - **Aliases**: other spellings of the same term in their history, comma-separated, or none.
    - **Scale fact**: a number that gives the term its size (volume, users, teams), such as
-     "40M msgs/day", or none. Take only a number the applicant states; never estimate one.
+     "40M msgs/day", or none. Take only a number the user states; never estimate one. Keep each
+     scale fact for step 7.
 
-3. **Write the confirmed rows** into the `## Glossary` table of `grimoire.md`, one row per term:
+3. **Put the confirmed rows in the draft's `## Glossary` table**, one row per term:
    `| <internal term> | <aliases, comma-separated> | <public description> |`, with the Aliases cell
    empty when there are none. Keep the table's header and separator rows. Remove the template's
    fictional example row (`Ledgerline`) and the comment beneath it. A cell must not contain `|`.
-   Rejected terms are not written. Then confirm the table parses cleanly:
+   Rejected terms are not written. The draft reaches disk at step 6, with the rest of the grimoire.
 
-   ```bash
-   python3 -c "import sys; sys.path.insert(0, '<SKILL_DIR>/scripts'); from glossary import parse_glossary; entries, warnings = parse_glossary(open('<workspace>/grimoire.md').read()); print(len(entries), 'entries'); print(*warnings, sep='\n')"
-   ```
+## Scale facts in the master resume
 
-   Every confirmed term must be counted and no warning printed; fix any row a warning names.
+For each confirmed term with a scale fact, list the master-resume lines that name it:
 
-4. **Work each scale fact into the master resume, one bullet at a time.** For each term with a
-   scale fact, find every master-resume bullet that names the term or one of its aliases (as a
-   whole word, ignoring case, spaces, and hyphens). Skip a bullet that already states the scale
-   fact. For each remaining bullet, show the current bullet and the edited bullet, prefilled with
-   the scale fact in parentheses right after the term:
+```bash
+python3 <SKILL_DIR>/scripts/glossary_check.py bullets <workspace> "<internal term>"
+```
 
-   ```
-   Current: - Built MailAPI, the transactional email service, on Kafka and Kubernetes.
-   Edited:  - Built MailAPI (40M msgs/day), the transactional email service, on Kafka and Kubernetes.
-   ```
+It prints `L<n>\t<line>` for every line naming the term or one of its aliases, matched by the same
+rule as the glossary leak check, and exits 2 if the term is not in the Glossary. Skip a line that
+already states the scale fact. For each remaining bullet, one at a time, show the current bullet
+and the edited bullet, prefilled with the scale fact in parentheses right after the term:
 
-   Ask the applicant to approve it, edit the wording, or skip it. Write a bullet to
-   `master-resume.md` only after the applicant approves its final wording, and change nothing else
-   in the file. The master resume keeps the internal term; only generated documents must not.
+```
+Current: - Built MailAPI, the transactional email service, on Kafka and Kubernetes.
+Edited:  - Built MailAPI (40M msgs/day), the transactional email service, on Kafka and Kubernetes.
+```
+
+Ask the user to approve it, edit the wording, or skip it. Write a bullet to `master-resume.md` only
+after the user approves its final wording, and change nothing else in the file. The master resume
+keeps the internal term; variants and final documents must not.
