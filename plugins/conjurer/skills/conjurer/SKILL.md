@@ -1,6 +1,6 @@
 ---
 name: conjurer
-description: This skill should be used when the user asks to "tailor my resume for this job", "help me apply to this role", "draft a tailored resume and cover letter for this job posting", "generate resume/cover letter variants", "conjure variants for this role", or "run the conjurer pipeline". Generates grounded resume and cover letter variants from a master resume and a grimoire of encoded taste, curates them conversationally, and stitches final documents.
+description: This skill should be used when the user asks to "tailor my resume for this job", "help me apply to this role", "draft a tailored resume and cover letter for this job posting", "generate resume/cover letter variants", "conjure variants for this role", or "run the conjurer pipeline". Also used for fast mode when the user asks to "run it fast", "fast mode", "just conjure it", or "skip the curation" (see `/conjurer:fast`). Generates grounded resume and cover letter variants from a master resume and a grimoire of encoded taste, curates them conversationally, and stitches final documents.
 version: 0.1.0
 ---
 
@@ -47,6 +47,17 @@ generating.
 
 `/conjurer:grimoire` and `/conjurer:master-resume` are commands provided by this same plugin, so
 they are available whenever the conjurer plugin is installed.
+
+## Fast mode
+
+The pipeline below is guided: the user picks every variant. When the user wants speed over
+involvement ("fast mode", "just run it", "skip the curation"), follow `/conjurer:fast` instead. It
+runs the same steps with agents deciding: the outline frame, a `variant-curator` subagent for the
+picks (written by `scripts/picks.py`), and capped lint fixes. It writes the same
+`applications/<slug>/` files plus `curation.json` and `fast-report.md`, so the user can switch back
+to guided curation on the same `variants.md` at any time. When the user says "curate <slug>" on an
+application fast mode produced, start at step 5 below and present the existing picks as defaults,
+with the curator's reason for each.
 
 ## Pipeline
 
@@ -103,4 +114,7 @@ is not in the evidence, say it is unsupported rather than fabricating it.
   check, optional `TYPESAFE_API_KEY`), `leaks.py` (glossary leak check), `glossary_check.py` (glossary rows and the master-resume lines naming a term, for `/grimoire`), `extract_text.py` (docx ingest), `export_docs.py` (PDF/docx
   export).
 - **`agents/variant-generator.md`** (plugin agent) — the per-unit generator.
+- **`agents/variant-curator.md`** (plugin agent) — fast mode's stand-in for the user at curation.
+- **`scripts/picks.py`** — writes a `curation.json`'s choices into `variants.md` as picks.
+- Fast mode: the `/conjurer:fast` command.
 - Workspace setup: the `/conjurer:grimoire` and `/conjurer:master-resume` commands.

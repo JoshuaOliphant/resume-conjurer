@@ -38,6 +38,22 @@ Ask Claude to tailor your resume for a job ("conjure variants for this role" + p
 conjurer skill runs the pipeline: outline -> variants (in parallel) -> curate with you -> stitch ->
 lint -> export. Output lands in `applications/<slug>/`.
 
+### Fast mode
+
+When you want drafts now and taste later, run the same pipeline with agents making the calls:
+
+```
+/conjurer:fast path/to/jd.txt globex-staff-platform
+```
+
+It picks the strategic frame, generates the variants, has a `variant-curator` agent choose one per
+unit using your grimoire plus the claim and glossary checks, fixes lint findings by rewording only,
+and exports. It never asks you anything along the way and never invents a claim. Alongside the
+usual files it writes `curation.json` (every pick with its reason) and `fast-report.md`, which leads
+with the units worth your eyes. The picks are ordinary `- [x] Pick` lines in `variants.md`, so you
+can swap any of them and re-stitch, or say "curate globex-staff-platform" to walk the guided
+curation over the same variants.
+
 ## Example walkthrough
 
 Start in a folder that holds your current resume and launch Claude Code there:

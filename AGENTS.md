@@ -17,7 +17,9 @@ contract that keeps them interchangeable:
   as `OUTLINE_SCHEMA` in `web/app/schemas.py`.
 - `variants.md` — the `## Unit:` / `### Variant N` block format from `agents/variant-generator.md`.
   `stitch.py` parses it, so it is also **the single source of truth for the user's picks**
-  (`- [x] Pick`, exactly one per unit). Never introduce a second pick store.
+  (`- [x] Pick`, exactly one per unit). Never introduce a second pick store. Fast mode's
+  `curation.json` records the curator agent's reasons; `picks.py` writes its choices into
+  `variants.md`, and nothing reads picks back out of it.
 - `support.json` — the claim check's verdicts, schema in the "Claim check" section of
   `pipeline.md`, mirrored as `SUPPORT_SCHEMA` in `web/app/schemas.py`. A row applies only while
   its fingerprint (`verify.fingerprint`) matches the variant's text, cited lines, and the glossary

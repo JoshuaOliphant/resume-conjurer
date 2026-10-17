@@ -164,6 +164,31 @@ skipped with a `Glossary line N: ...` warning on stderr.
 Present variants conversationally, one unit at a time or grouped. When the user chooses, edit
 `variants.md` so exactly one variant per unit reads `- [x] Pick`. Exactly one pick per unit.
 
+## Fast mode curation
+
+`/conjurer:fast` replaces the conversation above with one `variant-curator` subagent. It returns
+JSON, which fast mode saves as `<app_dir>/curation.json`:
+
+```json
+{
+  "picks": {"cover_letter.opening": 2, "resume.acme.platform.bullet_1": 1},
+  "reasons": {"cover_letter.opening": "...", "resume.acme.platform.bullet_1": "..."},
+  "needs_review": {"resume.acme.platform.bullet_1": "..."}
+}
+```
+
+`picks.py` is the only writer of those choices:
+
+```bash
+python3 <SKILL_DIR>/scripts/picks.py <app_dir> <app_dir>/curation.json
+```
+
+It reads only `picks` (unit_id to the `N` of `### Variant N`), rejects an unknown unit or a
+variant number the unit lacks before writing anything, and sets exactly one `- [x] Pick` in each
+named unit. A unit the JSON does not name keeps its existing pick. It exits 1 naming any unit still
+without a pick. `curation.json` is a record of why, never a second pick store: `variants.md` wins
+whenever the two disagree, for example after the user swaps a pick by hand.
+
 ## Stitch, lint, export (steps 6-8)
 
 ```bash
@@ -172,7 +197,8 @@ python3 <SKILL_DIR>/scripts/lint.py <app_dir> <workspace>
 python3 <SKILL_DIR>/scripts/export_docs.py <app_dir> pdf docx
 ```
 
-Stitch writes `cover_letter.md` and `resume.md`. Lint prints findings, including a `glossary-leak`
+Stitch writes `cover_letter.md` and `resume.md`, and refuses to replace them unless given
+`--overwrite` as a third argument. Lint prints findings, including a `glossary-leak`
 for any internal term from the Glossary in `<workspace>/grimoire.md`; fix any and re-run. Export
 produces PDF/docx via pandoc when installed, otherwise reports that the markdown is the deliverable.
 
