@@ -180,10 +180,11 @@ def stitch_app_dir(app_dir: Path, master_resume_path: Path, overwrite: bool = Fa
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
-        print("usage: python3 stitch.py <app_dir> <master_resume_path>", file=sys.stderr)
+    if len(sys.argv) not in (3, 4) or sys.argv[3:] not in ([], ["--overwrite"]):
+        print("usage: python3 stitch.py <app_dir> <master_resume_path> [--overwrite]", file=sys.stderr)
         raise SystemExit(2)
-    cover, resume = stitch_app_dir(Path(sys.argv[1]), Path(sys.argv[2]))
+    overwrite = sys.argv[3:] == ["--overwrite"]
+    cover, resume = stitch_app_dir(Path(sys.argv[1]), Path(sys.argv[2]), overwrite=overwrite)
     print(f"Wrote {cover}")
     print(f"Wrote {resume}")
 

@@ -158,3 +158,12 @@ def test_stitch_cli_reports_usage_and_written_paths(tmp_path, monkeypatch, capsy
     stitch.main()
     assert capsys.readouterr().out == f"Wrote {app / 'cover_letter.md'}\nWrote {app / 'resume.md'}\n"
     assert (app / "resume.md").exists()
+
+    monkeypatch.setattr(sys, "argv", ["stitch.py", str(app), str(master), "--force"])
+    with pytest.raises(SystemExit, match="2"):
+        stitch.main()
+
+    (app / "variants.md").write_text(VARIANTS_MD.replace("Architected", "Rebuilt"))
+    monkeypatch.setattr(sys, "argv", ["stitch.py", str(app), str(master), "--overwrite"])
+    stitch.main()
+    assert "Rebuilt the platform migration." in (app / "resume.md").read_text()
