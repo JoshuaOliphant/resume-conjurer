@@ -52,7 +52,9 @@ they are available whenever the conjurer plugin is installed.
 
 The pipeline below is guided: the user picks every variant. When the user wants speed over
 involvement ("fast mode", "just run it", "skip the curation"), follow `/conjurer:fast` instead. It
-runs the same steps with agents deciding: the outline frame, a `variant-curator` subagent for the
+first runs a fit gate (`scripts/fit.py`) that stops a job the evidence cannot serve before any
+variant work, unless the user passes `--force`. It then runs the same steps with agents deciding:
+the outline frame, a `variant-curator` subagent for the
 picks (written by `scripts/picks.py`), and capped lint fixes. It writes the same
 `applications/<slug>/` files plus `curation.json` and `fast-report.md`, so the user can switch back
 to guided curation on the same `variants.md` at any time. When the user says "curate <slug>" on an
@@ -116,5 +118,6 @@ is not in the evidence, say it is unsupported rather than fabricating it.
 - **`agents/variant-generator.md`** (plugin agent) — the per-unit generator.
 - **`agents/variant-curator.md`** (plugin agent) — fast mode's stand-in for the user at curation.
 - **`scripts/picks.py`** — writes a `curation.json`'s choices into `variants.md` as picks.
+- **`scripts/fit.py`** — fast mode's fit gate: scores `fit.json`'s must-have assessment, pass or stop.
 - Fast mode: the `/conjurer:fast` command.
 - Workspace setup: the `/conjurer:grimoire` and `/conjurer:master-resume` commands.
