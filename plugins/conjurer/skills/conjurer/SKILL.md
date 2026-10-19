@@ -100,6 +100,11 @@ with the curator's reason for each.
    `python3 <SKILL_DIR>/scripts/export_docs.py applications/<slug> pdf docx`. This uses `pandoc`
    if it is installed; if not, it reports that the markdown sources are the deliverable. Tell the
    user which outputs were written or skipped.
+9. **Track the outcome**: when the user sends the application, log it with
+   `python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> applied`, and log each later
+   response (`screen`, `interview`, `offer`, `rejected`, `withdrawn`) as it happens. This is what
+   lets `/conjurer:outcome report` show which strategic frames and which mode (fast or guided) get
+   callbacks. Offer it at the end of every run, fast or guided.
 
 ## Claim discipline
 
@@ -118,3 +123,4 @@ is not in the evidence, say it is unsupported rather than fabricating it.
 - **`scripts/picks.py`** — writes a `curation.json`'s choices into `variants.md` as picks.
 - Fast mode: the `/conjurer:fast` command.
 - Workspace setup: the `/conjurer:grimoire` and `/conjurer:master-resume` commands.
+- Outcomes: the `/conjurer:outcome` command over `scripts/outcomes.py` (`outcome.json` per application).

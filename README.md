@@ -54,6 +54,21 @@ with the units worth your eyes. The picks are ordinary `- [x] Pick` lines in `va
 can swap any of them and re-stitch, or say "curate globex-staff-platform" to walk the guided
 curation over the same variants.
 
+### Callback tracking
+
+Variants are a guess until an employer answers. Log what happens to each application and Conjurer
+reports callback rate by strategic frame and by mode:
+
+```
+/conjurer:outcome globex-staff-platform applied
+/conjurer:outcome globex-staff-platform screen 2026-10-24 recruiter call
+/conjurer:outcome report
+```
+
+Each application keeps an event log in `applications/<slug>/outcome.json`, and logging `applied`
+fingerprints the resume and cover letter that went out. Applications you made before Conjurer can
+be logged too (`--manual`), which gives the pipeline a baseline to beat.
+
 ## Example walkthrough
 
 Start in a folder that holds your current resume and launch Claude Code there:
