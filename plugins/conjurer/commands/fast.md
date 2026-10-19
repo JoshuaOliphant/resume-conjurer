@@ -103,8 +103,9 @@ re-stitch. Nothing fast mode does is a dead end.
 8. **Check the picks.** `python3 <SKILL_DIR>/scripts/verify.py applications/<slug> <workspace> --picks`.
    Any picked line it flags goes in the report's review list; do not reword it further.
 
-9. **Export.** `python3 <SKILL_DIR>/scripts/export_docs.py applications/<slug> pdf docx`. If pandoc
-   is missing, the markdown is the deliverable.
+9. **Export.** `python3 <SKILL_DIR>/scripts/export_docs.py applications/<slug> pdf docx`. It prints
+   one line per target; a target pandoc could not write (pandoc missing, or no PDF engine) reads
+   `skipped`, and the markdown stays the deliverable for it. Report each line as given.
 
 10. **Report.** Write `applications/<slug>/fast-report.md`:
 
