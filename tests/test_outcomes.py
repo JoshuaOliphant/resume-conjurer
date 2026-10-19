@@ -11,15 +11,48 @@ import outcomes
 D = date.fromisoformat
 
 
+VARIANTS_MD = """# Conjurer Variants
+
+## Unit: cover_letter.opening
+<!-- conjurer:unit id=cover_letter.opening -->
+
+### Variant 1: master-resume.md L3
+
+First wording.
+
+- [{one}] Pick
+
+### Variant 2: master-resume.md L3
+
+Second wording.
+
+- [{two}] Pick
+
+## Unit: cover_letter.closing
+<!-- conjurer:unit id=cover_letter.closing -->
+
+### Variant 1: master-resume.md L4
+
+Closing.
+
+- [ ] Pick
+"""
+
+
+def write_variants(app, pick):
+    marks = {"one": "x" if pick == 1 else " ", "two": "x" if pick == 2 else " "}
+    (app / "variants.md").write_text(VARIANTS_MD.format(**marks))
+
+
 def make_app(workspace, slug, *, frame=None, mode="guided"):
     app = workspace / "applications" / slug
     app.mkdir(parents=True)
     if frame:
         (app / "outline.json").write_text(json.dumps({"strategic_frame": frame}))
     if mode in ("guided", "fast"):
-        (app / "variants.md").write_text("# Conjurer Variants\n")
+        write_variants(app, 1)
     if mode == "fast":
-        (app / "curation.json").write_text('{"picks": {}}')
+        (app / "curation.json").write_text(json.dumps({"picks": {"cover_letter.opening": 1}}))
     return app
 
 
@@ -98,6 +131,37 @@ def test_log_missing_application_needs_manual(tmp_path):
     assert path == tmp_path / "applications" / "workday" / "outcome.json"
 
 
+# --- selection mode / snapshot --------------------------------------------
+
+
+def test_selection_mode_fast_when_every_pick_is_the_curators(tmp_path):
+    app = make_app(tmp_path, "a", mode="fast")
+    assert outcomes.selection_mode(app) == "fast"
+
+
+def test_selection_mode_fast_plus_guided_after_a_takeover_changes_a_pick(tmp_path):
+    app = make_app(tmp_path, "a", mode="fast")
+    write_variants(app, 2)
+    assert outcomes.selection_mode(app) == "fast+guided"
+
+
+def test_selection_mode_guided_and_manual(tmp_path):
+    assert outcomes.selection_mode(make_app(tmp_path, "g")) == "guided"
+    assert outcomes.selection_mode(make_app(tmp_path, "m", mode="manual")) == "manual"
+
+
+def test_attribution_is_snapshotted_at_applied(tmp_path):
+    app = make_app(tmp_path, "a", frame="conviction", mode="fast")
+    log(tmp_path, "a", "applied", "2026-10-01")
+    log(tmp_path, "a", "screen", "2026-10-03")
+    (app / "outline.json").write_text(json.dumps({"strategic_frame": "scale"}))
+    write_variants(app, 2)
+    (app / "curation.json").unlink()
+
+    [result] = outcomes.load_applications(tmp_path, D("2026-10-05"), 21)
+    assert (result.frame, result.mode, result.result) == ("conviction", "fast", "callback")
+
+
 # --- classify / load_applications -----------------------------------------
 
 
@@ -109,6 +173,7 @@ def test_log_missing_application_needs_manual(tmp_path):
         (["applied", "rejected"], "2026-10-02", "no_callback"),
         (["applied"], "2026-10-22", "pending"),
         (["applied"], "2026-10-23", "no_callback"),
+        (["applied"], "2026-09-30", None),
     ],
 )
 def test_classify(statuses, as_of, expected):
@@ -116,14 +181,22 @@ def test_classify(statuses, as_of, expected):
     assert outcomes.classify(events, D(as_of), 21) == expected
 
 
-def test_load_applications_reads_frame_and_mode(tmp_path):
+@pytest.mark.parametrize("later", ["screen", "rejected", "withdrawn"])
+def test_classify_ignores_events_after_the_cutoff(later):
+    events = [{"date": "2026-10-01", "status": "applied"}, {"date": "2026-10-24", "status": later}]
+    assert outcomes.classify(events, D("2026-10-10"), 21) == "pending"
+
+
+def test_load_applications_reads_the_snapshot_and_skips_unsent(tmp_path):
     make_app(tmp_path, "a-fast", frame="conviction", mode="fast")
     make_app(tmp_path, "b-guided", frame="multiplier")
     make_app(tmp_path, "c-not-applied")
     make_app(tmp_path, "d-no-frame")
+    make_app(tmp_path, "f-applied-later")
     for slug in ("a-fast", "b-guided", "d-no-frame"):
         log(tmp_path, slug, "applied", "2026-10-01")
     log(tmp_path, "e-manual", "applied", "2026-10-01", manual=True)
+    log(tmp_path, "f-applied-later", "applied", "2026-10-09")
     (tmp_path / "applications" / "c-not-applied" / "outcome.json").write_text("{}")
 
     apps = outcomes.load_applications(tmp_path, D("2026-10-05"), 21)

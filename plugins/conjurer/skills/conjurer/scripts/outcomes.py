@@ -9,20 +9,25 @@
 
     {"events": [{"date": "2026-10-19", "status": "applied"},
                 {"date": "2026-10-24", "status": "screen", "note": "recruiter call"}],
+     "variant": {"frame": "conviction", "mode": "fast"},
      "sent": {"resume.md": "<sha256>", "cover_letter.md": "<sha256>"}}
 
-`sent` fingerprints the stitched documents when `applied` is logged, so a later re-stitch cannot
-quietly change which text the outcome belongs to.
+Logging `applied` snapshots what went out: `variant` records the frame and selection mode, and
+`sent` fingerprints the stitched documents. The report reads the snapshot, never the current
+directory, so editing `outline.json` or re-curating after submission cannot move an outcome into
+another group.
 
 An application is a **callback** once it reaches `screen`, `interview`, or `offer`. It counts
 against the rate when it was `rejected`, or when it has sat at `applied` for longer than the
 silence window (21 days by default). Until then it is pending, and `withdrawn` without a callback
 leaves the denominator, because the user stopped the experiment, not the employer.
 
-The report groups applications by the variant that went out: the outline's strategic frame, and
-the mode that picked the lines (`fast` when `curation.json` exists, `guided` when only
-`variants.md` does, `manual` for an application made outside the pipeline and logged with
-`--manual`).
+The report groups applications by that snapshot: the outline's strategic frame, and the mode that
+picked the lines. `fast` means every pick in `variants.md` is still the curator's choice from
+`curation.json`; `fast+guided` means the user took over and changed at least one; `guided` means
+there was no curator; `manual` is an application made outside the pipeline (`--manual`).
+
+`--as-of` reports the state on that date: later events and later applications are ignored.
 """
 
 import argparse
@@ -32,6 +37,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+
+from stitch import parse_variants_md
 
 STATUSES = ("applied", "screen", "interview", "offer", "rejected", "withdrawn")
 CALLBACK_STATUSES = {"screen", "interview", "offer"}
@@ -61,6 +68,28 @@ def add_event(record: dict, status: str, when: date, note: str | None = None) ->
     return {**record, "events": [*events, event]}
 
 
+def selection_mode(app_dir: Path) -> str:
+    """Who chose the lines in variants.md: the curator agent, the user, or both."""
+    variants = app_dir / "variants.md"
+    if not variants.exists():
+        return "manual"
+    curation = app_dir / "curation.json"
+    if not curation.exists():
+        return "guided"
+    curator = json.loads(curation.read_text()).get("picks", {})
+    for unit in parse_variants_md(variants.read_text()):
+        pick = unit.picked
+        if pick is not None and curator.get(unit.unit_id) != pick.n:
+            return "fast+guided"
+    return "fast"
+
+
+def snapshot_variant(app_dir: Path) -> dict:
+    outline = app_dir / "outline.json"
+    frame = json.loads(outline.read_text()).get("strategic_frame", "none") if outline.exists() else "none"
+    return {"frame": frame, "mode": selection_mode(app_dir)}
+
+
 def log_outcome(
     workspace: Path, slug: str, status: str, when: date, note: str | None = None, manual: bool = False
 ) -> Path:
@@ -76,6 +105,7 @@ def log_outcome(
     record = json.loads(path.read_text()) if path.exists() else {}
     record = add_event(record, status, when, note)
     if status == "applied":
+        record["variant"] = snapshot_variant(app_dir)
         sent = {name: _fingerprint(app_dir / name) for name in SENT_DOCUMENTS if (app_dir / name).exists()}
         if sent:
             record["sent"] = sent
@@ -91,8 +121,12 @@ class Application:
     result: str  # callback | no_callback | pending | withdrawn
 
 
-def classify(events: list[dict], as_of: date, silence_days: int) -> str:
+def classify(events: list[dict], as_of: date, silence_days: int) -> str | None:
+    """The application's result as of a date, or None when it had not been sent by then."""
+    events = [e for e in events if date.fromisoformat(e["date"]) <= as_of]
     statuses = {e["status"] for e in events}
+    if "applied" not in statuses:
+        return None
     if statuses & CALLBACK_STATUSES:
         return "callback"
     if "withdrawn" in statuses:
@@ -106,19 +140,12 @@ def classify(events: list[dict], as_of: date, silence_days: int) -> str:
 def load_applications(workspace: Path, as_of: date, silence_days: int) -> list[Application]:
     apps = []
     for path in sorted((workspace / "applications").glob("*/outcome.json")):
-        app_dir = path.parent
-        events = json.loads(path.read_text()).get("events", [])
-        if not any(e["status"] == "applied" for e in events):
+        record = json.loads(path.read_text())
+        result = classify(record.get("events", []), as_of, silence_days)
+        if result is None:
             continue
-        outline = app_dir / "outline.json"
-        frame = json.loads(outline.read_text()).get("strategic_frame", "none") if outline.exists() else "none"
-        if (app_dir / "curation.json").exists():
-            mode = "fast"
-        elif (app_dir / "variants.md").exists():
-            mode = "guided"
-        else:
-            mode = "manual"
-        apps.append(Application(app_dir.name, frame, mode, classify(events, as_of, silence_days)))
+        variant = record["variant"]
+        apps.append(Application(path.parent.name, variant["frame"], variant["mode"], result))
     return apps
 
 

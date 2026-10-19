@@ -217,20 +217,27 @@ python3 <SKILL_DIR>/scripts/outcomes.py report <workspace> [--as-of YYYY-MM-DD] 
     {"date": "2026-10-19", "status": "applied"},
     {"date": "2026-10-24", "status": "screen", "note": "recruiter call"}
   ],
+  "variant": {"frame": "conviction", "mode": "fast"},
   "sent": {"resume.md": "<sha256>", "cover_letter.md": "<sha256>"}
 }
 ```
 
 Statuses: `applied`, `screen`, `interview`, `offer`, `rejected`, `withdrawn`. `applied` comes
-first and only once, and dates never go backwards. `sent` fingerprints the stitched documents when
-`applied` is logged, so a later re-stitch cannot change which text an outcome belongs to.
+first and only once, and dates never go backwards. Logging `applied` snapshots what went out:
+`variant` holds the strategic frame and selection mode, and `sent` fingerprints the stitched
+documents. The report reads only the snapshot, so editing `outline.json`, re-curating, or
+re-stitching after submission cannot move an outcome into another group.
 
 The report counts a **callback** when an application reaches `screen`, `interview`, or `offer`.
 `rejected`, or more than `--silence-days` at `applied`, is a decided no; younger silent
 applications are pending and stay out of the rate, and `withdrawn` without a callback leaves the
-denominator. Applications are grouped by `outline.json`'s `strategic_frame` and by mode: `fast`
-(`curation.json` exists), `guided` (`variants.md` only), or `manual` (logged with `--manual` for an
-application made outside the pipeline).
+denominator. `--as-of` reports the state on that date, ignoring later events and applications.
+
+Applications are grouped by the snapshot's frame (`outline.json`'s `strategic_frame`) and mode:
+`fast` (every pick in `variants.md` is still the curator's choice in `curation.json`),
+`fast+guided` (the user took over a fast run and changed at least one pick), `guided` (no curator),
+or `manual` (logged with `--manual` for an application made outside the pipeline). Log `applied`
+after the final stitch, so the snapshot sees the picks that were sent.
 
 ## Ingesting an existing resume (first-run bootstrap)
 
