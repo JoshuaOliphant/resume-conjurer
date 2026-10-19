@@ -68,3 +68,23 @@ def test_lines_rejects_a_term_missing_from_the_glossary(workspace, capsys):
         glossary_check.main(["lines", str(workspace), "Ledgerline"])
 
     assert "Ledgerline is not an internal term in the Glossary" in capsys.readouterr().err
+
+
+def test_units_prints_each_resume_unit_whose_bullet_names_a_term(workspace, capsys):
+    glossary_check.main(["units", str(workspace)])
+
+    assert capsys.readouterr() == (
+        "resume.initech.messaging_platform.bullet_1\tMailAPI\n"
+        "resume.initech.messaging_platform.bullet_2\tMailAPI\n"
+        "resume.initech.messaging_platform.bullet_3\tsyseng-oncall\n",
+        "",
+    )
+
+
+def test_units_prints_nothing_when_no_bullet_names_a_term(workspace, capsys):
+    (workspace / "master-resume.md").write_text(MASTER_RESUME.replace("MailAPI,", "the API,").replace(
+        "mail-api", "email").replace("syseng-oncall", "an on-call assistant"))
+
+    glossary_check.main(["units", str(workspace)])
+
+    assert capsys.readouterr() == ("", "")
