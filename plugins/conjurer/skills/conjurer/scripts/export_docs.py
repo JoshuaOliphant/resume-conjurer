@@ -1,5 +1,5 @@
 # ABOUTME: Exports the stitched cover_letter.md and resume.md to PDF/docx via pandoc if installed.
-# ABOUTME: Falls back to a clear message when pandoc is absent; no hard dependency.
+# ABOUTME: Falls back to a clear message when pandoc is absent or fails on a format; no hard dependency.
 import shutil
 import subprocess
 import sys
@@ -17,7 +17,9 @@ def export_app_dir(app_dir: Path, formats=("pdf", "docx")) -> dict:
 
     Returns a dict mapping output filename -> "written" | "skipped: <reason>".
     When pandoc is not installed, every target is skipped with that reason and no
-    exception is raised; the markdown sources remain the deliverable.
+    exception is raised; the markdown sources remain the deliverable. A format pandoc
+    fails on (PDF with no LaTeX engine installed, say) is skipped with pandoc's last
+    stderr line, and the remaining targets are still exported.
     """
     results: dict[str, str] = {}
     have_pandoc = pandoc_available()
@@ -30,8 +32,12 @@ def export_app_dir(app_dir: Path, formats=("pdf", "docx")) -> dict:
             if not have_pandoc:
                 results[out.name] = "skipped: pandoc not installed (markdown source kept)"
                 continue
-            subprocess.run(["pandoc", str(src), "-o", str(out)], check=True)
-            results[out.name] = "written"
+            done = subprocess.run(["pandoc", str(src), "-o", str(out)], capture_output=True, text=True)
+            if done.returncode == 0:
+                results[out.name] = "written"
+            else:
+                reason = (done.stderr.strip().splitlines() or [f"exit status {done.returncode}"])[-1]
+                results[out.name] = f"skipped: pandoc failed ({reason})"
     return results
 
 

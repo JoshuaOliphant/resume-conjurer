@@ -45,7 +45,10 @@ For **resume bullet** units:
 ## Output Format (exact — the stitcher parses this)
 
 Return exactly this block for your unit, with N variants. Cover letter units output prose
-paragraphs; resume units output a single bullet starting with `- ` and an action verb.
+paragraphs; resume units output a single bullet starting with `- ` and an action verb. When the
+master-resume bullet the unit replaces opens with a bold label (for example
+``**Jean Claude** (`jean-claude`):``), keep that label verbatim between `- ` and the action verb, so
+the stitched bullet matches its untouched neighbors.
 
 ```
 ## Unit: <unit_id>

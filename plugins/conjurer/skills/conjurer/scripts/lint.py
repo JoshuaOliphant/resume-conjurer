@@ -50,7 +50,8 @@ DISCLAIMER_RES = [
     re.compile(r"\bin my humble opinion\b", re.IGNORECASE),
 ]
 
-WE_LETS_RE = re.compile(r"\b(we|we'?ll|we'?ve|we are|let'?s)\b", re.IGNORECASE)
+# Contractions need their apostrophe: without it, "we'll" and "let's" match "well" and "lets".
+WE_LETS_RE = re.compile(r"\b(we|we['’]ll|we['’]ve|we are|let['’]s)\b", re.IGNORECASE)
 
 BUZZWORDS = [
     "synergy",

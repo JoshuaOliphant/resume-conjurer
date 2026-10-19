@@ -65,3 +65,37 @@ def test_export_cli_reports_each_target(tmp_path, monkeypatch, capsys):
     export_docs.main()
 
     assert capsys.readouterr().out == "resume.docx: skipped: pandoc not installed (markdown source kept)\n"
+
+
+def test_export_skips_a_format_pandoc_fails_on_and_keeps_going(tmp_path, monkeypatch):
+    pandoc = tmp_path / "pandoc"
+    pandoc.write_text(
+        "#!/bin/sh\n"
+        'case "$3" in *.pdf) echo "pdflatex not found." >&2; exit 47;; esac\n'
+        "printf '%s' \"$1\" > \"$3\"\n"
+    )
+    pandoc.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "resume.md").write_text("Resume")
+
+    results = export_docs.export_app_dir(app, formats=("pdf", "docx"))
+
+    assert results == {
+        "resume.pdf": "skipped: pandoc failed (pdflatex not found.)",
+        "resume.docx": "written",
+    }
+    assert not (app / "resume.pdf").exists()
+
+
+def test_export_names_the_exit_status_when_pandoc_fails_silently(tmp_path, monkeypatch):
+    pandoc = tmp_path / "pandoc"
+    pandoc.write_text("#!/bin/sh\nexit 3\n")
+    pandoc.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    (tmp_path / "resume.md").write_text("Resume")
+
+    results = export_docs.export_app_dir(tmp_path, formats=("pdf",))
+
+    assert results == {"resume.pdf": "skipped: pandoc failed (exit status 3)"}

@@ -50,6 +50,13 @@ re-stitch. Nothing fast mode does is a dead end.
    strategic frame yourself, using the grimoire's guidance on which frame fits which kind of
    company. Use only unit ids that `composer.resume_unit_ids` would return.
 
+   Then run `python3 <SKILL_DIR>/scripts/glossary_check.py units <workspace>` and add every unit it
+   prints to `resume_units`, if the outline does not already target it, with a description telling
+   the generator to use the glossary's public description. Each printed unit is a master-resume
+   bullet that names an internal term; a bullet no unit targets is copied into `resume.md`
+   verbatim, and fast mode never edits the master resume, so targeting it is the only way the leak
+   leaves the resume.
+
 4. **Variants.** Same as step 4 of the conjurer skill: one `variant-generator` subagent per unit,
    N = 4, all dispatched in a single tool-use block so they run in parallel. Assemble
    `variants.md`. If a unit's block does not parse (no `## Unit:` marker or no `### Variant`
@@ -96,8 +103,9 @@ re-stitch. Nothing fast mode does is a dead end.
 8. **Check the picks.** `python3 <SKILL_DIR>/scripts/verify.py applications/<slug> <workspace> --picks`.
    Any picked line it flags goes in the report's review list; do not reword it further.
 
-9. **Export.** `python3 <SKILL_DIR>/scripts/export_docs.py applications/<slug> pdf docx`. If pandoc
-   is missing, the markdown is the deliverable.
+9. **Export.** `python3 <SKILL_DIR>/scripts/export_docs.py applications/<slug> pdf docx`. It prints
+   one line per target; a target pandoc could not write (pandoc missing, or no PDF engine) reads
+   `skipped`, and the markdown stays the deliverable for it. Report each line as given.
 
 10. **Report.** Write `applications/<slug>/fast-report.md`:
 
