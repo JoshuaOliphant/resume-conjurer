@@ -26,6 +26,17 @@ def test_first_person_plural_flagged():
     assert any(f.rule == "first_person_plural" for f in findings)
 
 
+@pytest.mark.parametrize("text", ["Let's build it.", "We’ll ship it.", "We've shipped it."])
+def test_first_person_plural_contractions_flagged(text):
+    findings = lint.lint_text(text, source=Path("x.md"))
+    assert any(f.rule == "first_person_plural" for f in findings)
+
+
+def test_lets_and_well_without_an_apostrophe_are_not_first_person_plural():
+    findings = lint.lint_text("The platform lets teams ship, and it worked well.", source=Path("x.md"))
+    assert not any(f.rule == "first_person_plural" for f in findings)
+
+
 def test_cover_letter_length_flagged():
     text = " ".join(["word"] * 400)
     findings = lint.lint_text(text, source=Path("x.md"), is_cover_letter=True)
