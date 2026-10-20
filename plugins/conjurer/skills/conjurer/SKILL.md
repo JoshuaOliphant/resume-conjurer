@@ -102,11 +102,12 @@ with the curator's reason for each.
    `python3 <SKILL_DIR>/scripts/export_docs.py applications/<slug> pdf docx`. This uses `pandoc`
    if it is installed; if not, it reports that the markdown sources are the deliverable. Tell the
    user which outputs were written or skipped.
-9. **Track the outcome**: when the user sends the application, log it with
-   `python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> applied`, and log each later
-   response (`screen`, `interview`, `offer`, `rejected`, `withdrawn`) as it happens. This is what
-   lets `/conjurer:outcome report` show which strategic frames and which mode (fast or guided) get
-   callbacks. Offer it at the end of every run, fast or guided.
+9. **Track the outcome**: only after the user says they submitted the application, log it with
+   `python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> applied --date <submit date>`,
+   and log each later response (`screen`, `interview`, `offer`, `rejected`, `withdrawn`) as the
+   user reports it. Logging is record-keeping: it never submits anything or contacts an employer,
+   and finishing a run is not a reason to log `applied`. This is what lets
+   `/conjurer:outcome report` show which strategic frames, modes, and hand edits get callbacks.
 
 ## Claim discipline
 

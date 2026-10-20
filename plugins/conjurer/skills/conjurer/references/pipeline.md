@@ -205,7 +205,7 @@ produces PDF/docx via pandoc when installed, otherwise reports that the markdown
 ## Outcomes (step 9)
 
 ```bash
-python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> <status> [--date YYYY-MM-DD] [--note TEXT] [--manual]
+python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> <status> [--date YYYY-MM-DD] [--note TEXT] [--manual] [--sent-resume FILE] [--sent-cover-letter FILE]
 python3 <SKILL_DIR>/scripts/outcomes.py report <workspace> [--as-of YYYY-MM-DD] [--silence-days 21]
 ```
 
@@ -217,7 +217,7 @@ python3 <SKILL_DIR>/scripts/outcomes.py report <workspace> [--as-of YYYY-MM-DD] 
     {"date": "2026-10-19", "status": "applied"},
     {"date": "2026-10-24", "status": "screen", "note": "recruiter call"}
   ],
-  "variant": {"frame": "conviction", "mode": "fast"},
+  "variant": {"frame": "conviction", "mode": "fast", "edits": "hand-edited"},
   "sent": {"resume.md": "<sha256>", "cover_letter.md": "<sha256>"}
 }
 ```
@@ -236,8 +236,12 @@ denominator. `--as-of` reports the state on that date, ignoring later events and
 Applications are grouped by the snapshot's frame (`outline.json`'s `strategic_frame`) and mode:
 `fast` (every pick in `variants.md` is still the curator's choice in `curation.json`),
 `fast+guided` (the user took over a fast run and changed at least one pick), `guided` (no curator),
-or `manual` (logged with `--manual` for an application made outside the pipeline). Log `applied`
-after the final stitch, so the snapshot sees the picks that were sent.
+or `manual` (logged with `--manual` for an application made outside the pipeline). `edits` is `as stitched` when the sent documents still
+contain every picked variant word for word, `hand-edited` when any was reworded after stitching,
+and `n/a` without `variants.md`; the report has a third table for it. Log `applied` after the
+final edit, so the snapshot sees the text that was sent. When the submitted text differs from the stitched files,
+commit it into the application directory and name it with `--sent-resume` /
+`--sent-cover-letter`; `sent` then fingerprints those files and `edits` checks them.
 
 ## Ingesting an existing resume (first-run bootstrap)
 
