@@ -68,8 +68,12 @@ re-stitch. Nothing fast mode does is a dead end.
    `core: true` for the work the role exists to do: the subject of the title and the central
    responsibilities, not years of experience, degrees, or general traits. `status` is `met` when
    the evidence states it, `partial` when it shows adjacent or smaller-scale work, and `missing`
-   otherwise. `evidence` cites lines in the same grammar variants use. Judge with claim
+   otherwise; a skill the evidence only shows in an older role is `partial` at most, never current
+   fluency. `evidence` cites lines in the same grammar variants use. Judge with claim
    discipline: what the evidence states, never what the user could plausibly ramp into.
+
+   The gate is a cheap early stop for clear mismatches, not a role-fit review. A `pass` means
+   only that drafting is worth the cost; any separate fit review still happens on the drafts.
 
    ```bash
    python3 <SKILL_DIR>/scripts/fit.py applications/<slug> <workspace>
