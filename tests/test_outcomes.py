@@ -303,3 +303,34 @@ def test_edit_state_not_applicable_without_variants(tmp_path):
 def test_report_has_an_edits_table():
     apps = [outcomes.Application("a", "scale", "fast", "hand-edited", "callback")]
     assert "| hand-edited | 1 | 1 | 1 | 0 | 1/1 (100%) |" in outcomes.report(apps, D("2026-10-19"), 21)
+
+
+# --- sent-file overrides ---------------------------------------------------
+
+
+def test_log_fingerprints_and_checks_the_submitted_files_when_given(tmp_path):
+    app = make_app(tmp_path, "a")
+    (app / "cover_letter.md").write_text("Stitched.\n")
+    (app / "submitted-letter.md").write_text("First wording.\n")
+    path = log(tmp_path, "a", "applied", "2026-10-01", sent_files={"cover_letter": "submitted-letter.md"})
+    record = json.loads(path.read_text())
+    assert record["sent"] == {"submitted-letter.md": hashlib.sha256(b"First wording.\n").hexdigest()}
+    assert record["variant"]["edits"] == "as stitched"
+
+
+def test_log_rejects_a_missing_sent_file(tmp_path):
+    make_app(tmp_path, "a")
+    with pytest.raises(FileNotFoundError, match="Sent file .*nope.md does not exist"):
+        log(tmp_path, "a", "applied", "2026-10-01", sent_files={"resume": "nope.md"})
+
+
+def test_cli_sent_overrides(tmp_path, capsys):
+    app = make_app(tmp_path, "a")
+    (app / "sent-resume.md").write_text("r\n")
+    (app / "sent-letter.md").write_text("First wording.\n")
+    outcomes.main(
+        ["log", str(tmp_path), "a", "applied", "--date", "2026-10-01",
+         "--sent-resume", "sent-resume.md", "--sent-cover-letter", "sent-letter.md"]
+    )
+    record = json.loads((app / "outcome.json").read_text())
+    assert set(record["sent"]) == {"sent-resume.md", "sent-letter.md"}

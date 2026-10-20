@@ -29,6 +29,11 @@ python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> <status> [--date 
   after stitching, and fingerprints `resume.md` and `cover_letter.md`, so later edits to the
   application never change how this outcome is counted. Logging never submits or contacts
   anyone.
+- If what was submitted differs from `resume.md` or `cover_letter.md` (a PDF reworded after
+  export, a letter pasted into a form field), do not log against the stitched files. Commit the
+  submitted text into the application directory first, then pass
+  `--sent-resume <file>` and/or `--sent-cover-letter <file>` so the fingerprints and the edit check
+  use what actually went out. If the submitted text is not available yet, wait.
 - If the slug is not an application directory, list the slugs under `applications/` and ask which
   one was meant. For an application made before or outside conjurer, pass `--manual`; it creates
   `applications/<slug>/` holding only `outcome.json`, reported under mode `manual`.

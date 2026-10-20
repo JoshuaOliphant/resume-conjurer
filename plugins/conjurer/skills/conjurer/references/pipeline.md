@@ -205,7 +205,7 @@ produces PDF/docx via pandoc when installed, otherwise reports that the markdown
 ## Outcomes (step 9)
 
 ```bash
-python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> <status> [--date YYYY-MM-DD] [--note TEXT] [--manual]
+python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> <status> [--date YYYY-MM-DD] [--note TEXT] [--manual] [--sent-resume FILE] [--sent-cover-letter FILE]
 python3 <SKILL_DIR>/scripts/outcomes.py report <workspace> [--as-of YYYY-MM-DD] [--silence-days 21]
 ```
 
@@ -239,7 +239,9 @@ Applications are grouped by the snapshot's frame (`outline.json`'s `strategic_fr
 or `manual` (logged with `--manual` for an application made outside the pipeline). `edits` is `as stitched` when the sent documents still
 contain every picked variant word for word, `hand-edited` when any was reworded after stitching,
 and `n/a` without `variants.md`; the report has a third table for it. Log `applied` after the
-final edit, so the snapshot sees the text that was sent.
+final edit, so the snapshot sees the text that was sent. When the submitted text differs from the stitched files,
+commit it into the application directory and name it with `--sent-resume` /
+`--sent-cover-letter`; `sent` then fingerprints those files and `edits` checks them.
 
 ## Ingesting an existing resume (first-run bootstrap)
 
