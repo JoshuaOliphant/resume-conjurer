@@ -218,11 +218,11 @@ def test_report_with_no_outcomes():
 def test_report_rates_by_frame_and_mode():
     App = outcomes.Application
     apps = [
-        App("a", "conviction", "fast", "callback"),
-        App("b", "conviction", "fast", "no_callback"),
-        App("c", "multiplier", "guided", "pending"),
-        App("d", "multiplier", "guided", "withdrawn"),
-        App("e", "conviction", "guided", "callback"),
+        App("a", "conviction", "fast", "as stitched", "callback"),
+        App("b", "conviction", "fast", "as stitched", "no_callback"),
+        App("c", "multiplier", "guided", "hand-edited", "pending"),
+        App("d", "multiplier", "guided", "as stitched", "withdrawn"),
+        App("e", "conviction", "guided", "hand-edited", "callback"),
     ]
     text = outcomes.report(apps, D("2026-10-19"), 21)
     assert "| conviction | 3 | 2 | 3 | 0 | 2/3 (67%) |" in text
@@ -233,7 +233,7 @@ def test_report_rates_by_frame_and_mode():
 
 
 def test_report_omits_pending_line_when_nothing_is_pending():
-    apps = [outcomes.Application("a", "scale", "fast", "callback")]
+    apps = [outcomes.Application("a", "scale", "fast", "as stitched", "callback")]
     assert "Pending:" not in outcomes.report(apps, D("2026-10-19"), 21)
 
 
@@ -265,3 +265,41 @@ def test_cli_log_error_exits_1(tmp_path, capsys):
         outcomes.main(["log", str(tmp_path), "acme-sre", "offer"])
     assert exc.value.code == 1
     assert "Log 'applied' first" in capsys.readouterr().err
+
+
+# --- edit state ------------------------------------------------------------
+
+
+def test_edit_state_as_stitched_when_every_pick_is_in_the_sent_text(tmp_path):
+    app = make_app(tmp_path, "a")
+    (app / "cover_letter.md").write_text("First\n  wording.\n")
+    assert outcomes.edit_state(app) == "as stitched"
+
+
+def test_edit_state_hand_edited_when_a_pick_was_reworded(tmp_path):
+    app = make_app(tmp_path, "a")
+    (app / "cover_letter.md").write_text("A reworded opening.\n")
+    assert outcomes.edit_state(app) == "hand-edited"
+
+
+def test_edit_state_hand_edited_when_the_sent_document_is_missing(tmp_path):
+    assert outcomes.edit_state(make_app(tmp_path, "a")) == "hand-edited"
+
+
+def test_edit_state_checks_resume_picks_against_resume_md(tmp_path):
+    app = make_app(tmp_path, "a", mode="manual")
+    (app / "variants.md").write_text(
+        "## Unit: resume.acme.bullet_1\n<!-- conjurer:unit id=resume.acme.bullet_1 -->\n\n"
+        "### Variant 1: master-resume.md L8\n\n- Led the migration.\n\n- [x] Pick\n"
+    )
+    (app / "resume.md").write_text("# Resume\n\n- Led the migration.\n")
+    assert outcomes.edit_state(app) == "as stitched"
+
+
+def test_edit_state_not_applicable_without_variants(tmp_path):
+    assert outcomes.edit_state(make_app(tmp_path, "m", mode="manual")) == "n/a"
+
+
+def test_report_has_an_edits_table():
+    apps = [outcomes.Application("a", "scale", "fast", "hand-edited", "callback")]
+    assert "| hand-edited | 1 | 1 | 1 | 0 | 1/1 (100%) |" in outcomes.report(apps, D("2026-10-19"), 21)

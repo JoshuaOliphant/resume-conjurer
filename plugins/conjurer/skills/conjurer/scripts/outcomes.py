@@ -26,6 +26,9 @@ The report groups applications by that snapshot: the outline's strategic frame, 
 picked the lines. `fast` means every pick in `variants.md` is still the curator's choice from
 `curation.json`; `fast+guided` means the user took over and changed at least one; `guided` means
 there was no curator; `manual` is an application made outside the pipeline (`--manual`).
+Separately, `edits` records whether the sent documents still contain every picked variant
+verbatim (`as stitched`) or were reworded by hand after stitching (`hand-edited`), so a fast run
+the user polished is not credited to the curator alone.
 
 `--as-of` reports the state on that date: later events and later applications are ignored.
 """
@@ -38,7 +41,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from stitch import parse_variants_md
+from stitch import COVER_LETTER_PREFIX, parse_variants_md
 
 STATUSES = ("applied", "screen", "interview", "offer", "rejected", "withdrawn")
 CALLBACK_STATUSES = {"screen", "interview", "offer"}
@@ -84,10 +87,33 @@ def selection_mode(app_dir: Path) -> str:
     return "fast"
 
 
+def _squash(text: str) -> str:
+    return " ".join(text.split())
+
+
+def edit_state(app_dir: Path) -> str:
+    """Whether the sent documents still hold every picked variant word for word."""
+    variants = app_dir / "variants.md"
+    if not variants.exists():
+        return "n/a"
+    sent = {
+        name: _squash((app_dir / name).read_text()) if (app_dir / name).exists() else ""
+        for name in SENT_DOCUMENTS
+    }
+    for unit in parse_variants_md(variants.read_text()):
+        pick = unit.picked
+        if pick is None:
+            continue
+        doc = "cover_letter.md" if unit.unit_id.startswith(COVER_LETTER_PREFIX) else "resume.md"
+        if _squash(pick.content) not in sent[doc]:
+            return "hand-edited"
+    return "as stitched"
+
+
 def snapshot_variant(app_dir: Path) -> dict:
     outline = app_dir / "outline.json"
     frame = json.loads(outline.read_text()).get("strategic_frame", "none") if outline.exists() else "none"
-    return {"frame": frame, "mode": selection_mode(app_dir)}
+    return {"frame": frame, "mode": selection_mode(app_dir), "edits": edit_state(app_dir)}
 
 
 def log_outcome(
@@ -118,6 +144,7 @@ class Application:
     slug: str
     frame: str
     mode: str
+    edits: str
     result: str  # callback | no_callback | pending | withdrawn
 
 
@@ -145,7 +172,7 @@ def load_applications(workspace: Path, as_of: date, silence_days: int) -> list[A
         if result is None:
             continue
         variant = record["variant"]
-        apps.append(Application(path.parent.name, variant["frame"], variant["mode"], result))
+        apps.append(Application(path.parent.name, variant["frame"], variant["mode"], variant["edits"], result))
     return apps
 
 
@@ -181,6 +208,7 @@ def report(apps: list[Application], as_of: date, silence_days: int) -> str:
         "",
         *_table("frame", apps, "frame"),
         *_table("mode", apps, "mode"),
+        *_table("edits", apps, "edits"),
     ]
     pending = [app.slug for app in apps if app.result == "pending"]
     if pending:

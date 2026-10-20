@@ -23,10 +23,12 @@ Date defaults to today.
 python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> <status> [--date YYYY-MM-DD] [--note "..."]
 ```
 
-- Log `applied` on the day the documents go out, after the final stitch. It snapshots the
-  strategic frame and selection mode (`fast`, `fast+guided` when the user changed any of the
-  curator's picks, `guided`, or `manual`) and fingerprints `resume.md` and `cover_letter.md`, so
-  later edits to the application never change how this outcome is counted.
+- Log `applied` only when the user says the application went out, with the date they give. It
+  snapshots the strategic frame, the selection mode (`fast`, `fast+guided` when the user changed
+  any of the curator's picks, `guided`, or `manual`), and whether the sent text was hand-edited
+  after stitching, and fingerprints `resume.md` and `cover_letter.md`, so later edits to the
+  application never change how this outcome is counted. Logging never submits or contacts
+  anyone.
 - If the slug is not an application directory, list the slugs under `applications/` and ask which
   one was meant. For an application made before or outside conjurer, pass `--manual`; it creates
   `applications/<slug>/` holding only `outcome.json`, reported under mode `manual`.
