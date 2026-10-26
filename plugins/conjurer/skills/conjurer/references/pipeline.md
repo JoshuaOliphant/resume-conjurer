@@ -202,6 +202,28 @@ Stitch writes `cover_letter.md` and `resume.md`, and refuses to replace them unl
 for any internal term from the Glossary in `<workspace>/grimoire.md`; fix any and re-run. Export
 produces PDF/docx via pandoc when installed, otherwise reports that the markdown is the deliverable.
 
+### Parse check (step 8b)
+
+```bash
+python3 <SKILL_DIR>/scripts/parse_check.py <app_dir>
+```
+
+Screeners (Ashby, Greenhouse Talent Matching, Workday HiredScore, iCIMS, Lever) score the text a
+parser extracts from the uploaded file. This reads `resume.pdf` back with `pdftotext` and
+`resume.docx` with `extract_text.py`, then compares the text with `resume.md`. Prints
+`<file>\t<kind>\t<detail>` per finding and exits 1, or `<file>: parses clean` and exits 0:
+
+| kind | meaning |
+|---|---|
+| `no-text` | nothing extracted: an image-only file |
+| `contact-missing` | an email or phone number from the header is gone |
+| `heading-missing` | a `##` heading is not on a line of its own |
+| `bullet-missing` | a bullet's words are not found in order; `hyphen lost at a line break: <word>` when only hyphens differ (`fault-tolerant` read as `faulttolerant`) |
+| `date-split` | a role's date range breaks across lines, so a line-by-line parser can miss the end date |
+
+A PDF without `pdftotext` installed is reported as skipped, not as a finding. The check reads
+files only; it never edits a document.
+
 ## Outcomes (step 9)
 
 ```bash

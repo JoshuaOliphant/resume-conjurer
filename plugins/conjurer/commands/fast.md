@@ -163,7 +163,10 @@ re-stitch. Nothing fast mode does is a dead end.
 
 10. **Export.** `python3 <SKILL_DIR>/scripts/export_docs.py applications/<slug> pdf docx`. It prints
    one line per target; a target pandoc could not write (pandoc missing, or no PDF engine) reads
-   `skipped`, and the markdown stays the deliverable for it. Report each line as given.
+   `skipped`, and the markdown stays the deliverable for it. Report each line as given. Then
+   `python3 <SKILL_DIR>/scripts/parse_check.py applications/<slug>` reads each exported resume
+   back as an ATS parser would and prints what it lost; each finding goes in the report's review
+   list. Never edit the resume to clear one in fast mode.
 
 11. **Report.** Write `applications/<slug>/fast-report.md`:
 
@@ -187,6 +190,7 @@ re-stitch. Nothing fast mode does is a dead end.
     - Glossary leaks in picks: <none | list>
     - Lint: <clean after N rounds | remaining findings>
     - Export: <files written | markdown only>
+    - Parse check: <per-file line from parse_check.py | skipped>
     ```
 
     "Review these first" says `- Nothing flagged.` when it is empty. Then tell the user, in a few
