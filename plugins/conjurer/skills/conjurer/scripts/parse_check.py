@@ -4,17 +4,20 @@
 
 Screeners such as Ashby, Greenhouse Talent Matching, and Workday HiredScore judge the text a
 parser pulls out of the uploaded file, not the file as it looks. This script extracts that text
-(`pdftotext` for PDF, `extract_text.py` for docx) and checks it against the stitched
-`resume.md` it was exported from:
+(`pdftotext -raw` for PDF, `extract_text.py` for docx) and checks it against the stitched
+`resume.md` it was exported from. A hyphen that ends a line is joined to the next word first
+(`fault-` + `tolerant` reads as `fault-tolerant`), as extractors that keep hyphens report it.
 
 - `no-text`: the file yields no text at all (an image-only PDF).
 - `contact-missing`: an email address or phone number from the resume header is not found.
 - `heading-missing`: a `##` section heading is not a line of its own.
 - `bullet-missing`: a bullet's words are not found in order. When they are found once hyphens
-  are ignored, the detail says the hyphen was lost at a line break, so `fault-tolerant` reads
-  as `faulttolerant`.
+  are ignored, the detail names the hyphenated words the extractor dropped the hyphen from
+  (`fault-tolerant` read as `faulttolerant`), or says the hyphens differ at a line break.
 - `date-split`: a role's date range is broken across lines, so a line-by-line parser can miss
-  the end date.
+  the end date. Ranges are recognized with full or abbreviated month names (`January 2022`,
+  `Jan. 2022`, `Sept 2022`) or numeric months (`01/2022`), ending in another date or
+  `Present`; year-only ranges (`2019 – 2021`) are not checked.
 
 Prints `<file>\t<kind>\t<detail>` per finding and exits 1, or one clean line per checked file
 and exits 0. A format whose extractor is missing is reported as skipped, not as a finding.
@@ -38,8 +41,13 @@ _BULLET_RE = re.compile(r"^\s*[-*]\s+(?P<text>.+)$")
 _HEADING_RE = re.compile(r"^##\s+(?P<text>.+?)\s*$")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _PHONE_RE = re.compile(r"\+?\d[\d .()-]{7,}\d")
-_MONTH = r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
-_DATE_RANGE_RE = re.compile(rf"{_MONTH} \d{{4}}\s*[–-]\s*(?:{_MONTH} \d{{4}}|Present)")
+_MONTH = (
+    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?"
+    r"|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?"
+)
+_DATE = rf"(?:{_MONTH} \d{{4}}|\d{{1,2}}/\d{{4}})"
+_DATE_RANGE_RE = re.compile(rf"\b{_DATE}\s*[–-]\s*(?:{_DATE}|Present)\b")
+_LINE_END_HYPHEN_RE = re.compile(r"(?<=\w)-[ \t]*\n\s*(?=\w)")
 _HYPHENATED_RE = re.compile(r"\w+(?:-\w+)+")
 _HEADER_LINES = 5
 
@@ -62,7 +70,7 @@ def pdf_text(path: Path) -> str | None:
     """The PDF's text as `pdftotext` reads it, or None when pdftotext is not installed."""
     if shutil.which("pdftotext") is None:
         return None
-    done = subprocess.run(["pdftotext", str(path), "-"], capture_output=True, text=True)
+    done = subprocess.run(["pdftotext", "-raw", str(path), "-"], capture_output=True, text=True)
     return done.stdout if done.returncode == 0 else ""
 
 
@@ -74,7 +82,7 @@ def extracted_text(path: Path) -> str | None:
 
 def check_text(name: str, resume_md: str, text: str) -> list[Finding]:
     """Every way `text`, extracted from export `name`, loses what `resume_md` says."""
-    flat = normalize(text)
+    flat = normalize(_LINE_END_HYPHEN_RE.sub("-", text))
     if not flat:
         return [Finding(name, "no-text", "no text could be extracted; is it an image-only file?")]
     findings: list[Finding] = []
@@ -93,7 +101,7 @@ def check_text(name: str, resume_md: str, text: str) -> list[Finding]:
                 continue
             if words.replace("-", "") in flat.replace("-", ""):
                 lost = [w for w in _HYPHENATED_RE.findall(words) if w not in flat]
-                detail = f"hyphen lost at a line break: {', '.join(lost) or words[:60]}"
+                detail = f"hyphen lost at a line break: {', '.join(lost)}" if lost else "hyphens differ at a line break"
             else:
                 detail = bullet["text"][:60]
             findings.append(Finding(name, "bullet-missing", detail))

@@ -367,3 +367,15 @@ def test_records_logged_before_ats_existed_report_as_unknown(tmp_path):
     (app / "outcome.json").write_text(json.dumps(record))
     [result] = outcomes.load_applications(tmp_path, D("2026-10-05"), 21)
     assert result.ats == "unknown"
+
+
+def test_cli_ats_is_lowercased_validated_and_read_only_at_applied(tmp_path, capsys):
+    make_app(tmp_path, "a")
+    outcomes.main(["log", str(tmp_path), "a", "applied", "--date", "2026-10-01", "--ats", "Greenhouse"])
+    outcomes.main(["log", str(tmp_path), "a", "screen", "--date", "2026-10-02", "--ats", "ashby"])
+    assert "--ats is read only when logging applied; ignored for screen" in capsys.readouterr().err
+    [result] = outcomes.load_applications(tmp_path, D("2026-10-05"), 21)
+    assert result.ats == "greenhouse"
+    with pytest.raises(SystemExit, match="2"):
+        outcomes.main(["log", str(tmp_path), "a", "offer", "--ats", "taleo"])
+    assert "invalid choice: 'taleo'" in capsys.readouterr().err

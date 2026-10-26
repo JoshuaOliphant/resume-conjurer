@@ -45,12 +45,13 @@ the user polished is not credited to the curator alone.
 import argparse
 import hashlib
 import json
+import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from ats import UNKNOWN, app_ats
+from ats import UNKNOWN, VENDOR_DOMAINS, app_ats
 from stitch import COVER_LETTER_PREFIX, parse_variants_md
 
 STATUSES = ("applied", "screen", "interview", "offer", "rejected", "withdrawn")
@@ -263,7 +264,12 @@ def main(argv: list[str] | None = None) -> None:
     log.add_argument("--manual", action="store_true", help="Create the application dir if it does not exist")
     log.add_argument("--sent-resume", help="File in the app dir holding the resume text actually submitted")
     log.add_argument("--sent-cover-letter", help="File in the app dir holding the cover letter text actually submitted")
-    log.add_argument("--ats", help="ATS vendor (ashby, greenhouse, workday, ...) when jd.txt's posting URL does not show it")
+    log.add_argument(
+        "--ats",
+        type=str.lower,
+        choices=sorted({*VENDOR_DOMAINS.values(), UNKNOWN}),
+        help="ATS vendor when jd.txt's posting URL does not show it; read only with `applied`",
+    )
 
     rep = sub.add_parser("report", help="Callback rate by strategic frame, mode, edits, and ATS")
     rep.add_argument("workspace", type=Path)
@@ -273,6 +279,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command == "log":
         when = args.date or date.today()
+        if args.ats and args.status != "applied":
+            print(f"--ats is read only when logging applied; ignored for {args.status}", file=sys.stderr)
         try:
             overrides = {"resume": args.sent_resume, "cover_letter": args.sent_cover_letter}
             sent_files = {role: name for role, name in overrides.items() if name}

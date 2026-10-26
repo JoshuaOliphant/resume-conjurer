@@ -58,7 +58,8 @@ PAGE = """# Jane Doe
 ## Experience
 - Built a **Kafka** pipeline for billing.
 - Owned on-call for the payments service.
-- Wrote deploy standards, reworded by hand.
+- Set the deployment standards the whole team adopted.
+- Python
 """
 
 
@@ -89,6 +90,29 @@ def test_assess_traces_verbatim_lines_picks_and_rewordings():
         ("Standards", "reworded", ("master-resume.md L6",)),
         ("Go", "missing", ()),
     ]
+
+
+def test_a_pick_cut_from_the_page_is_not_shown():
+    page = PAGE.replace("- Set the deployment standards the whole team adopted.\n", "")
+    *_, standards, _go = page_coverage.assess(FIT, page, lines(), VARIANTS)
+    assert standards.status == "not_shown"
+
+
+def test_a_short_line_counts_only_as_a_whole_page_line():
+    master = MASTER + "- Python\n- Go\n"
+    pool = page_coverage.pool_lines(master, "")
+    data = fit(
+        ("Python", True, "met", "master-resume.md L7"),
+        ("Go", False, "met", "master-resume.md L8"),
+        ("Kafka", True, "met", "master-resume.md L4"),
+    )
+    page = PAGE + "- Built a Go-to-market dashboard.\n"
+    assert [r.status for r in page_coverage.assess(data, page, pool, None)] == ["shown", "not_shown", "shown"]
+
+
+def test_similarity_takes_the_closer_measure():
+    assert page_coverage.similarity("set the team standards", "set the team standards today") > 0.8
+    assert page_coverage.similarity("", "anything") == 0.0
 
 
 def test_evidence_left_off_the_page_is_not_shown():
@@ -135,7 +159,7 @@ def _workspace(tmp_path, page=PAGE, fit_data=FIT, evidence=None, variants=VARIAN
 
 def test_cli_exits_0_when_everything_supported_is_traced(tmp_path, capsys):
     app = _workspace(tmp_path, evidence="- extra\n")
-    page_coverage.main([str(app), str(tmp_path)])
+    page_coverage.main([str(app), str(tmp_path)])  # returns without SystemExit
     assert capsys.readouterr().out.startswith("Coverage: 2 of 3")
 
 

@@ -83,9 +83,27 @@ def test_bullet_missing_names_the_lost_hyphen_or_the_bullet():
     )
     assert _kinds(parse_check.check_text("resume.pdf", RESUME_MD, text)) == [
         ("bullet-missing", "hyphen lost at a line break: fault-tolerant"),
-        ("bullet-missing", "hyphen lost at a line break: ran service-, namespace-, and cluster-level drills."),
+        ("bullet-missing", "hyphens differ at a line break"),
         ("bullet-missing", "Python, Kafka"),
     ]
+
+
+def test_a_hyphen_kept_at_a_line_break_still_matches():
+    text = CLEAN_TEXT.replace("fault-tolerant", "fault-\ntolerant").replace("cluster-level", "cluster- \n level")
+    assert parse_check.check_text("resume.pdf", RESUME_MD, text) == []
+
+
+@pytest.mark.parametrize(
+    "dates",
+    ["Jan 2022 – Apr. 2024", "Sept 2021 - Present", "01/2022 – 04/2024", "June 2019 – July 2020"],
+)
+def test_abbreviated_and_numeric_date_ranges_are_checked(dates):
+    resume_md = RESUME_MD.replace("January 2022 – April 2024", dates)
+    end = dates.rsplit(" ", 1)[-1]
+    joined = CLEAN_TEXT.replace("January 2022 – April 2024", dates)
+    split = joined.replace(dates, dates.replace(f" {end}", f"\n{end}"))
+    assert parse_check.check_text("resume.pdf", resume_md, joined) == []
+    assert _kinds(parse_check.check_text("resume.pdf", resume_md, split)) == [("date-split", dates)]
 
 
 def test_date_range_split_across_lines():
@@ -112,7 +130,7 @@ def test_pdf_text_runs_pdftotext(monkeypatch, tmp_path, returncode, expected):
     monkeypatch.setattr(subprocess, "run", run)
     pdf = tmp_path / "resume.pdf"
     assert parse_check.pdf_text(pdf) == expected
-    assert calls == [["pdftotext", str(pdf), "-"]]
+    assert calls == [["pdftotext", "-raw", str(pdf), "-"]]
 
 
 def test_check_app_dir_without_resume_md(tmp_path):

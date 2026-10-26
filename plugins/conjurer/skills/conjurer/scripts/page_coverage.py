@@ -8,11 +8,12 @@ left off the page reads as "does not meet". `fit.py` asks whether the evidence c
 job's must-haves; this asks whether the stitched `resume.md` still shows that evidence.
 
 A `met` or `partial` requirement in `fit.json` is **shown** when the page holds one of its
-grounded cited lines: a master-resume line kept word for word, or a picked variant in
-`variants.md` that is on the page and cites that line. When the only lines citing its evidence
-are resume picks that were reworded after stitching, the page can't be traced word for word,
-so the requirement is **reworded** and left for a person to check. It is **not shown**
-otherwise. A `missing` requirement is listed for context; no wording fixes it. The check never
+grounded cited lines: a master-resume line that is a whole page line word for word, or a picked
+variant in `variants.md` that is on the page and cites that line. A pick that is no longer on
+the page word for word was either reworded or cut after stitching. It counts as reworded when a
+page bullet is still close to it (difflib word-sequence ratio, or the share of the pick's words
+on that bullet, at least 0.5); then the requirement is **reworded** and left for a person to
+check. A cut pick traces nothing, and the requirement is **not shown**. A `missing` requirement is listed for context; no wording fixes it. The check never
 adds or rewords a claim. Cover-letter picks don't count: screeners score the resume.
 
 Exit codes: 0 when every supported requirement is shown, 1 when one is not, 2 when fit.json or
@@ -20,7 +21,9 @@ resume.md is absent or malformed.
 """
 
 import argparse
+import difflib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -31,6 +34,7 @@ from parse_check import normalize
 from stitch import parse_variants_md
 
 RESUME_PREFIX = "resume."
+REWORDED_SIMILARITY = 0.5
 
 
 class Coverage(NamedTuple):
@@ -44,23 +48,39 @@ def _strip_bullet(line: str) -> str:
     return stripped[2:] if stripped[:2] in ("- ", "* ") else stripped
 
 
+def _words(text: str) -> list[str]:
+    return re.findall(r"\w+", text)
+
+
+def similarity(pick: str, bullet: str) -> float:
+    """How close a page bullet is to a pick: the larger of sequence ratio and word containment."""
+    a, b = _words(pick), _words(bullet)
+    ratio = difflib.SequenceMatcher(None, a, b).ratio()
+    contained = len(set(a) & set(b)) / len(set(a)) if a else 0.0
+    return max(ratio, contained)
+
+
 def traced_lines(page: str, lines: dict[str, str], variants_md: str | None) -> tuple[set[str], set[str]]:
     """Pool keys the page carries, and keys cited only by resume picks reworded after stitching.
 
-    A key is carried when its line is on the page word for word, or when a picked resume variant
-    that cites it is.
+    A key is carried when its line is a whole page line word for word, or when a picked resume
+    variant that cites it is on the page. A pick that is off the page counts as reworded only when
+    some page bullet is still close to it; a cut pick traces nothing.
     """
     flat = normalize(page)
-    shown = {key for key, text in lines.items() if (words := normalize(_strip_bullet(text))) and words in flat}
+    page_lines = {normalize(_strip_bullet(line)) for line in page.splitlines()} - {""}
+    bullets = [normalize(_strip_bullet(line)) for line in page.splitlines() if line.lstrip()[:2] in ("- ", "* ")]
+    shown = {key for key, text in lines.items() if normalize(_strip_bullet(text)) in page_lines}
     reworded: set[str] = set()
     for unit in parse_variants_md(variants_md or ""):
         pick = unit.picked
         if pick is None or not unit.unit_id.startswith(RESUME_PREFIX):
             continue
         cited = {line.id for line in resolve_citation(pick.citation, lines) if line.grounded}
-        if normalize(pick.content) in flat:
+        content = normalize(pick.content)
+        if content in flat:
             shown |= cited
-        else:
+        elif any(similarity(content, bullet) >= REWORDED_SIMILARITY for bullet in bullets):
             reworded |= cited
     return shown, reworded - shown
 
