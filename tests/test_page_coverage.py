@@ -115,6 +115,19 @@ def test_similarity_takes_the_closer_measure():
     assert page_coverage.similarity("", "anything") == 0.0
 
 
+def test_similarity_ignores_filler_words():
+    assert page_coverage.similarity("owned the payments migration", "owned the on-call rotation") < 0.5
+
+
+def test_a_short_pick_counts_only_as_a_whole_page_line():
+    variants = VARIANTS.replace("- Owned on-call for the payments service.", "- Owned on-call")
+    page = PAGE.replace("- Owned on-call for the payments service.", "- Owned on-call rotations and paging.")
+    _kafka, on_call, *_ = page_coverage.assess(FIT, page, lines(), variants)
+    assert on_call.status == "reworded"
+    _kafka, on_call, *_ = page_coverage.assess(FIT, page + "- Owned on-call\n", lines(), variants)
+    assert on_call.status == "shown"
+
+
 def test_evidence_left_off_the_page_is_not_shown():
     page = PAGE.replace("- Built a **Kafka** pipeline for billing.\n", "")
     [kafka, *_] = page_coverage.assess(FIT, page, lines(), None)

@@ -19,6 +19,10 @@ parser pulls out of the uploaded file, not the file as it looks. This script ext
   `Jan. 2022`, `Sept 2022`) or numeric months (`01/2022`), ending in another date or
   `Present`; year-only ranges (`2019 – 2021`) are not checked.
 
+`-raw` keeps the text in content-stream order, which matches reading order for the single-column
+pandoc export; a two-column template could read out of order and set off `heading-missing` on
+headings that render fine.
+
 Prints `<file>\t<kind>\t<detail>` per finding and exits 1, or one clean line per checked file
 and exits 0. A format whose extractor is missing is reported as skipped, not as a finding.
 """

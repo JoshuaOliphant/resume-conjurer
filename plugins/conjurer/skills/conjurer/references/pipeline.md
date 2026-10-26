@@ -209,7 +209,7 @@ python3 <SKILL_DIR>/scripts/parse_check.py <app_dir>
 ```
 
 Screeners (Ashby, Greenhouse Talent Matching, Workday HiredScore, iCIMS, Lever) score the text a
-parser extracts from the uploaded file. This reads `resume.pdf` back with `pdftotext` and
+parser extracts from the uploaded file. This reads `resume.pdf` back with `pdftotext -raw` and
 `resume.docx` with `extract_text.py`, then compares the text with `resume.md`. Prints
 `<file>\t<kind>\t<detail>` per finding and exits 1, or `<file>: parses clean` and exits 0:
 
@@ -218,11 +218,13 @@ parser extracts from the uploaded file. This reads `resume.pdf` back with `pdfto
 | `no-text` | nothing extracted: an image-only file |
 | `contact-missing` | an email or phone number from the header is gone |
 | `heading-missing` | a `##` heading is not on a line of its own |
-| `bullet-missing` | a bullet's words are not found in order; `hyphen lost at a line break: <word>` when only hyphens differ (`fault-tolerant` read as `faulttolerant`) |
+| `bullet-missing` | a bullet's words are not found in order; `hyphen lost at a line break: <word>` when only hyphens differ (`fault-tolerant` read as `faulttolerant`). A hyphen that ends a line is joined to the next word first |
 | `date-split` | a role's date range breaks across lines, so a line-by-line parser can miss the end date |
 
 A PDF without `pdftotext` installed is reported as skipped, not as a finding. The check reads
-files only; it never edits a document.
+files only; it never edits a document. `-raw` reads in content-stream order, which suits the
+single-column export; a two-column template could set off `heading-missing` on headings that
+render fine.
 
 ## Page coverage (fast mode step 9, guided step 6a)
 
@@ -233,8 +235,9 @@ python3 <SKILL_DIR>/scripts/page_coverage.py <app_dir> <workspace>
 Per-criterion screeners (Ashby AI-assisted review, Greenhouse Talent Matching) judge each
 requirement against the resume text alone, so evidence left in the master resume counts for
 nothing. For each `met` or `partial` requirement in `fit.json`, this looks for its grounded cited
-lines on the stitched `resume.md`: a master line kept word for word, or a picked resume variant on
-the page that cites the line. Cover-letter picks don't count.
+lines on the stitched `resume.md`: a master line kept as a whole page line, or a picked resume
+variant that cites the line with every line of it on the page. A pick that's gone counts as
+reworded only when a page bullet still shares at least half its content words. Cover-letter picks don't count.
 
 | status | meaning |
 |---|---|
