@@ -124,7 +124,7 @@ is not in the evidence, say it is unsupported rather than fabricating it.
 
 - **`references/pipeline.md`** — outline schema, strategic frames, variants.md format, exact commands.
 - **`scripts/`** — `new_workspace.py`, `init_app.py`, `stitch.py`, `lint.py`, `verify.py` (claim
-  check, optional `TYPESAFE_API_KEY`), `leaks.py` (glossary leak check), `parse_check.py` (reads exported resumes back as plain text), `glossary_check.py` (glossary rows and the master-resume lines naming a term, for `/grimoire`; the resume units whose bullet names a term, for fast mode's outline), `extract_text.py` (docx ingest), `export_docs.py` (PDF/docx
+  check, optional `TYPESAFE_API_KEY`), `leaks.py` (glossary leak check), `parse_check.py` (reads exported resumes back as plain text), `ats.py` (names the ATS from the posting URL), `glossary_check.py` (glossary rows and the master-resume lines naming a term, for `/grimoire`; the resume units whose bullet names a term, for fast mode's outline), `extract_text.py` (docx ingest), `export_docs.py` (PDF/docx
   export).
 - **`agents/variant-generator.md`** (plugin agent) — the per-unit generator.
 - **`agents/variant-curator.md`** (plugin agent) — fast mode's stand-in for the user at curation.

@@ -1,16 +1,16 @@
 # ABOUTME: Records what happened after an application went out, and reports callback rate per variant.
-# ABOUTME: One append-only `outcome.json` event log per application; the report groups by frame and mode.
+# ABOUTME: One append-only `outcome.json` event log per application; the report groups by frame, mode, edits, and ATS.
 """Implementation of `python3 outcomes.py log|report ...`.
 
     python3 outcomes.py log <workspace> <slug> <status> [--date YYYY-MM-DD] [--note TEXT] [--manual]
-        [--sent-resume FILE] [--sent-cover-letter FILE]
+        [--sent-resume FILE] [--sent-cover-letter FILE] [--ats VENDOR]
     python3 outcomes.py report <workspace> [--as-of YYYY-MM-DD] [--silence-days N]
 
 `applications/<slug>/outcome.json` holds the events in date order:
 
     {"events": [{"date": "2026-10-19", "status": "applied"},
                 {"date": "2026-10-24", "status": "screen", "note": "recruiter call"}],
-     "variant": {"frame": "conviction", "mode": "fast"},
+     "variant": {"frame": "conviction", "mode": "fast", "edits": "as stitched", "ats": "ashby"},
      "sent": {"resume.md": "<sha256>", "cover_letter.md": "<sha256>"}}
 
 Logging `applied` snapshots what went out: `variant` records the frame and selection mode, and
@@ -31,6 +31,10 @@ When what went out differs from the stitched files (a PDF reworded after export,
 into a form), commit the submitted text into the application directory and pass it with
 `--sent-resume` / `--sent-cover-letter`; the fingerprints and the edit check then use those files.
 
+`ats` names the applicant tracking system that screened the application, detected from the
+posting URL in `jd.txt` (`ats.py`) or given with `--ats` when the posting URL does not show it.
+Records logged before `ats` existed report as `unknown`.
+
 Separately, `edits` records whether the sent documents still contain every picked variant
 verbatim (`as stitched`) or were reworded by hand after stitching (`hand-edited`), so a fast run
 the user polished is not credited to the curator alone.
@@ -46,6 +50,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from ats import UNKNOWN, app_ats
 from stitch import COVER_LETTER_PREFIX, parse_variants_md
 
 STATUSES = ("applied", "screen", "interview", "offer", "rejected", "withdrawn")
@@ -115,10 +120,15 @@ def edit_state(app_dir: Path, sent_files: dict[str, str] = SENT_DOCUMENTS) -> st
     return "as stitched"
 
 
-def snapshot_variant(app_dir: Path, sent_files: dict[str, str] = SENT_DOCUMENTS) -> dict:
+def snapshot_variant(app_dir: Path, sent_files: dict[str, str] = SENT_DOCUMENTS, ats: str | None = None) -> dict:
     outline = app_dir / "outline.json"
     frame = json.loads(outline.read_text()).get("strategic_frame", "none") if outline.exists() else "none"
-    return {"frame": frame, "mode": selection_mode(app_dir), "edits": edit_state(app_dir, sent_files)}
+    return {
+        "frame": frame,
+        "mode": selection_mode(app_dir),
+        "edits": edit_state(app_dir, sent_files),
+        "ats": ats or app_ats(app_dir),
+    }
 
 
 def log_outcome(
@@ -129,8 +139,12 @@ def log_outcome(
     note: str | None = None,
     manual: bool = False,
     sent_files: dict[str, str] | None = None,
+    ats: str | None = None,
 ) -> Path:
-    """Append one event. `sent_files` overrides which files in the app dir count as submitted."""
+    """Append one event. `sent_files` overrides which files in the app dir count as submitted.
+
+    `ats` names the vendor when the posting URL in `jd.txt` does not; it is read only at `applied`.
+    """
     overrides = sent_files or {}
     sent_files = {**SENT_DOCUMENTS, **overrides}
     app_dir = workspace / "applications" / slug
@@ -148,7 +162,7 @@ def log_outcome(
         for name in overrides.values():
             if not (app_dir / name).is_file():
                 raise FileNotFoundError(f"Sent file {app_dir / name} does not exist")
-        record["variant"] = snapshot_variant(app_dir, sent_files)
+        record["variant"] = snapshot_variant(app_dir, sent_files, ats)
         sent = {name: _fingerprint(app_dir / name) for name in sent_files.values() if (app_dir / name).exists()}
         if sent:
             record["sent"] = sent
@@ -162,6 +176,7 @@ class Application:
     frame: str
     mode: str
     edits: str
+    ats: str
     result: str  # callback | no_callback | pending | withdrawn
 
 
@@ -189,7 +204,8 @@ def load_applications(workspace: Path, as_of: date, silence_days: int) -> list[A
         if result is None:
             continue
         variant = record["variant"]
-        apps.append(Application(path.parent.name, variant["frame"], variant["mode"], variant["edits"], result))
+        ats = variant.get("ats", UNKNOWN)
+        apps.append(Application(path.parent.name, variant["frame"], variant["mode"], variant["edits"], ats, result))
     return apps
 
 
@@ -226,6 +242,7 @@ def report(apps: list[Application], as_of: date, silence_days: int) -> str:
         *_table("frame", apps, "frame"),
         *_table("mode", apps, "mode"),
         *_table("edits", apps, "edits"),
+        *_table("ATS", apps, "ats"),
     ]
     pending = [app.slug for app in apps if app.result == "pending"]
     if pending:
@@ -246,8 +263,9 @@ def main(argv: list[str] | None = None) -> None:
     log.add_argument("--manual", action="store_true", help="Create the application dir if it does not exist")
     log.add_argument("--sent-resume", help="File in the app dir holding the resume text actually submitted")
     log.add_argument("--sent-cover-letter", help="File in the app dir holding the cover letter text actually submitted")
+    log.add_argument("--ats", help="ATS vendor (ashby, greenhouse, workday, ...) when jd.txt's posting URL does not show it")
 
-    rep = sub.add_parser("report", help="Callback rate by strategic frame and by mode")
+    rep = sub.add_parser("report", help="Callback rate by strategic frame, mode, edits, and ATS")
     rep.add_argument("workspace", type=Path)
     rep.add_argument("--as-of", type=date.fromisoformat, default=None, help="YYYY-MM-DD, default today")
     rep.add_argument("--silence-days", type=int, default=DEFAULT_SILENCE_DAYS)
@@ -258,7 +276,9 @@ def main(argv: list[str] | None = None) -> None:
         try:
             overrides = {"resume": args.sent_resume, "cover_letter": args.sent_cover_letter}
             sent_files = {role: name for role, name in overrides.items() if name}
-            path = log_outcome(args.workspace, args.slug, args.status, when, args.note, args.manual, sent_files)
+            path = log_outcome(
+                args.workspace, args.slug, args.status, when, args.note, args.manual, sent_files, args.ats
+            )
         except (ValueError, FileNotFoundError) as exc:
             parser.exit(1, f"{exc}\n")
         print(f"Logged {args.status} on {when.isoformat()} in {path}")

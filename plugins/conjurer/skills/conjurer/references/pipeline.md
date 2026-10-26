@@ -227,7 +227,7 @@ files only; it never edits a document.
 ## Outcomes (step 9)
 
 ```bash
-python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> <status> [--date YYYY-MM-DD] [--note TEXT] [--manual] [--sent-resume FILE] [--sent-cover-letter FILE]
+python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> <status> [--date YYYY-MM-DD] [--note TEXT] [--manual] [--sent-resume FILE] [--sent-cover-letter FILE] [--ats VENDOR]
 python3 <SKILL_DIR>/scripts/outcomes.py report <workspace> [--as-of YYYY-MM-DD] [--silence-days 21]
 ```
 
@@ -239,7 +239,7 @@ python3 <SKILL_DIR>/scripts/outcomes.py report <workspace> [--as-of YYYY-MM-DD] 
     {"date": "2026-10-19", "status": "applied"},
     {"date": "2026-10-24", "status": "screen", "note": "recruiter call"}
   ],
-  "variant": {"frame": "conviction", "mode": "fast", "edits": "hand-edited"},
+  "variant": {"frame": "conviction", "mode": "fast", "edits": "hand-edited", "ats": "ashby"},
   "sent": {"resume.md": "<sha256>", "cover_letter.md": "<sha256>"}
 }
 ```
@@ -247,7 +247,9 @@ python3 <SKILL_DIR>/scripts/outcomes.py report <workspace> [--as-of YYYY-MM-DD] 
 Statuses: `applied`, `screen`, `interview`, `offer`, `rejected`, `withdrawn`. `applied` comes
 first and only once, and dates never go backwards. Logging `applied` snapshots what went out:
 `variant` holds the strategic frame and selection mode, and `sent` fingerprints the stitched
-documents. The report reads only the snapshot, so editing `outline.json`, re-curating, or
+documents, and `ats` names the applicant tracking system, detected by `ats.py` from the first
+posting URL in `jd.txt` on a vendor domain (`ashby`, `greenhouse`, `workday`, `lever`, `icims`,
+`eightfold`, `smartrecruiters`), else `unknown` unless `--ats` names it. The report reads only the snapshot, so editing `outline.json`, re-curating, or
 re-stitching after submission cannot move an outcome into another group.
 
 The report counts a **callback** when an application reaches `screen`, `interview`, or `offer`.
@@ -258,7 +260,9 @@ denominator. `--as-of` reports the state on that date, ignoring later events and
 Applications are grouped by the snapshot's frame (`outline.json`'s `strategic_frame`) and mode:
 `fast` (every pick in `variants.md` is still the curator's choice in `curation.json`),
 `fast+guided` (the user took over a fast run and changed at least one pick), `guided` (no curator),
-or `manual` (logged with `--manual` for an application made outside the pipeline). `edits` is `as stitched` when the sent documents still
+or `manual` (logged with `--manual` for an application made outside the pipeline). A fourth table
+groups by ATS, so whether a vendor-specific change helps shows up in callbacks; records logged
+before `ats` existed read as `unknown`. `edits` is `as stitched` when the sent documents still
 contain every picked variant word for word, `hand-edited` when any was reworded after stitching,
 and `n/a` without `variants.md`; the report has a third table for it. Log `applied` after the
 final edit, so the snapshot sees the text that was sent. When the submitted text differs from the stitched files,
