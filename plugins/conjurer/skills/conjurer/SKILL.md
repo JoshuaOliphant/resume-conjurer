@@ -92,6 +92,10 @@ with the curator's reason for each.
    `- [x] Pick` per unit in `variants.md`.
 6. **Stitch**: `python3 <SKILL_DIR>/scripts/stitch.py applications/<slug> <workspace>/master-resume.md`.
    Writes `cover_letter.md` and `resume.md`.
+   - **6a. Page coverage** (when `applications/<slug>/fit.json` exists, as fast mode writes it):
+     `python3 <SKILL_DIR>/scripts/page_coverage.py applications/<slug> <workspace>`. Tell the user
+     each requirement the evidence supports but the page no longer shows; the fix is a different
+     pick or unit, never a new claim.
    - **6b. Check the picks**: `python3 <SKILL_DIR>/scripts/verify.py applications/<slug> <workspace> --picks`.
      Tell the user about any picked line it flags; the fix is to edit the line or add the fact to
      the master resume.
@@ -124,7 +128,7 @@ is not in the evidence, say it is unsupported rather than fabricating it.
 
 - **`references/pipeline.md`** — outline schema, strategic frames, variants.md format, exact commands.
 - **`scripts/`** — `new_workspace.py`, `init_app.py`, `stitch.py`, `lint.py`, `verify.py` (claim
-  check, optional `TYPESAFE_API_KEY`), `leaks.py` (glossary leak check), `parse_check.py` (reads exported resumes back as plain text), `ats.py` (names the ATS from the posting URL), `glossary_check.py` (glossary rows and the master-resume lines naming a term, for `/grimoire`; the resume units whose bullet names a term, for fast mode's outline), `extract_text.py` (docx ingest), `export_docs.py` (PDF/docx
+  check, optional `TYPESAFE_API_KEY`), `leaks.py` (glossary leak check), `parse_check.py` (reads exported resumes back as plain text), `ats.py` (names the ATS from the posting URL), `page_coverage.py` (checks that `fit.json`'s supported must-haves show on the stitched resume), `glossary_check.py` (glossary rows and the master-resume lines naming a term, for `/grimoire`; the resume units whose bullet names a term, for fast mode's outline), `extract_text.py` (docx ingest), `export_docs.py` (PDF/docx
   export).
 - **`agents/variant-generator.md`** (plugin agent) — the per-unit generator.
 - **`agents/variant-curator.md`** (plugin agent) — fast mode's stand-in for the user at curation.

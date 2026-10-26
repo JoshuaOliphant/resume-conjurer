@@ -224,6 +224,27 @@ parser extracts from the uploaded file. This reads `resume.pdf` back with `pdfto
 A PDF without `pdftotext` installed is reported as skipped, not as a finding. The check reads
 files only; it never edits a document.
 
+## Page coverage (fast mode step 9, guided step 6a)
+
+```bash
+python3 <SKILL_DIR>/scripts/page_coverage.py <app_dir> <workspace>
+```
+
+Per-criterion screeners (Ashby AI-assisted review, Greenhouse Talent Matching) judge each
+requirement against the resume text alone, so evidence left in the master resume counts for
+nothing. For each `met` or `partial` requirement in `fit.json`, this looks for its grounded cited
+lines on the stitched `resume.md`: a master line kept word for word, or a picked resume variant on
+the page that cites the line. Cover-letter picks don't count.
+
+| status | meaning |
+|---|---|
+| shown | a cited line reaches the page |
+| reworded | only picks reworded after stitching cite it; check by eye |
+| not shown | the evidence exists but the page doesn't carry it (exit 1) |
+| missing | `fit.json` found no evidence; listed, never a wording fix |
+
+Exit 2 when `resume.md` or `fit.json` is absent or malformed. The check never edits a document.
+
 ## Outcomes (step 9)
 
 ```bash
