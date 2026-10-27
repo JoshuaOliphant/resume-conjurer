@@ -115,6 +115,13 @@ def test_similarity_takes_the_closer_measure():
     assert page_coverage.similarity("", "anything") == 0.0
 
 
+def test_a_blank_pick_traces_nothing():
+    variants = VARIANTS.replace("- Set deployment standards for the whole team.\n", "")
+    page = PAGE.replace("- Set the deployment standards the whole team adopted.\n", "")
+    *_, standards, _go = page_coverage.assess(FIT, page, lines(), variants)
+    assert standards.status == "not_shown"
+
+
 def test_similarity_ignores_filler_words():
     assert page_coverage.similarity("owned the payments migration", "owned the on-call rotation") < 0.5
 

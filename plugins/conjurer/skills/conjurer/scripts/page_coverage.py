@@ -85,7 +85,7 @@ def traced_lines(page: str, lines: dict[str, str], variants_md: str | None) -> t
         cited = {line.id for line in resolve_citation(pick.citation, lines) if line.grounded}
         content = normalize(pick.content)
         pick_lines = {normalize(_strip_bullet(line)) for line in pick.content.splitlines()} - {""}
-        if pick_lines <= page_lines:
+        if pick_lines and pick_lines <= page_lines:
             shown |= cited
         elif any(similarity(content, bullet) >= REWORDED_SIMILARITY for bullet in bullets):
             reworded |= cited
