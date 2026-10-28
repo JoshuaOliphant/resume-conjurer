@@ -14,6 +14,7 @@ from pathlib import Path
 JD_TEMPLATE = """# Paste the job description below. Plain text is fine.
 # Lines starting with # are ignored by the outline step.
 # Title and company at the top help; the rest can be the full posting.
+# Put the posting URL on a `Source:` line: outcomes reads it to tell which ATS screened you.
 
 """
 

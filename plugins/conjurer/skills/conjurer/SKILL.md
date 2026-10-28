@@ -92,6 +92,10 @@ with the curator's reason for each.
    `- [x] Pick` per unit in `variants.md`.
 6. **Stitch**: `python3 <SKILL_DIR>/scripts/stitch.py applications/<slug> <workspace>/master-resume.md`.
    Writes `cover_letter.md` and `resume.md`.
+   - **6a. Page coverage** (when `applications/<slug>/fit.json` exists, as fast mode writes it):
+     `python3 <SKILL_DIR>/scripts/page_coverage.py applications/<slug> <workspace>`. Tell the user
+     each requirement the evidence supports but the page no longer shows; the fix is a different
+     pick or unit, never a new claim.
    - **6b. Check the picks**: `python3 <SKILL_DIR>/scripts/verify.py applications/<slug> <workspace> --picks`.
      Tell the user about any picked line it flags; the fix is to edit the line or add the fact to
      the master resume.
@@ -102,6 +106,11 @@ with the curator's reason for each.
    `python3 <SKILL_DIR>/scripts/export_docs.py applications/<slug> pdf docx`. This uses `pandoc`
    if it is installed; if not, it reports that the markdown sources are the deliverable. Tell the
    user which outputs were written or skipped.
+   - **8b. Parse check**: `python3 <SKILL_DIR>/scripts/parse_check.py applications/<slug>`. It
+     extracts the text from each exported resume, as an ATS parser would, and compares it with
+     `resume.md`: contact details, headings, every bullet, and each role's dates on one line.
+     Tell the user each finding in plain words. A `date-split` or a lost hyphen in the PDF while
+     the docx parses clean is a reason to upload the docx where the form accepts it.
 9. **Track the outcome**: only after the user says they submitted the application, log it with
    `python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> applied --date <submit date>`,
    and log each later response (`screen`, `interview`, `offer`, `rejected`, `withdrawn`) as the
@@ -119,7 +128,7 @@ is not in the evidence, say it is unsupported rather than fabricating it.
 
 - **`references/pipeline.md`** — outline schema, strategic frames, variants.md format, exact commands.
 - **`scripts/`** — `new_workspace.py`, `init_app.py`, `stitch.py`, `lint.py`, `verify.py` (claim
-  check, optional `TYPESAFE_API_KEY`), `leaks.py` (glossary leak check), `glossary_check.py` (glossary rows and the master-resume lines naming a term, for `/grimoire`; the resume units whose bullet names a term, for fast mode's outline), `extract_text.py` (docx ingest), `export_docs.py` (PDF/docx
+  check, optional `TYPESAFE_API_KEY`), `leaks.py` (glossary leak check), `parse_check.py` (reads exported resumes back as plain text), `ats.py` (names the ATS from the posting URL), `page_coverage.py` (checks that `fit.json`'s supported must-haves show on the stitched resume), `glossary_check.py` (glossary rows and the master-resume lines naming a term, for `/grimoire`; the resume units whose bullet names a term, for fast mode's outline), `extract_text.py` (docx ingest), `export_docs.py` (PDF/docx
   export).
 - **`agents/variant-generator.md`** (plugin agent) — the per-unit generator.
 - **`agents/variant-curator.md`** (plugin agent) — fast mode's stand-in for the user at curation.

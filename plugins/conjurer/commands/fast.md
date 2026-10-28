@@ -159,11 +159,18 @@ re-stitch. Nothing fast mode does is a dead end.
    report.
 
 9. **Check the picks.** `python3 <SKILL_DIR>/scripts/verify.py applications/<slug> <workspace> --picks`.
-   Any picked line it flags goes in the report's review list; do not reword it further.
+   Any picked line it flags goes in the report's review list; do not reword it further. Then
+   `python3 <SKILL_DIR>/scripts/page_coverage.py applications/<slug> <workspace>` checks that
+   every must-have `fit.json` marks met or partial still shows its cited evidence on the stitched
+   resume, the way a per-criterion screener reads it. Each `not shown` line goes in the review
+   list with its evidence lines; never add a claim to clear one.
 
 10. **Export.** `python3 <SKILL_DIR>/scripts/export_docs.py applications/<slug> pdf docx`. It prints
    one line per target; a target pandoc could not write (pandoc missing, or no PDF engine) reads
-   `skipped`, and the markdown stays the deliverable for it. Report each line as given.
+   `skipped`, and the markdown stays the deliverable for it. Report each line as given. Then
+   `python3 <SKILL_DIR>/scripts/parse_check.py applications/<slug>` reads each exported resume
+   back as an ATS parser would and prints what it lost; each finding goes in the report's review
+   list. Never edit the resume to clear one in fast mode.
 
 11. **Report.** Write `applications/<slug>/fast-report.md`:
 
@@ -185,8 +192,10 @@ re-stitch. Nothing fast mode does is a dead end.
     ## Checks
     - Claim check: <ran, N picked lines flagged | skipped, no TYPESAFE_API_KEY>
     - Glossary leaks in picks: <none | list>
+    - Page coverage: <page_coverage.py's first line>
     - Lint: <clean after N rounds | remaining findings>
     - Export: <files written | markdown only>
+    - Parse check: <per-file line from parse_check.py | skipped>
     ```
 
     "Review these first" says `- Nothing flagged.` when it is empty. Then tell the user, in a few

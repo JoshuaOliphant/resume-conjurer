@@ -218,22 +218,24 @@ def test_report_with_no_outcomes():
 def test_report_rates_by_frame_and_mode():
     App = outcomes.Application
     apps = [
-        App("a", "conviction", "fast", "as stitched", "callback"),
-        App("b", "conviction", "fast", "as stitched", "no_callback"),
-        App("c", "multiplier", "guided", "hand-edited", "pending"),
-        App("d", "multiplier", "guided", "as stitched", "withdrawn"),
-        App("e", "conviction", "guided", "hand-edited", "callback"),
+        App("a", "conviction", "fast", "as stitched", "ashby", "callback"),
+        App("b", "conviction", "fast", "as stitched", "ashby", "no_callback"),
+        App("c", "multiplier", "guided", "hand-edited", "greenhouse", "pending"),
+        App("d", "multiplier", "guided", "as stitched", "greenhouse", "withdrawn"),
+        App("e", "conviction", "guided", "hand-edited", "greenhouse", "callback"),
     ]
     text = outcomes.report(apps, D("2026-10-19"), 21)
     assert "| conviction | 3 | 2 | 3 | 0 | 2/3 (67%) |" in text
     assert "| multiplier | 1 | 0 | 0 | 1 | n/a |" in text
     assert "| fast | 2 | 1 | 2 | 0 | 1/2 (50%) |" in text
     assert "| **all** | 4 | 2 | 3 | 1 | 2/3 (67%) |" in text
+    assert "| ashby | 2 | 1 | 2 | 0 | 1/2 (50%) |" in text
+    assert "| greenhouse | 2 | 1 | 1 | 1 | 1/1 (100%) |" in text
     assert "Pending: c" in text
 
 
 def test_report_omits_pending_line_when_nothing_is_pending():
-    apps = [outcomes.Application("a", "scale", "fast", "as stitched", "callback")]
+    apps = [outcomes.Application("a", "scale", "fast", "as stitched", "unknown", "callback")]
     assert "Pending:" not in outcomes.report(apps, D("2026-10-19"), 21)
 
 
@@ -301,7 +303,7 @@ def test_edit_state_not_applicable_without_variants(tmp_path):
 
 
 def test_report_has_an_edits_table():
-    apps = [outcomes.Application("a", "scale", "fast", "hand-edited", "callback")]
+    apps = [outcomes.Application("a", "scale", "fast", "hand-edited", "unknown", "callback")]
     assert "| hand-edited | 1 | 1 | 1 | 0 | 1/1 (100%) |" in outcomes.report(apps, D("2026-10-19"), 21)
 
 
@@ -334,3 +336,46 @@ def test_cli_sent_overrides(tmp_path, capsys):
     )
     record = json.loads((app / "outcome.json").read_text())
     assert set(record["sent"]) == {"sent-resume.md", "sent-letter.md"}
+
+
+# --- ATS ---------------------------------------------------------------------
+
+
+def test_applied_snapshots_the_ats_from_the_posting_url(tmp_path):
+    app = make_app(tmp_path, "a")
+    (app / "jd.txt").write_text("Source: https://jobs.ashbyhq.com/elicit/d27d51d7\n")
+    path = log(tmp_path, "a", "applied", "2026-10-01")
+    assert json.loads(path.read_text())["variant"]["ats"] == "ashby"
+
+
+def test_ats_override_wins_and_missing_jd_is_unknown(tmp_path):
+    make_app(tmp_path, "a")
+    make_app(tmp_path, "b")
+    outcomes.main(["log", str(tmp_path), "a", "applied", "--date", "2026-10-01", "--ats", "workday"])
+    log(tmp_path, "b", "applied", "2026-10-01")
+    apps = outcomes.load_applications(tmp_path, D("2026-10-05"), 21)
+    assert [(a.slug, a.ats) for a in apps] == [("a", "workday"), ("b", "unknown")]
+
+
+def test_records_logged_before_ats_existed_report_as_unknown(tmp_path):
+    app = tmp_path / "applications" / "old"
+    app.mkdir(parents=True)
+    record = {
+        "events": [{"date": "2026-10-01", "status": "applied"}],
+        "variant": {"frame": "scale", "mode": "manual", "edits": "n/a"},
+    }
+    (app / "outcome.json").write_text(json.dumps(record))
+    [result] = outcomes.load_applications(tmp_path, D("2026-10-05"), 21)
+    assert result.ats == "unknown"
+
+
+def test_cli_ats_is_lowercased_validated_and_read_only_at_applied(tmp_path, capsys):
+    make_app(tmp_path, "a")
+    outcomes.main(["log", str(tmp_path), "a", "applied", "--date", "2026-10-01", "--ats", "Greenhouse"])
+    outcomes.main(["log", str(tmp_path), "a", "screen", "--date", "2026-10-02", "--ats", "ashby"])
+    assert "--ats is read only when logging applied; ignored for screen" in capsys.readouterr().err
+    [result] = outcomes.load_applications(tmp_path, D("2026-10-05"), 21)
+    assert result.ats == "greenhouse"
+    with pytest.raises(SystemExit, match="2"):
+        outcomes.main(["log", str(tmp_path), "a", "offer", "--ats", "taleo"])
+    assert "invalid choice: 'taleo'" in capsys.readouterr().err

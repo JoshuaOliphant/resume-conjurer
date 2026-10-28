@@ -1,5 +1,5 @@
 ---
-description: Log what happened to an application (applied, screen, interview, offer, rejected, withdrawn), or report callback rate by strategic frame and by mode.
+description: Log what happened to an application (applied, screen, interview, offer, rejected, withdrawn), or report callback rate by strategic frame, mode, edits, and ATS.
 argument-hint: "<slug> <status> [YYYY-MM-DD] [note]  |  report"
 ---
 
@@ -26,7 +26,8 @@ python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> <status> [--date 
 - Log `applied` only when the user says the application went out, with the date they give. It
   snapshots the strategic frame, the selection mode (`fast`, `fast+guided` when the user changed
   any of the curator's picks, `guided`, or `manual`), and whether the sent text was hand-edited
-  after stitching, and fingerprints `resume.md` and `cover_letter.md`, so later edits to the
+  after stitching, and the ATS vendor read from the posting URL in `jd.txt`, and fingerprints
+  `resume.md` and `cover_letter.md`, so later edits to the
   application never change how this outcome is counted. Logging never submits or contacts
   anyone.
 - If what was submitted differs from `resume.md` or `cover_letter.md` (a PDF reworded after
@@ -34,6 +35,9 @@ python3 <SKILL_DIR>/scripts/outcomes.py log <workspace> <slug> <status> [--date 
   submitted text into the application directory first, then pass
   `--sent-resume <file>` and/or `--sent-cover-letter <file>` so the fingerprints and the edit check
   use what actually went out. If the submitted text is not available yet, wait.
+- When `jd.txt` has no posting URL on a vendor domain (a company careers page that embeds the
+  board, or a JD pasted without its link) and the user knows the system, pass `--ats <vendor>`.
+  Never guess the vendor.
 - If the slug is not an application directory, list the slugs under `applications/` and ask which
   one was meant. For an application made before or outside conjurer, pass `--manual`; it creates
   `applications/<slug>/` holding only `outcome.json`, reported under mode `manual`.
