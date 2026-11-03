@@ -20,12 +20,11 @@ export function mountPanel(root, callTool) {
   reload.addEventListener('click', () => refresh());
   root.replaceChildren(title, intro, list, status, reload);
 
-  function show(data, message) {
+  function show(data, message, focused = document.activeElement?.dataset?.variant) {
     if (!data || data.application_id !== 'synthetic-demo' || !Array.isArray(data.variants)
         || data.variants.length !== 4 || typeof data.revision !== 'string') {
       throw new Error('The server did not return this demo. Reload to try again.');
     }
-    const focused = document.activeElement?.dataset?.variant;
     snapshot = data;
     list.replaceChildren();
     for (const variant of data.variants) {
@@ -66,6 +65,7 @@ export function mountPanel(root, callTool) {
 
   async function refresh() {
     if (busy || disconnected) return;
+    const focused = document.activeElement?.dataset?.variant;
     const current = ++request;
     busy = true;
     reload.disabled = true;
@@ -75,7 +75,7 @@ export function mountPanel(root, callTool) {
       const result = await callTool({ name: 'open_curation_demo', arguments: {} });
       if (current !== request) return;
       busy = false;
-      show(resultData(result));
+      show(resultData(result), undefined, focused);
     } catch (error) {
       if (current !== request || disconnected) return;
       snapshot = null;
@@ -91,6 +91,7 @@ export function mountPanel(root, callTool) {
 
   async function choose(id) {
     if (busy || disconnected || !snapshot) return;
+    const focused = document.activeElement?.dataset?.variant;
     const current = ++request;
     busy = true;
     reload.disabled = true;
@@ -103,7 +104,7 @@ export function mountPanel(root, callTool) {
       if (current !== request) return;
       busy = false;
       const data = resultData(result);
-      show(data, data.status === 'conflict' ? data.message : undefined);
+      show(data, data.status === 'conflict' ? data.message : undefined, focused);
     } catch {
       if (current !== request || disconnected) return;
       // A lost response can follow a committed write. Do not retry a mutation blindly.

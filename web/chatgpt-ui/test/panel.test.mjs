@@ -85,7 +85,7 @@ test('stale choice rejected, rapid clicks do not double-save, reload recovers un
   await page.waitForFunction(() => document.querySelector('[role=status]').textContent.includes('could not be confirmed'));
   assert.equal(await page.locator('section button:disabled').count(), 4);
   await page.evaluate(() => { window.fail = false; window.saved.selected_variant = 2; window.saved.revision = '2'.repeat(64); });
-  await page.getByText('Reload saved selection').click();
+  await page.getByRole('button', { name: 'Reload saved selection', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[role=status]').textContent.includes('Variant 2 is saved'));
   await page.close();
 });
@@ -128,12 +128,12 @@ for (const operation of ['save', 'reload']) {
 test('a failed refresh disables stale choices until a successful reload', async () => {
   const page = await pageWithPanel();
   await page.evaluate(() => { window.fail = true; });
-  await page.getByText('Reload saved selection').click();
+  await page.getByRole('button', { name: 'Reload saved selection', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[role=status]').textContent.includes('lost connection'));
   assert.equal(await page.locator('section button:disabled').count(), 4);
-  assert.equal(await page.getByText('Reload saved selection').isEnabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Reload saved selection', exact: true }).isEnabled(), true);
   await page.evaluate(() => { window.fail = false; });
-  await page.getByText('Reload saved selection').click();
+  await page.getByRole('button', { name: 'Reload saved selection', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[role=status]').textContent.includes('Nothing selected'));
   assert.equal(await page.locator('section button:enabled').count(), 4);
   await page.close();
