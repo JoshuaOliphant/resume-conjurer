@@ -1,0 +1,19 @@
+{
+  "name": "conjurer-chatgpt-fixture-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/panel.test.mjs",
+    "test:dom": "node --test test/panel.dom.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "2.0.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "esbuild": "0.25.12",
+    "jsdom": "26.1.0"
+  }
+}
