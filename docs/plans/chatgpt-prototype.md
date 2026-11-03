@@ -59,3 +59,21 @@ Before calling original slice A/B validated:
 5. Record client/version and observations. Downloads remain a later slice.
 
 Hosted endpoint and any connection/permission approvals are a separate decision, not implicit permission to deploy this unauthenticated fixture.
+
+## Review hardening
+
+Atomic saves preserve the existing document's ordinary permission bits rather
+than inheriting the temporary file's 0600 mode. A failed permission copy leaves
+the original untouched. A repeated pick that changes nothing does not replace
+the file.
+
+The mutation's idempotent hint describes effects, not identical responses. An
+exact replay after a successful change returns a stale-revision conflict but
+makes no additional change. This intentionally preserves stale-write protection,
+including when another choice was made in between; no automatic mutation retry
+is introduced.
+
+Tool cancellation is recoverable through an explicit Reload saved selection.
+It invalidates pending UI responses and disables choices until a fresh read;
+it does not promise that a server-side write was rolled back. True transport
+closure/teardown still requires reopening the panel.

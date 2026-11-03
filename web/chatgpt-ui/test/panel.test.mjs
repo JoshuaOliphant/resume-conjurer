@@ -107,6 +107,7 @@ for (const operation of ['save', 'reload']) {
       if (action === 'save') document.querySelector('[data-variant="1"]').click();
       else void window.panel.refresh();
       window.panel.disconnected();
+      window.panel.cancelled();
       window.pending.shift().reject(new Error('connection closed'));
       await new Promise(resolve => setTimeout(resolve, 0));
       return window.calls.length;
@@ -136,5 +137,64 @@ test('a failed refresh disables stale choices until a successful reload', async 
   await page.getByRole('button', { name: 'Reload saved selection', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[role=status]').textContent.includes('Nothing selected'));
   assert.equal(await page.locator('section button:enabled').count(), 4);
+  await page.close();
+});
+
+for (const operation of ['save', 'reload']) {
+  for (const outcome of ['resolve', 'reject']) {
+    test(`cancelled ${operation} ignores late ${outcome} and recovers with Reload`, async () => {
+      const page = await pageWithPanel();
+      const callsBeforeReload = await page.evaluate(async ({ action, result }) => {
+        window.hold = true;
+        if (action === 'save') document.querySelector('[data-variant="1"]').click();
+        else void window.panel.refresh();
+        const pending = window.pending.shift();
+        window.panel.cancelled();
+        window.panel.receive({ structuredContent: window.saved });
+        window.panel.receive({ isError: true });
+        await window.panel.refresh({ automatic: true });
+        document.querySelector('[data-variant="2"]').click();
+        if (result === 'resolve') pending.resolve();
+        else pending.reject(new Error('cancelled request finished late'));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        return window.calls.length;
+      }, { action: operation, result: outcome });
+      assert.equal(callsBeforeReload, 2);
+      assert.match(await page.locator('[role=status]').textContent(), /^Request cancelled/);
+      assert.equal(await page.locator('section button:disabled').count(), 4);
+      const reload = page.getByRole('button', { name: 'Reload saved selection', exact: true });
+      assert.equal(await reload.isEnabled(), true);
+      await page.evaluate(() => { window.hold = false; });
+      await reload.click();
+      await page.waitForFunction(() => document.querySelectorAll('section button:enabled').length === 4);
+      const saved = operation === 'save' && outcome === 'resolve';
+      assert.equal(await page.locator('[data-variant="1"]').getAttribute('aria-pressed'), String(saved));
+      assert.equal(await page.evaluate(() => window.calls.length), callsBeforeReload + 1);
+      assert.equal(await page.evaluate(() => window.calls.filter(call => call.name === 'set_variant_pick').length),
+        operation === 'save' ? 1 : 0);
+      await page.close();
+    });
+  }
+}
+
+test('cancelled write completing after Reload cannot overwrite the next stale pick', async () => {
+  const page = await pageWithPanel();
+  await page.evaluate(async () => {
+    window.hold = true;
+    document.querySelector('[data-variant="1"]').click();
+    const pending = window.pending.shift();
+    window.panel.cancelled();
+    window.hold = false;
+    await window.panel.refresh();
+    pending.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
+  assert.match(await page.locator('[role=status]').textContent(), /Nothing selected/);
+  assert.equal(await page.evaluate(() => window.saved.selected_variant), 1);
+  await page.locator('[data-variant="2"]').click();
+  await page.waitForFunction(() => document.querySelector('[role=status]').textContent.includes('Selection changed'));
+  assert.equal(await page.evaluate(() => window.saved.selected_variant), 1);
+  assert.equal(await page.locator('[data-variant="1"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.evaluate(() => window.calls.filter(call => call.name === 'set_variant_pick').length), 2);
   await page.close();
 });

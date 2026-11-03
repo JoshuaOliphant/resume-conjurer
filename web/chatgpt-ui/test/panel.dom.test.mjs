@@ -185,6 +185,7 @@ for (const action of ['save', 'reload']) {
       else void h.panel.refresh();
       assert.equal(h.state.pending.length, 1);
       h.panel.disconnected();
+      h.panel.cancelled();
       const pending = h.state.pending.shift();
       if (outcome === 'resolve') pending.resolve();
       else pending.reject(new Error('connection closed'));
@@ -201,3 +202,80 @@ for (const action of ['save', 'reload']) {
     });
   }
 }
+
+for (const action of ['save', 'reload']) {
+  for (const outcome of ['resolve', 'reject']) {
+    test(`cancelled ${action} ignores late ${outcome} until an explicit reload`, async t => {
+      const h = await harness(t);
+      h.state.hold = true;
+      if (action === 'save') h.button(1).click();
+      else void h.panel.refresh();
+      const pending = h.state.pending.shift();
+      h.panel.cancelled();
+      const calls = h.state.calls.length;
+      assert.match(h.status(), /^Request cancelled/);
+      assert.equal(h.enabledChoices(), 0);
+      assert.equal(h.document.querySelector('main > button').disabled, false);
+      h.panel.receive({ structuredContent: h.state.saved });
+      h.panel.receive({ isError: true });
+      await h.panel.refresh({ automatic: true });
+      h.button(2).click();
+      assert.equal(h.state.calls.length, calls);
+      if (outcome === 'resolve') pending.resolve();
+      else pending.reject(new Error('cancelled request finished late'));
+      await setImmediate();
+      assert.match(h.status(), /^Request cancelled/);
+      assert.equal(h.enabledChoices(), 0);
+      h.state.hold = false;
+      h.document.querySelector('main > button').click();
+      await setImmediate();
+      const saved = action === 'save' && outcome === 'resolve';
+      assert.equal(h.state.saved.selected_variant, saved ? 1 : null);
+      assert.equal(h.button(1).getAttribute('aria-pressed'), String(saved));
+      assert.equal(h.enabledChoices(), 4);
+      assert.equal(h.mutations().length, action === 'save' ? 1 : 0);
+      assert.equal(h.state.calls.length, calls + 1);
+    });
+  }
+}
+
+test('write finishing after cancellation reload is rejected by the next stale pick', async t => {
+  const h = await harness(t);
+  h.state.hold = true;
+  h.button(1).click();
+  const pending = h.state.pending.shift();
+  h.panel.cancelled();
+  h.state.hold = false;
+  await h.panel.refresh();
+  assert.equal(h.enabledChoices(), 4);
+  assert.match(h.status(), /Nothing selected/);
+  pending.resolve();
+  await setImmediate();
+  assert.equal(h.state.saved.selected_variant, 1);
+  assert.match(h.status(), /Nothing selected/);
+  assert.equal(h.mutations().length, 1);
+  h.button(2).click();
+  await setImmediate();
+  assert.equal(h.mutations().length, 2);
+  assert.equal(h.mutations()[1].arguments.expected_revision, 'a'.repeat(64));
+  assert.equal(h.state.saved.selected_variant, 1);
+  assert.equal(h.button(1).getAttribute('aria-pressed'), 'true');
+  assert.match(h.status(), /Selection changed/);
+});
+
+test('failed explicit reload after cancellation does not allow automatic recovery', async t => {
+  const h = await harness(t);
+  h.panel.cancelled();
+  h.state.fail = true;
+  await h.panel.refresh();
+  assert.equal(h.enabledChoices(), 0);
+  const calls = h.state.calls.length;
+  h.state.fail = false;
+  h.panel.receive({ structuredContent: h.state.saved });
+  await h.panel.refresh({ automatic: true });
+  assert.equal(h.state.calls.length, calls);
+  assert.equal(h.enabledChoices(), 0);
+  await h.panel.refresh();
+  assert.equal(h.enabledChoices(), 4);
+  assert.equal(h.mutations().length, 0);
+});

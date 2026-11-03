@@ -91,13 +91,18 @@ class FixtureStore:
 
     def pick(self, unit_id: str, variant_id: int, expected_revision: str) -> dict[str, Any]:
         with self.lock:
+            original_mode = self.path.stat().st_mode & 0o777
             text = self.path.read_text(encoding="utf-8")
             current = self._snapshot(text)
             if unit_id != UNIT_ID or type(variant_id) is not int or variant_id not in range(1, 5):
                 raise ValueError("Unknown unit or variant.")
+            # An exact replay after a changed pick is a conflict but has no further
+            # effect: MCP idempotence concerns effects, not identical responses.
             if current["revision"] != expected_revision:
                 return {"status": "conflict", "message": "Selection changed. Review the current pick and choose again.", **current}
             updated = apply_picks(text, {unit_id: variant_id})
+            if updated == text:
+                return {"status": "saved", **current}
             # Same-pick retries against the current revision are harmless; atomic replacement
             # prevents interrupted writes from truncating the canonical document.
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent, delete=False) as handle:
@@ -105,6 +110,7 @@ class FixtureStore:
                 try:
                     handle.write(updated)
                     handle.flush()
+                    os.chmod(temporary, original_mode)
                     os.fsync(handle.fileno())
                     os.replace(temporary, self.path)
                 finally:

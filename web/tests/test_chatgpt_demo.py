@@ -184,3 +184,40 @@ def test_streamable_http_protocol(store):
             "unit_id": demo.UNIT_ID, "variant_id": 3, "expected_revision": snapshot["revision"]}})
         assert saved["structuredContent"]["selected_variant"] == 3
         assert rpc("tools/call", {"name": "open_curation_demo", "arguments": {}})["structuredContent"]["selected_variant"] == 3
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o640, 0o644])
+def test_pick_preserves_original_permissions(store, mode):
+    store.path.chmod(mode)
+    revision = store.read()["revision"]
+    store.pick(demo.UNIT_ID, 2, revision)
+    assert store.path.stat().st_mode & 0o777 == mode
+
+
+def test_exact_replay_has_no_additional_effect_and_keeps_stale_protection(store):
+    revision = store.read()["revision"]
+    saved = store.pick(demo.UNIT_ID, 2, revision)
+    before = store.path.stat()
+    repeated = store.pick(demo.UNIT_ID, 2, revision)
+    assert repeated["status"] == "conflict"
+    assert repeated["revision"] == saved["revision"]
+    assert repeated["selected_variant"] == 2
+    assert store.path.stat().st_mtime_ns == before.st_mtime_ns
+    assert store.path.stat().st_ino == before.st_ino
+    unchanged = store.pick(demo.UNIT_ID, 2, saved["revision"])
+    assert unchanged["status"] == "saved"
+    assert store.path.stat().st_ino == before.st_ino
+    store.pick(demo.UNIT_ID, 3, saved["revision"])
+    assert store.pick(demo.UNIT_ID, 2, revision)["status"] == "conflict"
+    assert store.read()["selected_variant"] == 3
+
+
+def test_permission_copy_failure_does_not_replace_document(store, monkeypatch):
+    before = store.path.read_bytes()
+    def fail(*args):
+        raise OSError("cannot preserve permissions")
+    monkeypatch.setattr(demo.os, "chmod", fail)
+    with pytest.raises(OSError, match="preserve permissions"):
+        store.pick(demo.UNIT_ID, 2, store.read()["revision"])
+    assert store.path.read_bytes() == before
+    assert list(store.path.parent.iterdir()) == [store.path]

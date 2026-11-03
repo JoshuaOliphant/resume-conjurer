@@ -8,13 +8,13 @@ const panel = mountPanel(document.getElementById('app'), async args => {
   return app.callServerTool(args);
 });
 app.ontoolresult = result => panel.receive(result);
-app.ontoolcancelled = () => panel.disconnected();
+app.ontoolcancelled = () => panel.cancelled();
 app.onclose = () => panel.disconnected();
 app.onteardown = async () => { panel.disconnected(); return {}; };
 try {
   bridgeReady = app.connect();
   await bridgeReady;
-  await panel.refresh();
+  await panel.refresh({ automatic: true });
 } catch {
   panel.disconnected();
 }

@@ -4,6 +4,7 @@ export function mountPanel(root, callTool) {
   let busy = false;
   let request = 0;
   let disconnected = false;
+  let needsReload = false;
   const title = document.createElement('h1');
   title.textContent = 'Choose the wording';
   const intro = document.createElement('p');
@@ -68,8 +69,8 @@ export function mountPanel(root, callTool) {
     return result.structuredContent;
   }
 
-  async function refresh() {
-    if (busy || disconnected) return;
+  async function refresh({ automatic = false } = {}) {
+    if (busy || disconnected || (needsReload && automatic)) return;
     const focused = document.activeElement?.dataset?.variant;
     const current = ++request;
     busy = true;
@@ -81,6 +82,7 @@ export function mountPanel(root, callTool) {
       if (current !== request) return;
       busy = false;
       show(resultData(result), undefined, focused);
+      needsReload = false;
     } catch (error) {
       if (current !== request || disconnected) return;
       snapshot = null;
@@ -95,7 +97,7 @@ export function mountPanel(root, callTool) {
   }
 
   async function choose(id) {
-    if (busy || disconnected || !snapshot) return;
+    if (busy || disconnected || needsReload || !snapshot) return;
     const focused = document.activeElement?.dataset?.variant;
     const current = ++request;
     busy = true;
@@ -125,10 +127,21 @@ export function mountPanel(root, callTool) {
   }
 
   return { refresh, receive(result) {
-    if (disconnected) return;
+    if (disconnected || needsReload) return;
     // Host tool results may be historical. Always reconcile with the canonical server file.
     if (result?.isError) status.textContent = 'The host request failed. Reload saved selection to retry.';
-    else void refresh();
+    else void refresh({ automatic: true });
+  }, cancelled() {
+    if (disconnected) return;
+    // Cancellation is not a closed transport and does not prove a write stopped.
+    // Ignore its eventual response, then require an explicit read before more picks.
+    ++request;
+    busy = false;
+    snapshot = null;
+    needsReload = true;
+    list.querySelectorAll('button').forEach(button => { button.disabled = true; });
+    reload.disabled = false;
+    status.textContent = 'Request cancelled. Reload saved selection before choosing again.';
   }, disconnected() {
     disconnected = true;
     ++request;
