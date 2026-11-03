@@ -1,6 +1,6 @@
 # Phase one: ChatGPT curation workflow
 
-Status: proposed implementation plan, September 30, 2026 (Pacific).
+Status: phased plan. Synthetic prototype implemented November 3, 2026; actual ChatGPT host acceptance remains pending. See [prototype scope and verification](chatgpt-prototype.md). Original plan dated September 30, 2026 (Pacific).
 Strategy: [ChatGPT distribution and product strategy](chatgpt-product-strategy.md).
 
 ## Outcome

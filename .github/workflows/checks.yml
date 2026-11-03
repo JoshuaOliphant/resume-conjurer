@@ -62,3 +62,21 @@ jobs:
       - run: uv run --locked --offline python ../scripts/ci_lint.py
         working-directory: web
       - run: uvx --no-config --from ty==0.0.84 ty check --config-file ty.toml --python web/.venv --error-on-warning web scripts
+
+  chatgpt-ui:
+    name: ChatGPT fixture panel
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web/chatgpt-ui
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: node --version && npm --version
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: git diff --exit-code -- ../app/static/chatgpt/curate.html
+      - run: npm run test:dom
+      - run: npx playwright install --with-deps chromium
+      - run: npm test

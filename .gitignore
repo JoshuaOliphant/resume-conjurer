@@ -36,3 +36,6 @@ grimoire.md
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# ChatGPT fixture panel build tools (generated self-contained resource is tracked).
+web/chatgpt-ui/node_modules/
