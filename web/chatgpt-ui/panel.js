@@ -25,6 +25,10 @@ export function mountPanel(root, callTool) {
         || data.variants.length !== 4 || typeof data.revision !== 'string') {
       throw new Error('The server did not return this demo. Reload to try again.');
     }
+    const active = document.activeElement;
+    // Disabling the old button can blur it. Restore that lost focus, but do not
+    // interrupt a user who moved to a control outside the list while awaiting I/O.
+    const restoreFocus = focused && (!active || active === document.body || list.contains(active));
     snapshot = data;
     list.replaceChildren();
     for (const variant of data.variants) {
@@ -52,7 +56,8 @@ export function mountPanel(root, callTool) {
       section.append(button, text, details);
       list.append(section);
     }
-    if (focused) list.querySelector(`[data-variant="${CSS.escape(focused)}"]`)?.focus();
+    if (restoreFocus) [...list.querySelectorAll('button')]
+      .find(button => button.dataset.variant === focused)?.focus();
     status.textContent = message || (data.selected_variant == null
       ? 'Nothing selected. Choose a version to save it.'
       : `Variant ${data.selected_variant} is saved. You can choose another version.`);

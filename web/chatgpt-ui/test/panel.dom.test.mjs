@@ -113,6 +113,39 @@ test('busy state suppresses rapid repeated save clicks', async t => {
   assert.equal(h.button(3).getAttribute('aria-pressed'), 'true');
 });
 
+test('deferred save preserves focus explicitly moved outside the replacement list', async t => {
+  const h = await harness(t);
+  const other = h.document.createElement('input');
+  h.document.body.append(other);
+  h.state.hold = true;
+  h.button(2).focus();
+  h.button(2).click();
+  other.focus();
+  assert.equal(h.document.activeElement, other);
+  h.state.pending.shift().resolve();
+  await setImmediate();
+  assert.match(h.status(), /Variant 2 is saved/);
+  assert.equal(h.document.activeElement, other);
+});
+
+test('deferred save restores prior variant when its focus was lost to the body', async t => {
+  const h = await harness(t);
+  h.state.hold = true;
+  h.button(2).focus();
+  h.button(2).click();
+  // Exercise the DOM restoration branch without claiming native disabled-button
+  // blur or keyboard behavior, which remains covered by the Chromium suite.
+  const transient = h.document.createElement('input');
+  h.document.body.append(transient);
+  transient.focus();
+  transient.remove();
+  assert.equal(h.document.activeElement, h.document.body);
+  h.state.pending.shift().resolve();
+  await setImmediate();
+  assert.match(h.status(), /Variant 2 is saved/);
+  assert.equal(h.document.activeElement, h.button(2));
+});
+
 test('lost save response blocks writes and reload recovers the committed pick', async t => {
   const h = await harness(t);
   h.state.loseSavedResponse = true;
