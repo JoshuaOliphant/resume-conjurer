@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { JSDOM } from 'jsdom';
+import { buildOptions } from '../build-options.mjs';
 
 test('built MCP app HTML contains a syntactically valid module', async t => {
   const html = await readFile(new URL('../../app/static/chatgpt/curate.html', import.meta.url), 'utf8');
@@ -19,11 +19,7 @@ test('built MCP app HTML contains a syntactically valid module', async t => {
     input: scripts[0].textContent, encoding: 'utf8',
   });
   assert.equal(result.status, 0, result.stderr.match(/SyntaxError: .*/)?.[0] ?? result.stderr);
-  const bundled = await build({
-    absWorkingDir: fileURLToPath(new URL('..', import.meta.url)),
-    entryPoints: ['main.js'], bundle: true, write: false,
-    format: 'esm', target: 'es2022', minify: true, legalComments: 'inline',
-  });
+  const bundled = await build(buildOptions);
   const expected = bundled.outputFiles[0].text.replaceAll('</script', '<\\/script');
   const digest = value => createHash('sha256').update(value).digest('hex');
   assert.equal(digest(scripts[0].textContent), digest(expected));
