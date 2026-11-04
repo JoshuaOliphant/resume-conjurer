@@ -128,6 +128,8 @@ it, so do not bake further single-user assumptions into the domain model or rout
 
 ## Repo docs
 
+`knowledge/capture/daily/2026-11-03-chatgpt-panel-build.md` records the bundled JavaScript corruption and actual ChatGPT rendering verification.
+
 `knowledge/capture/daily/2026-10-09-generation-recovery.md` records per-unit retry, restart recovery, and CI verification findings.
 
 `CONTEXT.md` defines application, unit, variant, pick, and failed unit.
