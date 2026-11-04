@@ -6,6 +6,10 @@ them, and stitches final documents. Generate abundance, exercise taste, stitch f
 Inspired by Scott Werner's [The Illusionist and the Conjurer](https://worksonmymachine.ai/p/the-illusionist-and-the-conjurer):
 instead of asking for one perfect output, summon many grounded variants and recognize the right one.
 
+## Product direction
+
+For new project agents and contributors: read the [design, distribution and monetization strategy](docs/plans/chatgpt-product-strategy.md), alongside [PRODUCT.md](PRODUCT.md) and [DESIGN.md](DESIGN.md). The goal is the same grounded, human-curated workflow across Claude Code, web and ChatGPT. Pricing and commercial expansion remain experiments, not shipped promises.
+
 ## What it does
 
 - **Grounded variants.** Every bullet and paragraph traces back to your master resume or evidence.

@@ -2,6 +2,10 @@
 
 Agent guidance for this repo. `CLAUDE.md` points here; this is the real file.
 
+## Product direction for new sessions
+
+Read `PRODUCT.md`, `DESIGN.md`, and [the design, distribution and monetization strategy](docs/plans/chatgpt-product-strategy.md) before planning product work. The strategy distinguishes established direction from pricing experiments and platform constraints. Advance the ChatGPT tailoring workflow without rewriting the existing engine; preserve newer owner changes and inspect open PRs before duplicating work. Implementation sequencing lives in `docs/plans/chatgpt-phase-one.md`; demo evidence and limits live in `docs/plans/chatgpt-prototype.md`.
+
 ## Two deliverables, one set of on-disk contracts
 
 - **`plugins/conjurer/`** — the Claude Code plugin. `scripts/` is pure stdlib, run with bare
@@ -51,10 +55,9 @@ uv run uvicorn app.main:app --reload --port 8400
 100.0% not reached` even when every test in the file passes. The full-suite rule is in
 `.claude/rules/testing.md`.
 
-Lint and types are ad hoc — no config is committed and neither is a dependency:
-`uvx ruff check .`, `uvx ty check`.
-
-There is no CI. A green suite is only as good as the last person who ran it.
+Pinned lint/type commands and offline CI are documented in `docs/agents/testing.md`.
+`.github/workflows/checks.yml` also rebuilds and tests the ChatGPT fixture panel.
+Use the current documented gates rather than unconfigured ambient tool commands.
 
 ## Backend configuration
 

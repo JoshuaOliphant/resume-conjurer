@@ -1,6 +1,8 @@
 # ChatGPT curation prototype: synthetic first slice
 
-Status: implemented for local protocol and UI testing. **Not connected to or validated in an actual ChatGPT host.** This narrowly continues [phase one](chatgpt-phase-one.md), not completion of that whole plan.
+Status update, November 4, 2026: Joshua reports the repaired demo working in the Resume Conjurer project. [PR #59](https://github.com/JoshuaOliphant/resume-conjurer/pull/59) tracks the separate bundled-JavaScript repair and was open at this update. The original implementation below was not host-validated; do not confuse that historical limit with the newer user report, or treat reported demo success as complete acceptance. Record client/build and pick-close-reopen evidence before expanding. See [current strategy](chatgpt-product-strategy.md).
+
+This narrowly continues [phase one](chatgpt-phase-one.md), not completion of that whole plan.
 
 ## Scope
 
@@ -18,7 +20,7 @@ Pinned Python MCP SDK mcp==1.27.2 and browser bridge @modelcontextprotocol/ext-a
 - set_variant_pick: app-visible only, bounded unit/variant/revision input. Host visibility is **not authorization**.
 - Resource MIME text/html;profile=mcp-app. CSP allows no external resources, connection or frame domains.
 - Self-contained bundled UI uses App.connect and callServerTool, handlers registered before connection.
-- Official thread-panel support includes desktop, Work web, iOS and Android. Classic web is not assumed. Actual client support remains untested.
+- Official thread-panel support includes desktop, Work web, iOS and Android. Classic web is not assumed. Actual client support was untested at the original implementation; see the newer reported demo progress above.
 
 Sources: [Quickstart](https://developers.openai.com/plugins/build/app-quickstart), [ChatGPT UI](https://developers.openai.com/plugins/build/chatgpt-ui), [MCP server](https://developers.openai.com/plugins/build/mcp-server), [OpenAI MCP extensions](https://github.com/openai/mcp-extensions/blob/main/docs/spec.md), [MCP Apps SDK](https://github.com/modelcontextprotocol/ext-apps), [App API](https://apps.extensions.modelcontextprotocol.io/api/classes/app.App.html).
 
