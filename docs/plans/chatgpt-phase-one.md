@@ -1,6 +1,6 @@
 # Phase one: ChatGPT curation workflow
 
-Status: phased plan. Synthetic prototype implemented November 3, 2026; Joshua reports the repaired demo working on November 4; detailed repaired-build host acceptance remains to be recorded. See [prototype scope and verification](chatgpt-prototype.md). Original plan dated September 30, 2026 (Pacific).
+Status: phased plan. Synthetic prototype implemented November 3, 2026; the repair is merged in PR #59 and Work-browser rendering is recorded; actual-host pick persistence and full host acceptance remain to be recorded. See [prototype scope and verification](chatgpt-prototype.md). Original plan dated September 30, 2026 (Pacific).
 Strategy: [ChatGPT distribution and product strategy](chatgpt-product-strategy.md).
 
 ## Outcome

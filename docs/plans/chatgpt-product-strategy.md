@@ -35,11 +35,11 @@ customers, contact employers or submit applications. Those actions require their
   project. The project conversation records a repaired panel reopening with four alternatives
   and no selected variant. Treat this as reported demo progress, not full production acceptance.
 - At this document's update, [PR #59](https://github.com/JoshuaOliphant/resume-conjurer/pull/59)
-  contains the separate bundled-JavaScript repair and is open; main is `3f92ead`.
+  contains the separate bundled-JavaScript repair and is merged; main is `277895e`.
   Its validation report records ChatGPT Work browser rendering, evidence expansion,
   close/reopen and reload after a server restart, with all choices unselected.
   Actual-host pick persistence and desktop rendering remain explicitly unverified.
-  Preserve that work. Do not reconstruct the old prototype or assume the repair is merged.
+  Preserve that work and the recorded host-validation limits. Do not reconstruct the old prototype.
 - Next, record a reproducible acceptance result for the repaired build: client/version and
   served commit, visible panel, explicit pick, close/reopen restoration, evidence, keyboard
   operation, cancellation and stale-write behavior. Successful tool calls alone are insufficient.
