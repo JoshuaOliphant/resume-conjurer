@@ -1,6 +1,6 @@
 # ChatGPT curation prototype: synthetic first slice
 
-Status: implemented for local protocol and UI testing. **Not connected to or validated in an actual ChatGPT host.** This narrowly continues [phase one](chatgpt-phase-one.md), not completion of that whole plan.
+Status: connected through Secure MCP Tunnel and rendered in the ChatGPT Work browser on 2026-11-03. Four alternatives, evidence disclosure, and closing/reopening the app viewer were verified; actual-host pick persistence remains untested. This narrowly continues [phase one](chatgpt-phase-one.md), not completion of that whole plan.
 
 ## Scope
 
@@ -18,7 +18,7 @@ Pinned Python MCP SDK mcp==1.27.2 and browser bridge @modelcontextprotocol/ext-a
 - set_variant_pick: app-visible only, bounded unit/variant/revision input. Host visibility is **not authorization**.
 - Resource MIME text/html;profile=mcp-app. CSP allows no external resources, connection or frame domains.
 - Self-contained bundled UI uses App.connect and callServerTool, handlers registered before connection.
-- Official thread-panel support includes desktop, Work web, iOS and Android. Classic web is not assumed. Actual client support remains untested.
+- Official thread-panel support includes desktop, Work web, iOS and Android. Work-browser rendering has been observed; desktop and mobile rendering remain unverified. Classic web is not assumed.
 
 Sources: [Quickstart](https://developers.openai.com/plugins/build/app-quickstart), [ChatGPT UI](https://developers.openai.com/plugins/build/chatgpt-ui), [MCP server](https://developers.openai.com/plugins/build/mcp-server), [OpenAI MCP extensions](https://github.com/openai/mcp-extensions/blob/main/docs/spec.md), [MCP Apps SDK](https://github.com/modelcontextprotocol/ext-apps), [App API](https://apps.extensions.modelcontextprotocol.io/api/classes/app.App.html).
 
@@ -49,7 +49,9 @@ Endpoint: http://127.0.0.1:8401/mcp. Explicit setup initializes only the fixed s
 
 Python tests cover canonical persistence, reopen reads, concurrent stale writes, malformed fixture rejection, atomic-write failure, schemas/metadata, resources and JSON-RPC through the actual ASGI transport. DOM tests check state/error behavior. Chromium tests check keyboard selection, focus, hostile-text rendering, narrow layout and reopen with a controlled transport, **not ChatGPT**.
 
-The implementation workspace blocks Chromium process sockets even after supported escalation. Local browser checks could not run; inspect the CI Chromium job. DOM and CI browser checks cannot establish real-host acceptance.
+The DOM gate also parses the module from the generated HTML, checks its JavaScript syntax, and compares it with direct esbuild output. This catches replacement-string interpolation corrupting the bundled SDK even when source-level panel tests pass. After rebuilding, refresh the installed plugin's tools and make a fresh `open_curation_demo` call; historical tool results can retain the broken resource. The 2026-11-03 Work-browser check showed all four choices unselected, expanded evidence, and a functioning reopened app viewer. No choice was made on the user's behalf.
+
+Local browser checks pass with the installed Chrome executable selected through `CHROMIUM_PATH`. DOM and Chromium checks alone cannot establish real-host acceptance.
 
 Before calling original slice A/B validated:
 1. Connect an approved development endpoint to a supported ChatGPT client.

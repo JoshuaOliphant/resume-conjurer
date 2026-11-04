@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node build.mjs",
     "test": "node --test test/panel.test.mjs",
-    "test:dom": "node --test test/panel.dom.test.mjs"
+    "test:dom": "node --test test/build.test.mjs test/panel.dom.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "2.0.4"
