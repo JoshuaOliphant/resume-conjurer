@@ -4,7 +4,7 @@ Agent guidance for this repo. `CLAUDE.md` points here; this is the real file.
 
 ## Product direction for new sessions
 
-Read `PRODUCT.md`, `DESIGN.md`, and [the design, distribution and monetization strategy](docs/plans/chatgpt-product-strategy.md) before planning product work. The strategy distinguishes established direction from pricing experiments and platform constraints. Advance the ChatGPT tailoring workflow without rewriting the existing engine; preserve newer owner changes and inspect open PRs before duplicating work. Implementation sequencing lives in `docs/plans/chatgpt-phase-one.md`; demo evidence and limits live in `docs/plans/chatgpt-prototype.md`.
+Read `PRODUCT.md`, `DESIGN.md`, and [the design, distribution and monetization strategy](docs/plans/chatgpt-product-strategy.md) before planning product work. The direction is a web workbench with a useful, narrow ChatGPT companion on shared canonical data. The strategy separates direction, pricing experiments and platform constraints, and defines early user studies and quality/cost eval gates. Reuse the existing engine and eval harness; heed issue #36 before trusting production cost totals. Preserve newer owner changes and inspect open PRs before duplicating work. Implementation sequencing lives in `docs/plans/chatgpt-phase-one.md`; demo evidence and limits live in `docs/plans/chatgpt-prototype.md`.
 
 ## Two deliverables, one set of on-disk contracts
 

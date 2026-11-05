@@ -8,7 +8,7 @@ instead of asking for one perfect output, summon many grounded variants and reco
 
 ## Product direction
 
-For new project agents and contributors: read the [design, distribution and monetization strategy](docs/plans/chatgpt-product-strategy.md), alongside [PRODUCT.md](PRODUCT.md) and [DESIGN.md](DESIGN.md). The goal is the same grounded, human-curated workflow across Claude Code, web and ChatGPT. Pricing and commercial expansion remain experiments, not shipped promises.
+For new project agents and contributors: read the [design, distribution and monetization strategy](docs/plans/chatgpt-product-strategy.md), alongside [PRODUCT.md](PRODUCT.md) and [DESIGN.md](DESIGN.md). The direction is a full-document web workspace with a useful, narrow ChatGPT companion, sharing the grounded, human-curated workflow and canonical data with Claude Code. The plan includes early user studies and factual-grounding, quality, outcome and full-cost evals. Pricing, packaging and commercial expansion remain experiments, not shipped promises.
 
 ## What it does
 
