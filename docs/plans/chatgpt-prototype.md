@@ -1,6 +1,6 @@
 # ChatGPT curation prototype: synthetic first slice
 
-Status: connected through Secure MCP Tunnel and rendered in the ChatGPT Work browser on 2026-11-03. Four alternatives, evidence disclosure, and closing/reopening the app viewer were verified; actual-host pick persistence remains untested. This narrowly continues [phase one](chatgpt-phase-one.md), not completion of that whole plan.
+Status: connected through Secure MCP Tunnel and rendered in the ChatGPT Work browser on 2026-11-03. Four alternatives, evidence disclosure, and closing/reopening the app viewer were verified; actual-host pick persistence remains untested. The bundled-JavaScript repair is merged in [PR #59](https://github.com/JoshuaOliphant/resume-conjurer/pull/59). Record client/build and pick-close-reopen evidence before expanding. See [current strategy](chatgpt-product-strategy.md). This narrowly continues [phase one](chatgpt-phase-one.md), not completion of that whole plan.
 
 ## Scope
 
