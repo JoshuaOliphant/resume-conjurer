@@ -1457,8 +1457,14 @@ def test_onboarding_edit_recovery_use_proposal_discard_and_size_limit(onboarding
     store = OnboardingStore(workspace)
     state, revision = store.read()
     assert client.post("/onboarding/edit", data={"revision": "stale", "draft": "My unsaved draft"}).status_code == 409
+    # Starlette's 1 MiB form-field cap (the >=1.3.1 security fix, #61) rejects an oversized field first.
     response = client.post("/onboarding/edit", data={"revision": revision, "draft": "x" * (2 * 1024 * 1024 + 1)})
+    assert response.status_code == 400 and store.read() == (state, revision)
+    # A draft under that cap can still push the whole onboarding state past the store's 2 MiB limit.
+    oversized = store.save({**state, "proposal": "y" * (1024 * 1024 + 1024)}, revision)
+    response = client.post("/onboarding/edit", data={"revision": oversized, "draft": "x" * (1024 * 1024 - 64)})
     assert response.status_code == 400 and "2 MiB" in response.text
+    revision = store.save(state, oversized)
     assert client.post("/onboarding/edit", data={"revision": revision, "use_proposal": "true"}, follow_redirects=False).status_code == 303
     state, revision = store.read()
     assert state["draft"] == state["proposal"]

@@ -4,13 +4,13 @@ version = "0.1.0"
 description = "Web UI for the Conjurer resume pipeline. Server-rendered FastAPI + Jinja2 + HTMX; fixture-backed offline config and a live Claude Agent SDK backend."
 requires-python = ">=3.11"
 dependencies = [
-    "mcp==1.27.2",
+    "mcp==1.30.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "jinja2>=3.1.0",
-    "python-multipart>=0.0.9",
+    "python-multipart>=0.0.31",
     "claude-agent-sdk==0.2.163",
-    "pypdf>=6.19.0",
+    "pypdf>=6.21.4,<7",
     "python-docx>=1.2.0,<2",
     "reportlab>=5.0.1,<6",
     "markdown-it-py>=4.0.0,<5",

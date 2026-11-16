@@ -12,7 +12,7 @@ No generation, import, real career data, claim verification, exports, downloads,
 
 ## Protocol decision (checked 2026-11-03)
 
-Pinned Python MCP SDK mcp==1.27.2 and browser bridge @modelcontextprotocol/ext-apps==2.0.4. Streamable HTTP and standards-first MCP Apps, not a legacy window.openai bridge.
+Pinned Python MCP SDK mcp==1.30.0 (bumped from 1.27.2 for security advisories, #61) and browser bridge @modelcontextprotocol/ext-apps==2.0.4. Streamable HTTP and standards-first MCP Apps, not a legacy window.openai bridge.
 
 - open_curation_demo: no arguments, read-only, structured output schema, _meta.ui.resourceUri and ChatGPT thread entrypoint.
 - set_variant_pick: app-visible only, bounded unit/variant/revision input. Host visibility is **not authorization**.
