@@ -640,12 +640,15 @@ def test_document_save_conflict_preserves_submitted_text(document_client, docume
     assert document_store.read("grimoire.md") == "# Another tab\n"
 
 
-@pytest.mark.parametrize("text", ["  \n  ", "x" * (2 * 1024 * 1024 + 1)], ids=["whitespace", "too-large-edit"])
-def test_document_save_rejects_invalid_text_without_changing_source(document_client, document_store, text):
+@pytest.mark.parametrize(("text", "message"), [
+    ("  \n  ", "Document must not be empty"),
+    ("x" * (1024 * 1024 + 1), "Field exceeded maximum size of 1024KB."),
+], ids=["whitespace", "over-form-field-cap"])
+def test_document_save_rejects_invalid_text_without_changing_source(document_client, document_store, text, message):
     response = document_client.post("/documents/save", data={
         "document_name": "grimoire.md", "text": text, "revision": document_store.revision("grimoire.md"),
     })
-    assert response.status_code == 400
+    assert response.status_code == 400 and message in response.text
     assert document_store.read("grimoire.md") == "# Voice\nWrite plainly.\n"
 
 
