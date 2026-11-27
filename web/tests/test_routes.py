@@ -414,13 +414,13 @@ def test_normalization_rejects_text_over_editor_limit(document_client, document_
 
     revision = document_store.revision("master-resume.md")
     token = _prepare_token(document_client, revision, "## Experience\n")
-    monkeypatch.setattr(routes, "MAX_SOURCE_BYTES", 30)
+    monkeypatch.setattr(routes, "MAX_EDITOR_FIELD_BYTES", 30)
     response = document_client.post(path, data={
         "document_name": "master-resume.md", "revision": revision,
         "text": "## Experience\n" + "x" * 31, "review_token": token,
     })
     assert response.status_code == 400
-    assert "2 MiB editor limit" in response.text
+    assert "1 MiB form limit" in response.text
     assert document_store.revision("master-resume.md") == revision
 
 
@@ -528,7 +528,7 @@ def test_document_import_previews_docx_and_pdf(document_client, document_store, 
         ("resume.md", b"x" * (10 * 1024 * 1024 + 1), 400, "10 MiB size limit"),
         ("../resume.md", b"# Unsafe name", 400, "Invalid original filename"),
         ("", b"# No filename", 422, "UploadFile"),
-        ("large.md", b"x" * (2 * 1024 * 1024 + 1), 400, "editor limit"),
+        ("large.md", ("é\n" * 100_000).encode("utf-8"), 400, "1 MiB form limit"),
     ],
     ids=["unsupported", "too-large", "unsafe-filename", "empty-filename", "extracted-too-large"],
 )
