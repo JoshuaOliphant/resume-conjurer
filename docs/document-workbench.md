@@ -12,7 +12,7 @@ Source saves and generation starts share a process-local lock; edits are refused
 
 This is a local, single-workspace tool. The save lock coordinates threads within one store instance; use one server process. Multi-process and external-writer coordination, per-user identity, source isolation, templates, and guided grimoire onboarding are subsequent work. Final-document editing is described in `final-documents.md`. Do not expose this server as a multi-user service.
 
-Uploaded files are limited to 10 MiB; the total upload request is capped at 10 MiB plus 64 KiB of multipart overhead before parsing. Editable source text is limited to 2 MiB. Extraction errors, invalid names, oversized data, and stale revisions preserve the current source. Source-writing forms reject cross-origin browser requests.
+Uploaded files are limited to 10 MiB; the total upload request is capped at 10 MiB plus 64 KiB of multipart overhead before parsing. Browser editor fields are limited to 1 MiB after form encoding. Imports whose extracted text would exceed that limit are rejected before preview, with a message to shorten the source. Extraction errors, invalid names, oversized data, and stale revisions preserve the current source. Source-writing forms reject cross-origin browser requests.
 
 Runtime:
 

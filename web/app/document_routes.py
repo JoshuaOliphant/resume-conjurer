@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import secrets
 from _thread import LockType
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import PlainTextResponse, RedirectResponse
@@ -13,12 +14,22 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.document_import import MAX_DOCUMENT_BYTES, import_document
 from app.document_normalize import NormalizedMaster, normalize_master_resume
-from app.document_store import MAX_DOCUMENT_BYTES as MAX_SOURCE_BYTES
 from app.document_store import ConflictError, DocumentStore
 from app.rail import template_context
 from app.runs import RunManager
 
 MAX_UPLOAD_REQUEST_BYTES = MAX_DOCUMENT_BYTES + 64 * 1024
+
+
+MAX_EDITOR_FIELD_BYTES = 1024 * 1024
+EDITOR_SIZE_ERROR = "This text exceeds the editor’s 1 MiB form limit after encoding. Use a shorter source file or shorten the text."
+
+
+def editor_text_fits(text: str) -> bool:
+    # Native browser forms submit textarea line breaks as CRLF and escape literal tildes.
+    browser_text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
+    encoded = quote_plus(browser_text, safe="*").replace("~", "%7E")
+    return len("text=") + len(encoded) <= MAX_EDITOR_FIELD_BYTES
 
 
 class DocumentUploadLimit:
@@ -113,8 +124,8 @@ def document_router(store: DocumentStore | None, templates: Jinja2Templates, run
             repository.read(document_name)
             content = file.file.read(MAX_DOCUMENT_BYTES + 1)
             imported = import_document(file.filename or "", content)
-            if len(imported.text.encode("utf-8")) > MAX_SOURCE_BYTES:
-                raise ValueError("Extracted text exceeds the 2 MiB editor limit. Use a shorter source file.")
+            if not editor_text_fits(imported.text):
+                raise ValueError(EDITOR_SIZE_ERROR)
             key = repository.store_original(file.filename or "", content)
         except ValueError as exc:
             return render(request, document_name, status=400, error=str(exc))
@@ -134,8 +145,8 @@ def document_router(store: DocumentStore | None, templates: Jinja2Templates, run
             writable(request)
             if document_name != "master-resume.md":
                 raise HTTPException(400, "Only the master resume can be normalized.")
-            if len(text.encode("utf-8")) > MAX_SOURCE_BYTES:
-                raise HTTPException(400, "Reviewed text exceeds the 2 MiB editor limit.")
+            if not editor_text_fits(text):
+                raise HTTPException(400, EDITOR_SIZE_ERROR)
             normalization = normalize_master_resume(text)
             review_token = secrets.token_urlsafe(24)
             order_review_required = warning_revision == revision
@@ -168,9 +179,9 @@ def document_router(store: DocumentStore | None, templates: Jinja2Templates, run
                     error="This master resume changed in another tab. Recover your unsaved normalized draft before reloading the saved document.",
                     draft_text=text, order_review_required=order_review_required, review_token=review_token,
                 )
-            if len(reviewed_text.encode("utf-8")) > MAX_SOURCE_BYTES:
+            if not editor_text_fits(reviewed_text):
                 return render_normalization(request, "", revision, normalization, status=400,
-                                            error="Normalized text exceeds the 2 MiB editor limit.", draft_text=text,
+                                            error=EDITOR_SIZE_ERROR, draft_text=text,
                                             order_review_required=order_review_required, review_token=review_token)
             if order_review_required and not order_corrected:
                 return render_normalization(request, "", revision, normalization, status=422,
