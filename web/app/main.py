@@ -39,6 +39,9 @@ BASE = Path(__file__).parent
 
 # Single fixed workspace today; the slug is the seam a future multi-user resolver scopes.
 SLUG = "globex-staff-platform"
+# One template set for every app: nothing customizes it per app, and a fresh Jinja2Templates per
+# create_app recompiles every template on first render.
+TEMPLATES = Jinja2Templates(directory=str(BASE / "templates"))
 
 
 def create_app(
@@ -66,11 +69,17 @@ def create_app(
     app = FastAPI(title="Conjurer", lifespan=lifespan)
     app.add_middleware(DocumentUploadLimit)
     app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
-    templates = Jinja2Templates(directory=str(BASE / "templates"))
+    templates = TEMPLATES
     source_lock = Lock()
-    app.include_router(generation_router(repo, run_manager, templates, SLUG, source_lock))
-    app.include_router(document_router(documents, templates, run_manager, SLUG, source_lock))
-    app.include_router(onboarding_router(documents, templates, onboarding or OnboardingSdk(), run_manager, SLUG, source_lock))
+    # Add the routers' already-built routes directly. include_router would rebuild every APIRoute,
+    # recompiling a pydantic TypeAdapter per Form param, which roughly doubled create_app's cost.
+    # Safe only while these routers take no prefix, tags, or dependencies; use include_router if one does.
+    for router in (
+        generation_router(repo, run_manager, templates, SLUG, source_lock),
+        document_router(documents, templates, run_manager, SLUG, source_lock),
+        onboarding_router(documents, templates, onboarding or OnboardingSdk(), run_manager, SLUG, source_lock),
+    ):
+        app.router.routes.extend(router.routes)
 
     def require_mutation(request: Request) -> None:
         site = request.headers.get("sec-fetch-site")

@@ -83,6 +83,40 @@ def document_client(repo, document_store, document_runs, document_gen):
         yield c
 
 
+def test_create_app_builds_each_route_once(repo, monkeypatch):
+    """Router routes are added as built; rebuilding them (include_router) doubled app setup cost."""
+    from fastapi.routing import APIRoute
+
+    built = 0
+    real_init = APIRoute.__init__
+
+    def counting_init(self, *args, **kwargs):
+        nonlocal built
+        built += 1
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(APIRoute, "__init__", counting_init)
+    gen = FakeGenerationPort()
+    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=False)
+    api_routes = [r for r in app.routes if isinstance(r, APIRoute)]
+    assert built == len(api_routes)
+    assert {r.path for r in api_routes} >= {"/", "/start", "/documents/save", "/onboarding/draft"}
+
+
+def test_create_app_reuses_the_module_template_set(repo, monkeypatch):
+    """A fresh Jinja2Templates per app recompiles every template; apps share one instead."""
+    import app.main as main
+
+    def no_new_templates(*args, **kwargs):
+        raise AssertionError("create_app built its own Jinja2Templates")
+
+    monkeypatch.setattr(main, "Jinja2Templates", no_new_templates)
+    gen = FakeGenerationPort()
+    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=False)
+    with SameOriginClient(app) as c:
+        assert c.get("/").status_code == 200
+
+
 def _review_token(response):
     match = re.search(r'name="review_token" value="([^"]+)"', response.text)
     assert match is not None
