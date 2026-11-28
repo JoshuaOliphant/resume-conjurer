@@ -68,9 +68,15 @@ def create_app(
     app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
     templates = Jinja2Templates(directory=str(BASE / "templates"))
     source_lock = Lock()
-    app.include_router(generation_router(repo, run_manager, templates, SLUG, source_lock))
-    app.include_router(document_router(documents, templates, run_manager, SLUG, source_lock))
-    app.include_router(onboarding_router(documents, templates, onboarding or OnboardingSdk(), run_manager, SLUG, source_lock))
+    # Add the routers' already-built routes directly. include_router would rebuild every APIRoute,
+    # recompiling a pydantic TypeAdapter per Form param, which roughly doubled create_app's cost.
+    # Safe only while these routers take no prefix, tags, or dependencies; use include_router if one does.
+    for router in (
+        generation_router(repo, run_manager, templates, SLUG, source_lock),
+        document_router(documents, templates, run_manager, SLUG, source_lock),
+        onboarding_router(documents, templates, onboarding or OnboardingSdk(), run_manager, SLUG, source_lock),
+    ):
+        app.router.routes.extend(router.routes)
 
     def require_mutation(request: Request) -> None:
         site = request.headers.get("sec-fetch-site")
