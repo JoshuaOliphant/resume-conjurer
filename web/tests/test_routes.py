@@ -103,6 +103,20 @@ def test_create_app_builds_each_route_once(repo, monkeypatch):
     assert {r.path for r in api_routes} >= {"/", "/start", "/documents/save", "/onboarding/draft"}
 
 
+def test_create_app_reuses_the_module_template_set(repo, monkeypatch):
+    """A fresh Jinja2Templates per app recompiles every template; apps share one instead."""
+    import app.main as main
+
+    def no_new_templates(*args, **kwargs):
+        raise AssertionError("create_app built its own Jinja2Templates")
+
+    monkeypatch.setattr(main, "Jinja2Templates", no_new_templates)
+    gen = FakeGenerationPort()
+    app = create_app(repo=repo, gen=gen, run_manager=RunManager(repo=repo, gen=gen, verifier=NoVerificationPort()), live=False)
+    with SameOriginClient(app) as c:
+        assert c.get("/").status_code == 200
+
+
 def _review_token(response):
     match = re.search(r'name="review_token" value="([^"]+)"', response.text)
     assert match is not None

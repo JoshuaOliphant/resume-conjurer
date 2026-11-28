@@ -39,6 +39,9 @@ BASE = Path(__file__).parent
 
 # Single fixed workspace today; the slug is the seam a future multi-user resolver scopes.
 SLUG = "globex-staff-platform"
+# One template set for every app: nothing customizes it per app, and a fresh Jinja2Templates per
+# create_app recompiles every template on first render.
+TEMPLATES = Jinja2Templates(directory=str(BASE / "templates"))
 
 
 def create_app(
@@ -66,7 +69,7 @@ def create_app(
     app = FastAPI(title="Conjurer", lifespan=lifespan)
     app.add_middleware(DocumentUploadLimit)
     app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
-    templates = Jinja2Templates(directory=str(BASE / "templates"))
+    templates = TEMPLATES
     source_lock = Lock()
     # Add the routers' already-built routes directly. include_router would rebuild every APIRoute,
     # recompiling a pydantic TypeAdapter per Form param, which roughly doubled create_app's cost.
